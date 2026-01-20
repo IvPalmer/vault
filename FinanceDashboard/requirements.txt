@@ -1,0 +1,6 @@
+streamlit
+pandas
+plotly
+st-aggrid
+openpyxl
+watchdog

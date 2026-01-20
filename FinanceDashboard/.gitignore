@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Streamlit
+.streamlit/
+
+# Mac
+.DS_Store
+
+# Data (Protect User Privacy)
+SampleData/
+*.csv
+*.xlsx
+*.ofx
+balance_overrides.json
+
+# IDE
+.vscode/
+.idea/
