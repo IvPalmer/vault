@@ -15,6 +15,7 @@ from validation_ui import (
     render_data_quality_metrics,
     render_reconciliation_view
 )
+from control_metrics import render_control_metrics
 from st_aggrid import GridOptionsBuilder, AgGrid
 
 # --- CONFIG & STYLES ---
@@ -75,7 +76,10 @@ for i, month in enumerate(visible_months):
         
         # 1. RESUMO
         render_vault_summary(m_data, dl_instance, month)
-        
+
+        # 1.5 CONTROL METRICS
+        render_control_metrics(m_data, dl_instance, month)
+
         # 2. RECORRENTES
         # Data Prep
         fixed_income_meta = {k: v for k, v in dl_instance.engine.budget.items() if v.get('type') == 'Income'}

@@ -169,6 +169,78 @@ Add to `budget.json`:
 
 ---
 
+### 7. **Control Metrics Dashboard** ✅ NEW
+
+**New File:** `control_metrics.py`
+
+**Class:** `ControlMetrics`
+
+**Calculations Implemented:**
+
+1. **A PAGAR (To Pay)**
+   - Scans budget for Fixed and Income items
+   - Checks if transactions exist in current month
+   - Returns total unpaid amount and list of pending items
+   ```python
+   a_pagar_total, a_pagar_items = controller.calculate_a_pagar()
+   # Returns: (20433.57, [{'category': 'ALUGUEL', 'amount': 5000, ...}])
+   ```
+
+2. **A ENTRAR (Expected Income)**
+   - Scans budget for Income items
+   - Compares expected vs received amounts
+   - Returns pending income total and breakdown
+   ```python
+   a_entrar_total, a_entrar_items = controller.calculate_a_entrar()
+   # Returns: (48000.0, [{'category': 'SALARIO', 'pending': 48000, ...}])
+   ```
+
+3. **PRÓXIMO FECHAMENTO (Days to Closing)**
+   - Calculates days until credit card closing (default: 10th of month)
+   - Handles month/year boundaries correctly
+   ```python
+   days = controller.calculate_days_to_closing(closing_day=10)
+   # Returns: 20 (if today is Jan 20 and closing is Feb 10)
+   ```
+
+4. **GASTO MAX ATUAL (Current Max Spend)**
+   - Breaks down spending by Fixed/Variable categories
+   - Compares against budget limits
+   - Returns remaining budget for each category
+   ```python
+   spend_data = controller.calculate_current_spend()
+   # Returns: {'total_spent': 101901.91, 'fixed_remaining': 5000, ...}
+   ```
+
+5. **GASTO DIÁRIO RECOMENDADO (Recommended Daily Spend)**
+   - Calculates variable budget remaining / days left in month
+   - Only for current month (past months show average per day)
+   ```python
+   daily = controller.calculate_recommended_daily_spend()
+   # Returns: 405.12 (variable remaining / days left)
+   ```
+
+6. **SAÚDE ORÇAMENTO (Budget Health)**
+   - Percentage of variable budget used
+   - Color-coded: green if <100%, red if ≥100%
+
+**UI Layout:**
+- 2 rows × 3 columns grid
+- Custom styled metrics with color coding
+- Expandable details for A PAGAR and A ENTRAR
+- Clean, modern card design
+
+**Integration:**
+```python
+# In dashboard.py
+from control_metrics import render_control_metrics
+
+# After RESUMO section
+render_control_metrics(m_data, dl_instance, month)
+```
+
+---
+
 ## 📂 File Structure
 
 ```
@@ -177,8 +249,9 @@ FinanceDashboard/
 ├── DataLoader.py              # ✨ Enhanced with validation
 ├── ValidationEngine.py        # 🆕 New validation framework
 ├── validation_ui.py           # 🆕 Validation UI components
+├── control_metrics.py         # 🆕 Control metrics dashboard
 ├── components.py              # ✨ Enhanced RESUMO & subcategories
-├── dashboard.py               # ✨ Added validation & investments
+├── dashboard.py               # ✨ Added validation, investments & control metrics
 ├── utils.py                   # (Unchanged)
 ├── styles.py                  # (Unchanged)
 ├── budget.json                # (User editable)
@@ -290,14 +363,16 @@ def _validate_custom_rule(self, df: pd.DataFrame):
    - ✅ Balance reconciliation
    - ✅ Completeness validation
 
-### 🟡 In Progress (Phase 2)
+5. **Control Metrics** ✅ COMPLETED
+   - ✅ A PAGAR (To Pay) - Shows unpaid recurring items with total and count
+   - ✅ A ENTRAR (Expected Income) - Shows pending income with breakdown
+   - ✅ GASTO MAX ATUAL (Current Max Spend) - Displays total spent vs budget
+   - ✅ PRÓXIMO FECHAMENTO (Days to Closing) - Credit card closing countdown
+   - ✅ GASTO DIÁRIO RECOMENDADO (Recommended Daily Spend) - Variable budget guidance
+   - ✅ SAÚDE ORÇAMENTO (Budget Health) - Variable budget usage percentage
+   - ✅ Expandable detail views for A PAGAR and A ENTRAR items
 
-5. **Control Metrics**
-   - 🔄 A PAGAR (To Pay)
-   - 🔄 A ENTRAR (Expected Income)
-   - 🔄 GASTO MAX ATUAL (Current Max Spend)
-   - 🔄 DIAS ATÉ FECHAMENTO (Days to Closing)
-   - 🔄 GASTO DIÁRIO RECOMENDADO (Recommended Daily Spend)
+### 🟡 In Progress (Phase 2)
 
 6. **Transaction Mapping UI**
    - 🔄 Manual transaction-to-recurring mapping dropdown
@@ -305,6 +380,10 @@ def _validate_custom_rule(self, df: pd.DataFrame):
 7. **Analytics Dashboard**
    - 🔄 Spending charts
    - 🔄 Category trends
+
+8. **Installment Progress Tracking**
+   - 🔄 Show installment status (e.g., "01/12 → 11 remaining")
+   - 🔄 Filter by installment status
 
 ---
 
@@ -425,4 +504,4 @@ For issues or questions:
 ---
 
 **Last Updated:** 2026-01-20
-**Version:** 1.0 (Phase 1 Complete)
+**Version:** 1.5 (Phase 1 Complete + Control Metrics)
