@@ -5,10 +5,15 @@ from DataLoader import DataLoader
 from styles import apply_custom_styles
 from utils import get_date_filter_strategy, build_checklist_data, filter_month_data
 from components import (
-    render_vault_summary, 
-    render_recurring_grid, 
+    render_vault_summary,
+    render_recurring_grid,
     render_cards_grid,
     render_transaction_editor
+)
+from validation_ui import (
+    render_validation_report,
+    render_data_quality_metrics,
+    render_reconciliation_view
 )
 from st_aggrid import GridOptionsBuilder, AgGrid
 
@@ -33,7 +38,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- DATA LOADING ---
-dl_instance = DataLoader() 
+dl_instance = DataLoader()
 # We reload data on every run for simplicity with this structure, or ideally cache
 dl = dl_instance
 df = dl.load_all()
@@ -41,6 +46,12 @@ df = dl.load_all()
 if df.empty:
     st.warning("No data found.")
     st.stop()
+
+# --- VALIDATION & QUALITY CHECKS ---
+# Render validation report at the top for visibility
+render_validation_report(dl_instance.validator)
+render_data_quality_metrics(df)
+render_reconciliation_view(df, dl_instance)
 
 # Ensure Date and Month String
 df['date'] = pd.to_datetime(df['date'])
@@ -78,31 +89,56 @@ for i, month in enumerate(visible_months):
         df_inc = build_checklist_data(fixed_income_meta, income_pool, is_expense=False)
         df_exp = build_checklist_data(fixed_expenses_meta, expenses_pool, is_expense=True)
         
-        # Tabs for Recorrentes
-        t_rec1, t_rec2, t_rec3, t_rec4 = st.tabs(["TODOS", "ENTRADAS", "FIXOS", "VARIÁVEIS"])
-        
+        # Prepare Investment Data
+        investment_meta = {k: v for k, v in dl_instance.engine.budget.items() if v.get('type') == 'Investment'}
+        investment_pool = m_data  # All transactions (could be income or expense for investments)
+        df_inv = build_checklist_data(investment_meta, investment_pool, is_expense=False)
+
+        # Tabs for Recorrentes - Added INVESTIMENTOS
+        t_rec1, t_rec2, t_rec3, t_rec4, t_rec5 = st.tabs(["TODOS", "ENTRADAS", "FIXOS", "VARIÁVEIS", "INVESTIMENTOS"])
+
         with t_rec1:
-            # Combine Income and Expenses for View
-            # We want to show a combined list of recurring items
-            df_combined = pd.concat([df_inc, df_exp], ignore_index=True)
+            # Combine all types for overview
+            df_combined = pd.concat([df_inc, df_exp, df_inv], ignore_index=True)
             if not df_combined.empty:
                 # Sort by Day
                 df_combined['DueNum'] = pd.to_numeric(df_combined['Due'], errors='coerce').fillna(99)
                 df_combined = df_combined.sort_values(by='DueNum')
-                render_recurring_grid(df_combined, f"rec_all_{month}", "Visão Geral (Entradas + Fixos)")
+                render_recurring_grid(df_combined, f"rec_all_{month}", "Visão Geral (Todos)")
             else:
                 st.info("Nenhuma recorrência cadastrada.")
-           
+
         with t_rec2:
             render_recurring_grid(df_inc, f"rec_inc_{month}", "Entradas Recorrentes")
-            
+
         with t_rec3:
             render_recurring_grid(df_exp, f"rec_exp_{month}", "Gastos Fixos")
-            
+
         with t_rec4:
-            # Variable items often don't have a "Recurring" checklist unless defined.
-            # Maybe show Transactions list here?
-             pass
+            # Variable items (show all variable transactions)
+            variable_txns = m_data[m_data['cat_type'] == 'Variable']
+            if not variable_txns.empty:
+                st.markdown(f"**Total Gastos Variáveis:** R$ {abs(variable_txns['amount'].sum()):,.2f}")
+                st.dataframe(
+                    variable_txns[['date', 'description', 'category', 'subcategory', 'amount']],
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("Nenhum gasto variável neste mês.")
+
+        with t_rec5:
+            render_recurring_grid(df_inv, f"rec_inv_{month}", "Investimentos Recorrentes")
+            # Show investment summary
+            if not m_data.empty:
+                inv_txns = m_data[m_data['cat_type'] == 'Investment']
+                if not inv_txns.empty:
+                    st.markdown(f"**Total Investido:** R$ {abs(inv_txns[inv_txns['amount'] < 0]['amount'].sum()):,.2f}")
+                    st.dataframe(
+                        inv_txns[['date', 'description', 'category', 'amount']],
+                        use_container_width=True,
+                        hide_index=True
+                    )
 
         # 3. CONTROLE CARTÕES
         st.markdown("### CONTROLE CARTÕES")

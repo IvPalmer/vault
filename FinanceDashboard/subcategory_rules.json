@@ -1,0 +1,57 @@
+{
+    "ANIMAIS": {
+        "VETERINARIO": "VETERINARIO",
+        "VET ": "VETERINARIO",
+        "CEV ": "VETERINARIO",
+        "REMEDIO": "REMEDIOS",
+        "MEDICAMENTO": "REMEDIOS",
+        "PETZ": "COMPRAS",
+        "PET": "COMPRAS"
+    },
+    "ALIMENTACAO": {
+        "RUA": "RUA",
+        "RESTAURANTE": "RUA",
+        "IFOOD": "RUA",
+        "RAPPI": "RUA",
+        "MERCADO": "MERCADO",
+        "SUPERMERCADO": "MERCADO",
+        "HORTIFRUTI": "MERCADO"
+    },
+    "SERVICOS": {
+        "ASSINATURA": "ASSINATURAS",
+        "NETFLIX": "ASSINATURAS",
+        "SPOTIFY": "ASSINATURAS",
+        "YOUTUBE": "ASSINATURAS",
+        "AMAZON PRIME": "ASSINATURAS",
+        "ADOBE": "ASSINATURAS"
+    },
+    "TRANSPORTE": {
+        "UBER": "OUTROS",
+        "99": "OUTROS",
+        "MANUTENCAO": "MANUTENCAO",
+        "REVISAO": "MANUTENCAO",
+        "COMBUSTIVEL": "COMBUSTIVEL",
+        "GASOLINA": "COMBUSTIVEL",
+        "ETANOL": "COMBUSTIVEL"
+    },
+    "COMPRAS GERAIS": {
+        "DECATHLON": "UTENSILIOS",
+        "LEROY": "UTENSILIOS",
+        "BOLOVO": "ROUPAS",
+        "ZARA": "ROUPAS",
+        "RENNER": "ROUPAS"
+    },
+    "CASA": {
+        "DECORACAO": "DECORACAO"
+    },
+    "MUSICA": {
+        "TTR": "TTR",
+        "DISCOGS": "DISCOS",
+        "RECORDSALE": "DISCOS"
+    },
+    "LAZER": {
+        "CINEMA": "ENTRETENIMENTO",
+        "TEATRO": "ENTRETENIMENTO",
+        "SHOW": "ENTRETENIMENTO"
+    }
+}

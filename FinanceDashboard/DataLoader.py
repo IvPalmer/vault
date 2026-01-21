@@ -1,4 +1,5 @@
 from CategoryEngine import CategoryEngine
+from ValidationEngine import ValidationEngine
 import pandas as pd
 import os
 import io
@@ -11,9 +12,11 @@ class DataLoader:
             self.data_dir = os.path.join(base_dir, "SampleData")
         else:
             self.data_dir = data_dir
-        
+
         self.transactions = pd.DataFrame()
         self.engine = CategoryEngine() # Initialize Engine
+        self.validator = ValidationEngine() # Initialize Validator
+        self.source_files = []  # Track loaded files for validation
         
     def load_all(self):
         """Loads all CSV/TXT files from the data directory."""
@@ -43,6 +46,7 @@ class DataLoader:
         
         for filename in files:
             path = os.path.join(self.data_dir, filename)
+            self.source_files.append(path)  # Track for validation
             try:
                 df = self._parse_file(path, filename)
                 if df is not None and not df.empty:
@@ -82,10 +86,25 @@ class DataLoader:
             def get_meta(cat):
                 m = self.engine.get_category_metadata(cat)
                 return pd.Series([m.get("type", "Variable"), m.get("limit", 0.0)])
-            
+
+            def get_subcategory(row):
+                """Extract subcategory from description based on category"""
+                return self.engine.categorize_subcategory(row['description'], row['category'])
+
             if not self.transactions.empty:
                  self.transactions[['cat_type', 'budget_limit']] = self.transactions['category'].apply(get_meta)
-        
+                 # Add subcategory column
+                 self.transactions['subcategory'] = self.transactions.apply(get_subcategory, axis=1)
+
+        # Run validation
+        validation_report = self.validator.validate_all(self.transactions, self.source_files, self)
+
+        # Print validation summary
+        self.validator.print_validation_summary()
+
+        # Save validation report
+        self.validator.generate_validation_report()
+
         return self.transactions
 
     def get_balance_override(self, month_str):

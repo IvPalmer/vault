@@ -155,80 +155,83 @@ def render_transaction_editor(dataframe, key_suffix, budget_keys):
     return show_df, edited_txns
 
 def render_vault_summary(month_df, dl_instance, month_str):
-    """Renders the specific VAULT summary with editable balance."""
+    """Renders the specific VAULT summary with editable balance - ENHANCED VERSION."""
     # Load persisted balance for this month
     saved_bal = dl_instance.get_balance_override(month_str)
-    
+
     # Calculate Flows
     income = 0.0
     parcelas = 0.0 # Installments
     fixed_exp = 0.0
     variable_exp = 0.0
-    
+    investments = 0.0
+
     if not month_df.empty:
         income = month_df[month_df['amount'] > 0]['amount'].sum()
-        
+
         expenses = month_df[month_df['amount'] < 0]
-        
-        # Categorize
-        # Parcelas: usually detected by "01/12" pattern in description or specific category if defined
-        # For now, simplistic check: logic should be in utils, but filtering here for speed
+
+        # Parcelas: transactions with installment pattern
         mask_parcelas = expenses['description'].str.contains(r'\d{1,2}/\d{1,2}', regex=True, na=False)
         parcelas = expenses[mask_parcelas]['amount'].sum()
-        
-        # Fixed vs Variable (excluding parcelas from these? or inclusive?)
-        # Usually Parcelas are Fixed/Variable. Let's assume they are a separate bucket for the user if requested.
-        # But commonly they double count if we aren't careful.
-        # Let's trust the 'cat_type' from engine.
-        
+
+        # Fixed, Variable, Investment
         fixed_exp = expenses[(expenses['cat_type'] == 'Fixed')]['amount'].sum()
         variable_exp = expenses[(expenses['cat_type'] == 'Variable')]['amount'].sum()
-        
+
+        # Investment transactions (could be positive or negative)
+        investments = month_df[month_df['cat_type'] == 'Investment']['amount'].sum()
+
     # Layout
     st.markdown("### RESUMO")
-    
-    # Balance Input Row
-    c_bal, _ = st.columns([1, 2])
-    with c_bal:
+
+    # Balance Input Row with additional context
+    col_bal, col_info = st.columns([1, 3])
+    with col_bal:
         current_val = saved_bal if saved_bal is not None else 0.0
-        new_bal = st.number_input("SALDO EM CONTA:", value=float(current_val), step=100.0, format="%.2f", key=f"bal_{month_str}")
+        new_bal = st.number_input(
+            "SALDO EM CONTA:",
+            value=float(current_val),
+            step=100.0,
+            format="%.2f",
+            key=f"bal_{month_str}",
+            help="Enter your current bank balance to track against calculated flow"
+        )
         if new_bal != current_val:
             dl_instance.save_balance_override(month_str, new_bal)
-            st.toast("Saldo atualizado!")
-            # Retain UI state? Rerun usually needed for full syncing but maybe not
-            
-    # Metrics Row (Green, Red, etc)
-    # Custom HTML for that "Sketchy" look or just standard metrics styled?
-    # User asked for:  ENTRADAS | PARCELAS | GASTOS FIXOS | GASTOS VARIAVEIS | SALDO
-    
-    # Calculations
-    # Saldo (Calculated) = Saldo Anterior (Manual?) + Income - Expenses?
-    # OR Saldo = The Manual Value? 
-    # Mockup implies "Saldo = 15.204" is the result of the math? 
-    # But "Saldo em Conta: 5.403" is top.
-    # Maybe "Saldo" at end is "Remaining"?
-    # Let's implement as: Manual Balance is the "Starting" or "Current Bank" match.
-    # Bottom Saldo is (Income + Expenses) Net Flow? Or (Manual + Net Flow)?
-    # Usually 'Saldo' in summary is Net Result.
-    
-    net_result = income + fixed_exp + variable_exp # expenses are negative
-    
+            st.toast("✅ Saldo atualizado!")
+
+    with col_info:
+        # Calculate percentages vs income
+        if income > 0:
+            fixed_pct = (abs(fixed_exp) / income) * 100
+            variable_pct = (abs(variable_exp) / income) * 100
+            investment_pct = (abs(investments) / income) * 100 if investments < 0 else 0
+
+            st.caption(f"**Budget Allocation:** Fixed {fixed_pct:.1f}% | Variable {variable_pct:.1f}% | Investment {investment_pct:.1f}% (Target: 50/30/20)")
+
+    st.markdown("")  # Spacing
+
+    # Net calculation
+    net_result = income + fixed_exp + variable_exp + (investments if investments < 0 else 0)
+
+    # 5-Column Metrics Row (matching mockup exactly)
     gm1, gm2, gm3, gm4, gm5 = st.columns(5)
-    
+
     def _metric_html(label, value, color):
         return f"""
-        <div style="background: white; padding: 10px; border-radius: 8px; border: 1px solid #e5e7eb; text-align: center;">
-            <div style="font-size: 1.5rem; font-weight: 700; color: {color};">{value:,.0f}</div>
-            <div style="font-size: 0.8rem; color: #6b7280; font-weight: 600; text-transform: uppercase;">{label}</div>
+        <div style="background: white; padding: 12px; border-radius: 8px; border: 2px solid #e5e7eb; text-align: center; min-height: 85px; display: flex; flex-direction: column; justify-content: center;">
+            <div style="font-size: 1.75rem; font-weight: 800; color: {color}; margin-bottom: 4px;">{value:,.0f}</div>
+            <div style="font-size: 0.75rem; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">{label}</div>
         </div>
         """
-        
+
     gm1.markdown(_metric_html("ENTRADAS", income, "#16a34a"), unsafe_allow_html=True)
-    gm2.markdown(_metric_html("PARCELAS", abs(parcelas), "#dc2626"), unsafe_allow_html=True)
+    gm2.markdown(_metric_html("PARCELAS", abs(parcelas), "#ea580c"), unsafe_allow_html=True)
     gm3.markdown(_metric_html("GASTOS FIXOS", abs(fixed_exp), "#dc2626"), unsafe_allow_html=True)
-    gm4.markdown(_metric_html("GASTOS VARIAVEIS", abs(variable_exp), "#dc2626"), unsafe_allow_html=True)
+    gm4.markdown(_metric_html("GASTOS VARIÁVEIS", abs(variable_exp), "#dc2626"), unsafe_allow_html=True)
     gm5.markdown(_metric_html("SALDO", net_result, "#16a34a" if net_result >= 0 else "#dc2626"), unsafe_allow_html=True)
-    
+
     st.markdown("---")
 
 def render_recurring_grid(df, key_suffix, title="RECORRENTES"):
@@ -310,11 +313,20 @@ def render_cards_grid(df, key_suffix):
     
     df['Parcela'] = df['description'].apply(extract_parcela)
     
-    gb = GridOptionsBuilder.from_dataframe(df[['date', 'category', 'description', 'amount', 'Parcela']])
-    
+    # Include subcategory if available
+    display_cols = ['date', 'category', 'subcategory', 'description', 'amount', 'Parcela']
+    # Filter only existing columns
+    display_cols = [c for c in display_cols if c in df.columns]
+
+    gb = GridOptionsBuilder.from_dataframe(df[display_cols])
+
     gb.configure_column("date", headerName="DATA", type=["dateColumn"], valueFormatter="x ? new Date(x).toLocaleDateString('pt-BR') : ''", width=110, pinned='left')
-    gb.configure_column("category", headerName="CATEGORIA", editable=True, width=150)
-    gb.configure_column("description", headerName="DESCRIÇÃO", editable=True, flex=3, minWidth=300)
+    gb.configure_column("category", headerName="CATEGORIA", editable=True, width=140)
+
+    if 'subcategory' in df.columns:
+        gb.configure_column("subcategory", headerName="SUBCATEGORIA", editable=True, width=140)
+
+    gb.configure_column("description", headerName="DESCRIÇÃO", editable=True, flex=3, minWidth=250)
     gb.configure_column("amount", headerName="VALOR", type=["numericColumn"], precision=2, width=130, aggFunc='sum')
     gb.configure_column("Parcela", headerName="PARCELA", width=100, cellStyle={'textAlign': 'center', 'fontWeight': 'bold', 'color': '#ea580c'})
     
