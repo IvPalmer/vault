@@ -71,32 +71,32 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| RECR-01 | TBD | Pending |
-| RECR-02 | TBD | Pending |
-| RECR-03 | TBD | Pending |
-| RECR-04 | TBD | Pending |
-| RECO-01 | TBD | Pending |
-| RECO-02 | TBD | Pending |
-| RECO-03 | TBD | Pending |
-| RECO-04 | TBD | Pending |
-| PROJ-01 | TBD | Pending |
-| PROJ-02 | TBD | Pending |
-| PROJ-03 | TBD | Pending |
-| BUDG-01 | TBD | Pending |
-| BUDG-02 | TBD | Pending |
-| BUDG-03 | TBD | Pending |
-| BUDG-04 | TBD | Pending |
-| BUDG-05 | TBD | Pending |
-| UIUX-01 | TBD | Pending |
-| UIUX-02 | TBD | Pending |
-| UIUX-03 | TBD | Pending |
-| UIUX-04 | TBD | Pending |
+| UIUX-01 | Phase 1 | Pending |
+| UIUX-02 | Phase 1 | Pending |
+| UIUX-03 | Phase 1 | Pending |
+| UIUX-04 | Phase 1 | Pending |
+| RECR-01 | Phase 2 | Pending |
+| RECR-02 | Phase 2 | Pending |
+| RECR-03 | Phase 2 | Pending |
+| RECR-04 | Phase 2 | Pending |
+| RECO-01 | Phase 3 | Pending |
+| RECO-02 | Phase 3 | Pending |
+| RECO-03 | Phase 3 | Pending |
+| RECO-04 | Phase 3 | Pending |
+| PROJ-01 | Phase 4 | Pending |
+| PROJ-02 | Phase 4 | Pending |
+| PROJ-03 | Phase 4 | Pending |
+| BUDG-01 | Phase 5 | Pending |
+| BUDG-02 | Phase 5 | Pending |
+| BUDG-03 | Phase 5 | Pending |
+| BUDG-04 | Phase 5 | Pending |
+| BUDG-05 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 20 total
-- Mapped to phases: 0
-- Unmapped: 20 (pending roadmap)
+- Mapped to phases: 20
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-01-22*
-*Last updated: 2026-01-22 after initial definition*
+*Last updated: 2026-01-22 after roadmap creation*
