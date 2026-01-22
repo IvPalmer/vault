@@ -9,7 +9,7 @@ import os
 def render_validation_report(validator):
     """Renders validation report in Streamlit UI"""
 
-    with st.expander("🔍 Data Validation Report", expanded=False):
+    with st.expander("[Validação] Relatório de Validação de Dados", expanded=False):
         # Summary metrics
         col1, col2, col3, col4 = st.columns(4)
 
@@ -40,15 +40,15 @@ def render_validation_report(validator):
             status = result['status']
 
             if status == 'PASS':
-                icon = "✅"
+                icon = "[OK]"
                 color = "#166534"
                 bg_color = "#dcfce7"
             elif status == 'WARN':
-                icon = "⚠️"
+                icon = "[Aviso]"
                 color = "#854d0e"
                 bg_color = "#fef9c3"
             elif status == 'FAIL':
-                icon = "❌"
+                icon = "[Erro]"
                 color = "#991b1b"
                 bg_color = "#fee2e2"
             else:
@@ -70,14 +70,14 @@ def render_validation_report(validator):
         # Errors section
         if errors > 0:
             st.markdown("---")
-            st.markdown("### ❌ Errors")
+            st.markdown("### [Erro] Errors")
             for error in validator.errors:
                 st.error(error)
 
         # Warnings section
         if warnings > 0:
             st.markdown("---")
-            st.markdown("### ⚠️ Warnings")
+            st.markdown("### [Aviso] Warnings")
             for warning in validator.warnings:
                 st.warning(warning)
 
@@ -98,13 +98,13 @@ def render_validation_report(validator):
 def render_data_quality_metrics(df):
     """Renders data quality metrics"""
 
-    with st.expander("📊 Data Quality Metrics", expanded=False):
+    with st.expander("[Métricas] Métricas de Qualidade de Dados", expanded=False):
         col1, col2, col3 = st.columns(3)
 
         with col1:
             st.markdown("#### Coverage")
             total = len(df)
-            categorized = len(df[df['category'] != 'Uncategorized'])
+            categorized = len(df[df['category'] != 'Não categorizado'])
             subcategorized = len(df[df['subcategory'].notna()])
 
             st.metric("Total Transactions", f"{total:,}")
@@ -136,7 +136,7 @@ def render_data_quality_metrics(df):
 def render_reconciliation_view(df, dl_instance):
     """Renders account reconciliation view"""
 
-    with st.expander("💰 Account Reconciliation", expanded=False):
+    with st.expander("[Detalhes] Reconciliação de Contas", expanded=False):
         st.markdown("### Monthly Balance by Account")
 
         if df.empty:
@@ -198,4 +198,4 @@ def render_reconciliation_view(df, dl_instance):
             st.warning(f"Found {len(discrepancies)} month(s) with balance discrepancies")
             st.dataframe(pd.DataFrame(discrepancies), use_container_width=True, hide_index=True)
         else:
-            st.success("✅ No balance discrepancies found")
+            st.success("[OK] No balance discrepancies found")

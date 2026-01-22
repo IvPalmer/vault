@@ -8,7 +8,7 @@ def check_coverage():
     all_rows = []
     
     files = [f for f in os.listdir(dl.data_dir) if not f.startswith(".")]
-    print(f"📂 Scanning {len(files)} files...")
+    print(f"[Arquivos] Scanning {len(files)} files...")
     
     for filename in files:
         path = os.path.join(dl.data_dir, filename)
@@ -37,13 +37,13 @@ def check_coverage():
     # Sort by month
     summary = summary.sort_index()
     
-    print("\n📊 Data Coverage (Row Counts per Month):")
+    print("\n[Métricas] Data Coverage (Row Counts per Month):")
     print("Columns: False = Raw Statements, True = Historical/Old App")
     pd.set_option('display.max_rows', None)
     print(summary)
     
     # Check specifically for gaps in 2025
-    print("\n🔍 Missing Data Analysis (2025):")
+    print("\n[Validação] Faltando Data Analysis (2025):")
     for acc in full_df['account'].unique():
         print(f"\n--- {acc} ---")
         acc_df = full_df[full_df['account'] == acc]
@@ -59,9 +59,9 @@ def check_coverage():
                 missing.append(str(m))
         
         if missing:
-            print(f"❌ Missing Months: {', '.join(missing)}")
+            print(f"[Erro] Faltando Months: {', '.join(missing)}")
         else:
-            print("✅ Full coverage for 2025-2026!")
+            print("[OK] Full coverage for 2025-2026!")
 
 if __name__ == "__main__":
     check_coverage()

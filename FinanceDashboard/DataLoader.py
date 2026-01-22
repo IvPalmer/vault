@@ -1,10 +1,22 @@
 from CategoryEngine import CategoryEngine
 from ValidationEngine import ValidationEngine
+from DataNormalizer import DataNormalizer
 import pandas as pd
 import os
 import io
 
 class DataLoader:
+    # ========== CUTOFF DATE CONFIGURATION ==========
+    # Historical Google Sheets data goes until Oct 3, 2025
+    # Card CSV exports start from various dates in 2024 (containing installments)
+    # Cutoff set to Sept 30, 2025 to avoid overlap and duplication
+    #
+    # RULE:
+    #   - Google Sheets: Use transactions BEFORE Sept 30, 2025 (no projections)
+    #   - Card CSVs: Use all transactions (they already contain real installments from bank)
+    #   - OFX files: Use all (checking account, no overlap issue)
+    HISTORICAL_CUTOFF = pd.Timestamp('2025-09-30')
+
     def __init__(self, data_dir=None):
         if data_dir is None:
             # Default to sibling SampleData folder
@@ -16,6 +28,7 @@ class DataLoader:
         self.transactions = pd.DataFrame()
         self.engine = CategoryEngine() # Initialize Engine
         self.validator = ValidationEngine() # Initialize Validator
+        self.normalizer = DataNormalizer(self.engine) # Initialize Normalizer
         self.source_files = []  # Track loaded files for validation
         
     def load_all(self):
@@ -36,13 +49,13 @@ class DataLoader:
             is_checking_txt = f.endswith(".txt") or ("extrato" in f.lower() and not f.endswith(".ofx"))
             
             if has_checking_ofx and is_checking_txt:
-                print(f"   ⏩ Skipping {f} (OFX available for Checking)")
+                print(f"   [Pulando] Skipping {f} (OFX available for Checking)")
                 continue
             
             filtered_files.append(f)
             
         files = filtered_files
-        print(f"📂 Found {len(files)} files to load")
+        print(f"[Arquivos] Found {len(files)} files to load")
         
         for filename in files:
             path = os.path.join(self.data_dir, filename)
@@ -60,9 +73,9 @@ class DataLoader:
                         
                     if not df.empty:
                         all_data.append(df)
-                        print(f"   ✅ Loaded {filename}: {len(df)} rows")
+                        print(f"   [OK] Loaded {filename}: {len(df)} rows")
             except Exception as e:
-                print(f"   ❌ Failed to load {filename}: {e}")
+                print(f"   [Erro] Failed to load {filename}: {e}")
                 
         # Load Manual Transactions
         manual_path = os.path.join(self.data_dir, "../manual_transactions.csv")
@@ -72,29 +85,34 @@ class DataLoader:
 
         if all_data:
             self.transactions = pd.concat(all_data, ignore_index=True)
-            
+
             # Deduplicate (Stronger Logic)
-            self.transactions.drop_duplicates(subset=['date', 'description', 'amount', 'account'], inplace=True)
-            
+            # Use description_original if available, otherwise description
+            dedup_cols = ['date', 'amount', 'account']
+            if 'description_original' in self.transactions.columns:
+                dedup_cols.append('description_original')
+            else:
+                dedup_cols.append('description')
+
+            self.transactions.drop_duplicates(subset=dedup_cols, inplace=True)
+
             self.transactions.sort_values(by='date', ascending=False, inplace=True)
-            
-            # Augment with Category Metadata (Type, Limit)
-            # We apply this AFTER concatenation so we only do it once per row efficiently
-            # However currently 'category' is applied during parse.
-            # Let's map it now.
-            
-            def get_meta(cat):
-                m = self.engine.get_category_metadata(cat)
-                return pd.Series([m.get("type", "Variable"), m.get("limit", 0.0)])
 
-            def get_subcategory(row):
-                """Extract subcategory from description based on category"""
-                return self.engine.categorize_subcategory(row['description'], row['category'])
-
+            # APPLY FULL NORMALIZATION using DataNormalizer
+            # This adds: description_original, is_installment, is_recurring,
+            # installment_info, is_internal_transfer, cat_type, etc.
             if not self.transactions.empty:
-                 self.transactions[['cat_type', 'budget_limit']] = self.transactions['category'].apply(get_meta)
-                 # Add subcategory column
-                 self.transactions['subcategory'] = self.transactions.apply(get_subcategory, axis=1)
+                # Get source account from 'account' column (set during parse)
+                # We normalize per-group to preserve source information
+                normalized_dfs = []
+
+                for source in self.transactions['account'].unique():
+                    source_df = self.transactions[self.transactions['account'] == source].copy()
+                    normalized_df = self.normalizer.normalize(source_df, source)
+                    normalized_dfs.append(normalized_df)
+
+                self.transactions = pd.concat(normalized_dfs, ignore_index=True)
+                self.transactions.sort_values(by='date', ascending=False, inplace=True)
 
         # Run validation
         validation_report = self.validator.validate_all(self.transactions, self.source_files, self)
@@ -203,9 +221,31 @@ class DataLoader:
         if "Visa" in account or "Master" in account:
              if 'amount' in df.columns:
                  df['amount'] = -df['amount'].abs()
-                 # If description is a Payment/Credit, make it positive
+
+                 # FILTER OUT PAYMENT ENTRIES
+                 # Credit card CSVs include the previous month's payment as multiple entries:
+                 # 1. PAGAMENTO EFETUADO: -30,200 (payment from checking)
+                 # 2. DEVOLUCAO SALDO CREDOR: +30,200 (credit applied to card)
+                 # 3. EST DEVOL SALDO CREDOR: -30,200 (reversal/adjustment)
+                 # Net effect: -30,200 (inflates the invoice total)
+                 # These are already captured in checking account, so we filter ALL of them
                  if 'description' in df.columns:
-                     mask_positive = df['description'].str.contains('PAGAMENTO|CREDITO|ESTORNO', case=False, na=False)
+                     # Remove payment-related transactions (duplicates from checking)
+                     payment_mask = df['description'].str.contains(
+                         'PAGAMENTO EFETUADO|DEVOLUCAO SALDO CREDOR|EST DEVOL SALDO CREDOR',
+                         case=False, na=False
+                     )
+                     original_count = len(df)
+                     df = df[~payment_mask].copy()
+                     filtered_count = original_count - len(df)
+
+                     if filtered_count > 0:
+                         print(f"   [Payment Filter] {os.path.basename(path)}: Removed {filtered_count} payment entries (already in checking)")
+
+                     # Keep real credits/refunds (actual money back, not payment-related)
+                     # CREDITO and ESTORNO are okay UNLESS they contain "SALDO CREDOR" (payment-related)
+                     mask_positive = df['description'].str.contains('CREDITO|ESTORNO', case=False, na=False) & \
+                                   ~df['description'].str.contains('SALDO CREDOR', case=False, na=False)
                      df.loc[mask_positive, 'amount'] = df.loc[mask_positive, 'amount'].abs()
 
         df['account'] = account
@@ -220,54 +260,90 @@ class DataLoader:
              df['category'] = df['description'].apply(self.engine.categorize)
         
         df['source'] = os.path.basename(path)
-        
-        # PROJECTION LOGIC
-        # Detect patterns like 01/05, 1/12
+
+        # INSTALLMENT FILTERING LOGIC
+        #
+        # Problem: Each card CSV contains installments from PREVIOUS purchases.
+        # Example: master-0126.csv contains:
+        #   - "Netflix 01/12" (1st installment)
+        #   - "Geladeira 06/10" (6th installment of purchase from months ago)
+        #
+        # If we load ALL CSVs, we get DUPLICATES:
+        #   - master-0126.csv has "Netflix 01/12"
+        #   - master-0226.csv has "Netflix 02/12" (SAME purchase, next installment)
+        #   - master-0326.csv has "Netflix 03/12" (SAME purchase, next installment)
+        #
+        # SOLUTION: Extract invoice month from filename and filter installments.
+        # Rule: Keep ONLY installments where current_installment matches the invoice month offset.
+        #
+        # For card files (master-MMYY.csv or visa-MMYY.csv):
+        # - Extract MM (invoice month number)
+        # - For installments "XX/YY", keep only if this is the file that should contain it
+        # - Non-installment transactions: always keep (new purchases)
+
         import re
-        
-        projections = []
-        
-        if 'description' in df.columns:
-            for idx, row in df.iterrows():
-                desc = str(row['description'])
-                match = re.search(r'(\d{1,2})/(\d{1,2})', desc)
-                if match:
-                    try:
-                        current = int(match.group(1))
-                        total = int(match.group(2))
-                        
-                        if 0 < current < total and total <= 24: # Sanity check (max 24 months)
-                            # Generate future rows
-                            remaining = total - current
-                            base_date = row['date']
-                            
-                            for i in range(1, remaining + 1):
-                                next_date = base_date + pd.DateOffset(months=i)
-                                next_install_num = current + i
-                                
-                                # Replace 01/05 with 02/05
-                                # Need to handle padding variations
-                                old_str = match.group(0)
-                                new_str = f"{next_install_num:02d}/{total:02d}"
-                                new_desc = desc.replace(old_str, new_str)
-                                
-                                proj_row = row.copy()
-                                proj_row['date'] = next_date
-                                proj_row['description'] = new_desc
-                                proj_row['source'] = f"Proj from {os.path.basename(path)}"
-                                projections.append(proj_row)
-                    except:
-                        pass
-                        
-        if projections:
-            proj_df = pd.DataFrame(projections)
-            df = pd.concat([df, proj_df], ignore_index=True)
+
+        # Extract invoice month from filename (e.g., "master-0126.csv" -> 01)
+        filename = os.path.basename(path).lower()
+        invoice_month_match = re.search(r'(master|visa)-(\d{2})(\d{2})\.csv', filename)
+
+        if invoice_month_match and ('master' in filename or 'visa' in filename):
+            invoice_month = int(invoice_month_match.group(2))  # 01, 02, 03, etc.
+            invoice_year = int('20' + invoice_month_match.group(3))  # 2025, 2026
+
+            # INVOICE PERIOD METADATA
+            # The CSV filename indicates the INVOICE month (when bill closes and gets paid)
+            # Example: master-0126.csv = January 2026 invoice
+            #   - Contains December 2025 purchases (close date: Dec 30, 2025)
+            #   - Payment date: Jan 5, 2026
+            #
+            # Invoice closes on day 30 of the PREVIOUS month
+            # So January invoice (0126) contains purchases from Dec 1-30
+
+            invoice_date = pd.Timestamp(year=invoice_year, month=invoice_month, day=1)
+
+            # Calculate close date: Last day of PREVIOUS month (day 30)
+            # For January invoice (0126), close date is Dec 30, 2025
+            if invoice_month == 1:
+                close_year = invoice_year - 1
+                close_month = 12
+            else:
+                close_year = invoice_year
+                close_month = invoice_month - 1
+
+            close_date = pd.Timestamp(year=close_year, month=close_month, day=30)
+
+            # Payment date: 5th day of invoice month
+            payment_date = pd.Timestamp(year=invoice_year, month=invoice_month, day=5)
+
+            # Add invoice metadata to each transaction
+            df['invoice_month'] = invoice_date.strftime('%Y-%m')
+            df['invoice_close_date'] = close_date
+            df['invoice_payment_date'] = payment_date
+
+            print(f"   [Invoice Period] {filename}: Invoice {invoice_date.strftime('%Y-%m')} | Close: {close_date.date()} | Payment: {payment_date.date()}")
+
+            # INSTALLMENT FILTERING DISABLED
+            #
+            # Previous logic filtered installments by number (01/XX in Jan, 02/XX in Feb, etc.)
+            # This was INCORRECT because:
+            #   - "01/XX" means "1st installment of XX", not "belongs to invoice month 01"
+            #   - Bank CSVs already contain the correct transactions for that invoice
+            #   - A January invoice includes ALL installments due in January (01/12, 02/12, 03/12, etc.)
+            #
+            # The bank CSV export is already filtered correctly by invoice period.
+            # We should trust it and NOT filter further by installment number.
         
         # Ensure cols
         target_cols = ['date', 'description', 'amount', 'account', 'category', 'source']
+
+        # Add invoice metadata if present (from card CSV files)
+        if 'invoice_month' in df.columns:
+            target_cols.extend(['invoice_month', 'invoice_close_date', 'invoice_payment_date'])
+
         for c in target_cols:
             if c not in df.columns: df[c] = None
-            
+
         return df[target_cols]
 
     def _parse_historical_csv(self, path, account):
@@ -289,7 +365,7 @@ class DataLoader:
                 if df is not None: break
             
             if df is None:
-                 print(f"   ⚠️ Could not parse structure of {os.path.basename(path)}")
+                 print(f"   [Aviso] Could not parse structure of {os.path.basename(path)}")
                  return pd.DataFrame()
 
             # Try auto-cleaning columns
@@ -361,7 +437,7 @@ class DataLoader:
                     if pd.isna(amt): return 0.0
                     
                     meta = self.engine.get_category_metadata(cat)
-                    ctype = meta.get('type', 'Variable')
+                    ctype = meta.get('type', 'Variável')
                     
                     if ctype == 'Income':
                         return abs(amt)
@@ -373,13 +449,22 @@ class DataLoader:
             df['amount'] = df.apply(fix_sign, axis=1)
 
             df['source'] = os.path.basename(path)
-            
+
+            # ===== APPLY CUTOFF DATE FOR HISTORICAL DATA =====
+            # Google Sheets historical data should only be used BEFORE the cutoff
+            # to avoid duplication with card CSV exports that contain real installments
+            if "finanças" in os.path.basename(path).lower():
+                original_count = len(df)
+                df = df[df['date'] < self.HISTORICAL_CUTOFF].copy()
+                filtered_count = len(df)
+                print(f"   [Cutoff] Google Sheets: {original_count} → {filtered_count} transactions (before {self.HISTORICAL_CUTOFF.date()})")
+
             target_cols = ['date', 'description', 'amount', 'account', 'category', 'source']
             for c in target_cols:
                 if c not in df.columns: df[c] = None
             return df[target_cols]
         except Exception as e:
-            print(f"   ❌ Error parsing {path}: {e}")
+            print(f"   [Erro] Error parsing {path}: {e}")
             return pd.DataFrame()
             
     def _parse_bank_txt(self, path, account):
@@ -485,7 +570,7 @@ class DataLoader:
                  return pd.DataFrame()
 
         except Exception as e:
-            print(f"   ❌ Error parsing OFX {path}: {e}")
+            print(f"   [Erro] Error parsing OFX {path}: {e}")
             return pd.DataFrame()
 
     def add_manual_transaction(self, date, description, amount, category, account="Manual"):

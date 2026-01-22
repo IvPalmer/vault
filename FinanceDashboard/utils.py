@@ -48,8 +48,8 @@ def build_checklist_data(meta_dict, transaction_pool, is_expense=True):
             actual = 0.0
             
         # Status Logic
-        status = "Paid" if actual >= (limit * 0.9) else "Pending" 
-        if actual == 0: status = "Missing"
+        status = "Pago" if actual >= (limit * 0.9) else "Pending" 
+        if actual == 0: status = "Faltando"
         
         # Details from PRIMARY match
         renamed_desc = ""
@@ -66,15 +66,15 @@ def build_checklist_data(meta_dict, transaction_pool, is_expense=True):
                 sources = matches['account'].unique()
                 source_str = ", ".join(sources)
         
-        # 2. SUGGESTION LOGIC (If Missing)
+        # 2. SUGGESTION LOGIC (If Faltando)
         suggested_desc = ""
         suggested_match_raw = ""
         
-        if status == "Missing" and not display_pool.empty and 'description' in display_pool.columns:
+        if status == "Faltando" and not display_pool.empty and 'description' in display_pool.columns:
             # A. Name Similarity
             # Use all available descriptions in the pool that are NOT already categorized as this item
-            # Only look at items that are either Uncategorized OR Categorized as something else (potential miscategory?)
-            # Usually we filter for Uncategorized or just search everything.
+            # Only look at items that are either Não categorizado OR Categorized as something else (potential miscategory?)
+            # Usually we filter for Não categorizado or just search everything.
             
             candidates = display_pool[display_pool['category'] != name] if 'category' in display_pool.columns else display_pool
             

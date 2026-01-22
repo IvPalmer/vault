@@ -8,7 +8,10 @@ from components import (
     render_vault_summary,
     render_recurring_grid,
     render_cards_grid,
-    render_transaction_editor
+    render_transaction_editor,
+    render_transaction_mapper,
+    render_installment_tracker,
+    render_analytics_dashboard
 )
 from validation_ui import (
     render_validation_report,
@@ -19,7 +22,7 @@ from control_metrics import render_control_metrics
 from st_aggrid import GridOptionsBuilder, AgGrid
 
 # --- CONFIG & STYLES ---
-st.set_page_config(page_title="THE VAULT", layout="wide", page_icon="🏦")
+st.set_page_config(page_title="THE VAULT", layout="wide", page_icon="")
 st.markdown(apply_custom_styles(), unsafe_allow_html=True)
 
 # Custom Title Style
@@ -48,11 +51,7 @@ if df.empty:
     st.warning("No data found.")
     st.stop()
 
-# --- VALIDATION & QUALITY CHECKS ---
-# Render validation report at the top for visibility
-render_validation_report(dl_instance.validator)
-render_data_quality_metrics(df)
-render_reconciliation_view(df, dl_instance)
+# Validation moved to settings area
 
 # Ensure Date and Month String
 df['date'] = pd.to_datetime(df['date'])
@@ -83,7 +82,7 @@ for i, month in enumerate(visible_months):
         # 2. RECORRENTES
         # Data Prep
         fixed_income_meta = {k: v for k, v in dl_instance.engine.budget.items() if v.get('type') == 'Income'}
-        fixed_expenses_meta = {k: v for k, v in dl_instance.engine.budget.items() if v.get('type') == 'Fixed'}
+        fixed_expenses_meta = {k: v for k, v in dl_instance.engine.budget.items() if v.get('type') == 'Fixo'}
         
         # Pools
         income_pool = m_data[m_data['amount'] > 0]
@@ -93,22 +92,21 @@ for i, month in enumerate(visible_months):
         df_inc = build_checklist_data(fixed_income_meta, income_pool, is_expense=False)
         df_exp = build_checklist_data(fixed_expenses_meta, expenses_pool, is_expense=True)
         
-        # Prepare Investment Data
-        investment_meta = {k: v for k, v in dl_instance.engine.budget.items() if v.get('type') == 'Investment'}
+        # Prepare Investimento Data
+        investment_meta = {k: v for k, v in dl_instance.engine.budget.items() if v.get('type') == 'Investimento'}
         investment_pool = m_data  # All transactions (could be income or expense for investments)
         df_inv = build_checklist_data(investment_meta, investment_pool, is_expense=False)
 
         # Tabs for Recorrentes - Added INVESTIMENTOS
+        st.markdown("### RECORRENTES")
         t_rec1, t_rec2, t_rec3, t_rec4, t_rec5 = st.tabs(["TODOS", "ENTRADAS", "FIXOS", "VARIÁVEIS", "INVESTIMENTOS"])
 
         with t_rec1:
             # Combine all types for overview
             df_combined = pd.concat([df_inc, df_exp, df_inv], ignore_index=True)
             if not df_combined.empty:
-                # Sort by Day
-                df_combined['DueNum'] = pd.to_numeric(df_combined['Due'], errors='coerce').fillna(99)
-                df_combined = df_combined.sort_values(by='DueNum')
-                render_recurring_grid(df_combined, f"rec_all_{month}", "Visão Geral (Todos)")
+                # Sort by Day (remove DueNum column - redundant with DATA)
+                render_recurring_grid(df_combined, f"rec_all_{month}", "")  # Remove subtitle
             else:
                 st.info("Nenhuma recorrência cadastrada.")
 
@@ -119,8 +117,8 @@ for i, month in enumerate(visible_months):
             render_recurring_grid(df_exp, f"rec_exp_{month}", "Gastos Fixos")
 
         with t_rec4:
-            # Variable items (show all variable transactions)
-            variable_txns = m_data[m_data['cat_type'] == 'Variable']
+            # Variável items (show all variable transactions)
+            variable_txns = m_data[m_data['cat_type'] == 'Variável']
             if not variable_txns.empty:
                 st.markdown(f"**Total Gastos Variáveis:** R$ {abs(variable_txns['amount'].sum()):,.2f}")
                 st.dataframe(
@@ -135,7 +133,7 @@ for i, month in enumerate(visible_months):
             render_recurring_grid(df_inv, f"rec_inv_{month}", "Investimentos Recorrentes")
             # Show investment summary
             if not m_data.empty:
-                inv_txns = m_data[m_data['cat_type'] == 'Investment']
+                inv_txns = m_data[m_data['cat_type'] == 'Investimento']
                 if not inv_txns.empty:
                     st.markdown(f"**Total Investido:** R$ {abs(inv_txns[inv_txns['amount'] < 0]['amount'].sum()):,.2f}")
                     st.dataframe(
@@ -159,3 +157,15 @@ for i, month in enumerate(visible_months):
 
         with t_card4:
              render_cards_grid(m_data[m_data['account'] == "Mastercard - Rafa"], f"card_raf_{month}")
+
+        # 4. MAPEAMENTO DE TRANSAÇÕES - COMMENTED OUT (user wants separate pages)
+        # st.markdown("---")
+        # render_transaction_mapper(m_data, dl_instance, f"mapper_{month}")
+
+        # 5. ACOMPANHAMENTO DE PARCELAS - COMMENTED OUT (user wants separate pages)
+        # st.markdown("---")
+        # render_installment_tracker(m_data, f"installments_{month}")
+
+        # 6. ANÁLISE E INSIGHTS - COMMENTED OUT (user wants separate pages)
+        # st.markdown("---")
+        # render_analytics_dashboard(m_data, month, dl_instance)

@@ -66,7 +66,7 @@ class CategoryEngine:
         
     def get_category_metadata(self, category):
         """Returns dict {type, limit} or default."""
-        return self.budget.get(category, {"type": "Variable", "limit": 0.0})
+        return self.budget.get(category, {"type": "Variável", "limit": 0.0})
 
     def apply_renames(self, description):
         """Renames description based on rules."""
@@ -83,7 +83,7 @@ class CategoryEngine:
     def categorize(self, description):
         """Returns category based on rules. Use categorize_full() for category + subcategory."""
         if not description or not isinstance(description, str):
-            return "Uncategorized"
+            return "Não categorizado"
 
         desc_upper = description.upper()
 
@@ -92,7 +92,7 @@ class CategoryEngine:
             if keyword in desc_upper:
                 return category
 
-        return "Uncategorized"
+        return "Não categorizado"
 
     def categorize_subcategory(self, description, category):
         """Returns subcategory based on subcategory rules for a given category."""

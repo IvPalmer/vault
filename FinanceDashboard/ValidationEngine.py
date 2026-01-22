@@ -69,9 +69,9 @@ class ValidationEngine:
             if not os.path.exists(filepath):
                 self.errors.append(f"Source file not found: {filepath}")
                 check['status'] = 'FAIL'
-                check['details'].append(f"❌ Missing: {filepath}")
+                check['details'].append(f"[Erro] Faltando: {filepath}")
             else:
-                check['details'].append(f"✅ Found: {os.path.basename(filepath)}")
+                check['details'].append(f"[OK] Found: {os.path.basename(filepath)}")
 
         self.validation_results.append(check)
 
@@ -87,27 +87,27 @@ class ValidationEngine:
 
         for col in required_cols:
             if col not in df.columns:
-                self.errors.append(f"Missing required column: {col}")
+                self.errors.append(f"Faltando required column: {col}")
                 check['status'] = 'FAIL'
-                check['details'].append(f"❌ Missing column: {col}")
+                check['details'].append(f"[Erro] Faltando column: {col}")
             else:
                 # Check for nulls
                 null_count = df[col].isna().sum()
                 if null_count > 0:
                     self.warnings.append(f"Column '{col}' has {null_count} null values")
-                    check['details'].append(f"⚠️ {col}: {null_count} nulls")
+                    check['details'].append(f"[Aviso] {col}: {null_count} nulls")
                 else:
-                    check['details'].append(f"✅ {col}: No nulls")
+                    check['details'].append(f"[OK] {col}: No nulls")
 
         # Validate date format
         if 'date' in df.columns:
             try:
                 pd.to_datetime(df['date'])
-                check['details'].append(f"✅ Date format valid")
+                check['details'].append(f"[OK] Date format valid")
             except:
                 self.errors.append("Invalid date format detected")
                 check['status'] = 'FAIL'
-                check['details'].append(f"❌ Date format invalid")
+                check['details'].append(f"[Erro] Date format invalid")
 
         self.validation_results.append(check)
 
@@ -136,9 +136,9 @@ class ValidationEngine:
                 # Check for unreasonable totals
                 if abs(total) > 1000000:  # Over 1M seems suspicious
                     self.warnings.append(f"{account} {month}: Unusually high total R$ {total:,.2f}")
-                    check['details'].append(f"⚠️ {account} {month}: R$ {total:,.2f} (high)")
+                    check['details'].append(f"[Aviso] {account} {month}: R$ {total:,.2f} (high)")
                 else:
-                    check['details'].append(f"✅ {account} {month}: R$ {total:,.2f}")
+                    check['details'].append(f"[OK] {account} {month}: R$ {total:,.2f}")
 
         self.validation_results.append(check)
 
@@ -154,10 +154,10 @@ class ValidationEngine:
         uncategorized = df[df['category'].isna() | (df['category'] == '')]
         if len(uncategorized) > 0:
             self.warnings.append(f"{len(uncategorized)} transactions without category")
-            check['details'].append(f"⚠️ {len(uncategorized)} uncategorized transactions")
+            check['details'].append(f"[Aviso] {len(uncategorized)} uncategorized transactions")
             check['status'] = 'WARN'
         else:
-            check['details'].append(f"✅ All {len(df)} transactions categorized")
+            check['details'].append(f"[OK] All {len(df)} transactions categorized")
 
         # Check for unknown categories (not in budget)
         budget_cats = set(dl_instance.engine.budget.keys())
@@ -166,10 +166,10 @@ class ValidationEngine:
 
         if unknown_cats:
             self.warnings.append(f"Categories not in budget: {unknown_cats}")
-            check['details'].append(f"⚠️ Unknown categories: {', '.join(unknown_cats)}")
+            check['details'].append(f"[Aviso] Unknown categories: {', '.join(unknown_cats)}")
             check['status'] = 'WARN'
         else:
-            check['details'].append(f"✅ All categories defined in budget")
+            check['details'].append(f"[OK] All categories defined in budget")
 
         self.validation_results.append(check)
 
@@ -183,7 +183,7 @@ class ValidationEngine:
 
         # Get all recurring items from budget
         recurring_items = {k: v for k, v in dl_instance.engine.budget.items()
-                          if v.get('type') in ['Fixed', 'Income']}
+                          if v.get('type') in ['Fixo', 'Income']}
 
         # Check each month
         df['month_str'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m')
@@ -199,11 +199,11 @@ class ValidationEngine:
 
             if missing:
                 missing_count += len(missing)
-                self.warnings.append(f"{month}: Missing recurring items: {missing}")
-                check['details'].append(f"⚠️ {month}: {len(missing)} items missing")
+                self.warnings.append(f"{month}: Faltando recurring items: {missing}")
+                check['details'].append(f"[Aviso] {month}: {len(missing)} items missing")
 
         if missing_count == 0:
-            check['details'].append(f"✅ All recurring items present in all months")
+            check['details'].append(f"[OK] All recurring items present in all months")
         else:
             check['status'] = 'WARN'
 
@@ -223,14 +223,14 @@ class ValidationEngine:
         if len(duplicates) > 0:
             dup_groups = duplicates.groupby(['date', 'description', 'amount', 'account']).size()
             self.warnings.append(f"Found {len(dup_groups)} potential duplicate transaction groups")
-            check['details'].append(f"⚠️ {len(duplicates)} potential duplicates detected")
+            check['details'].append(f"[Aviso] {len(duplicates)} potential duplicates detected")
             check['status'] = 'WARN'
 
             # Show examples
             for idx, count in list(dup_groups.items())[:5]:  # Show first 5
                 check['details'].append(f"   • {idx[0]} - {idx[1]}: R$ {idx[2]} ({count}x)")
         else:
-            check['details'].append(f"✅ No duplicate transactions detected")
+            check['details'].append(f"[OK] No duplicate transactions detected")
 
         self.validation_results.append(check)
 
@@ -262,10 +262,10 @@ class ValidationEngine:
 
             if len(large_gaps) > 0:
                 self.warnings.append(f"{account}: {len(large_gaps)} gaps > 60 days")
-                check['details'].append(f"⚠️ {account}: {len(large_gaps)} large gaps")
+                check['details'].append(f"[Aviso] {account}: {len(large_gaps)} large gaps")
                 check['status'] = 'WARN'
             else:
-                check['details'].append(f"✅ {account}: No large gaps")
+                check['details'].append(f"[OK] {account}: No large gaps")
 
         self.validation_results.append(check)
 
@@ -281,18 +281,18 @@ class ValidationEngine:
         zero_amounts = df[df['amount'] == 0]
         if len(zero_amounts) > 0:
             self.warnings.append(f"{len(zero_amounts)} transactions with R$ 0.00")
-            check['details'].append(f"⚠️ {len(zero_amounts)} zero-amount transactions")
+            check['details'].append(f"[Aviso] {len(zero_amounts)} zero-amount transactions")
 
         # Check for extremely large amounts (potential data errors)
         large_amounts = df[abs(df['amount']) > 100000]  # > R$ 100k
         if len(large_amounts) > 0:
             self.warnings.append(f"{len(large_amounts)} transactions > R$ 100,000")
-            check['details'].append(f"⚠️ {len(large_amounts)} very large transactions")
+            check['details'].append(f"[Aviso] {len(large_amounts)} very large transactions")
             for idx, row in large_amounts.head(3).iterrows():
                 check['details'].append(f"   • {row['date']}: {row['description']} - R$ {row['amount']:,.2f}")
 
         if len(zero_amounts) == 0 and len(large_amounts) == 0:
-            check['details'].append(f"✅ All amounts within reasonable range")
+            check['details'].append(f"[OK] All amounts within reasonable range")
 
         self.validation_results.append(check)
 
@@ -323,21 +323,21 @@ class ValidationEngine:
     def print_validation_summary(self):
         """Print a console-friendly validation summary"""
         print("\n" + "="*60)
-        print("🔍 VALIDATION REPORT")
+        print("[Validação] VALIDATION REPORT")
         print("="*60)
 
         for result in self.validation_results:
-            status_icon = "✅" if result['status'] == 'PASS' else "⚠️" if result['status'] == 'WARN' else "❌"
+            status_icon = "[OK]" if result['status'] == 'PASS' else "[Aviso]" if result['status'] == 'WARN' else "[Erro]"
             print(f"\n{status_icon} {result['check']}")
             for detail in result.get('details', []):
                 print(f"  {detail}")
 
         print("\n" + "="*60)
-        print(f"📊 SUMMARY")
+        print(f"[Métricas] SUMMARY")
         print("="*60)
         print(f"Total Checks: {len(self.validation_results)}")
-        print(f"✅ Passed: {len([r for r in self.validation_results if r['status'] == 'PASS'])}")
-        print(f"⚠️ Warnings: {len(self.warnings)}")
-        print(f"❌ Errors: {len(self.errors)}")
+        print(f"[OK] Passed: {len([r for r in self.validation_results if r['status'] == 'PASS'])}")
+        print(f"[Aviso] Warnings: {len(self.warnings)}")
+        print(f"[Erro] Errors: {len(self.errors)}")
         print(f"\nOverall Status: {'🟢 PASS' if len(self.errors) == 0 else '🔴 FAIL'}")
         print("="*60 + "\n")

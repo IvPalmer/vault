@@ -4,7 +4,7 @@ def apply_custom_styles():
         /* Import Fonts */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-        /* Light Theme Variables */
+        /* Light Theme Variávels */
         :root {
             --bg-color: #f3f4f6;
             --card-bg: #ffffff;

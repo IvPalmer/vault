@@ -33,7 +33,7 @@ class ControlMetrics:
 
         # Get all fixed and income items from budget
         recurring_items = {k: v for k, v in self.budget.items()
-                          if v.get('type') in ['Fixed', 'Income']}
+                          if v.get('type') in ['Fixo', 'Income']}
 
         for category, meta in recurring_items.items():
             # Check if this category appears in month's transactions
@@ -49,7 +49,7 @@ class ControlMetrics:
                         'due_day': meta.get('day', 'N/A'),
                         'type': meta.get('type')
                     })
-                    if meta.get('type') == 'Fixed':
+                    if meta.get('type') == 'Fixo':
                         total += expected_amount
 
         return total, unpaid_items
@@ -115,14 +115,14 @@ class ControlMetrics:
         expenses = self.month_df[self.month_df['amount'] < 0]
 
         total_spent = abs(expenses['amount'].sum())
-        fixed_spent = abs(expenses[expenses['cat_type'] == 'Fixed']['amount'].sum())
-        variable_spent = abs(expenses[expenses['cat_type'] == 'Variable']['amount'].sum())
+        fixed_spent = abs(expenses[expenses['cat_type'] == 'Fixo']['amount'].sum())
+        variable_spent = abs(expenses[expenses['cat_type'] == 'Variável']['amount'].sum())
 
         # Calculate budget limits
         fixed_budget = sum([v.get('limit', 0) for k, v in self.budget.items()
-                           if v.get('type') == 'Fixed'])
+                           if v.get('type') == 'Fixo'])
         variable_budget = sum([v.get('limit', 0) for k, v in self.budget.items()
-                              if v.get('type') == 'Variable'])
+                              if v.get('type') == 'Variável'])
 
         return {
             'total_spent': total_spent,
@@ -137,7 +137,7 @@ class ControlMetrics:
     def calculate_recommended_daily_spend(self) -> float:
         """
         Calculate recommended daily spend based on:
-        - Variable budget remaining
+        - Variável budget remaining
         - Days left in month
         """
         spend_data = self.calculate_current_spend()
@@ -251,25 +251,9 @@ class ControlMetrics:
                 health_color
             ), unsafe_allow_html=True)
 
-        # Expandable details
+        # Expandable details - REMOVED per user request
+        # User requested removal of "[Detalhes] Detalhes A PAGAR" and "[Receitas] Detalhes A ENTRAR" menus
         st.markdown("---")
-
-        with st.expander("💰 Detalhes A PAGAR", expanded=False):
-            if a_pagar_items:
-                df_ap = pd.DataFrame(a_pagar_items)
-                df_ap['amount'] = df_ap['amount'].apply(lambda x: f"R$ {x:,.2f}")
-                st.dataframe(df_ap, use_container_width=True, hide_index=True)
-            else:
-                st.success("✅ Todos os itens fixos foram pagos!")
-
-        with st.expander("💵 Detalhes A ENTRAR", expanded=False):
-            if a_entrar_items:
-                df_ae = pd.DataFrame(a_entrar_items)
-                for col in ['expected', 'received', 'pending']:
-                    df_ae[col] = df_ae[col].apply(lambda x: f"R$ {x:,.2f}")
-                st.dataframe(df_ae, use_container_width=True, hide_index=True)
-            else:
-                st.success("✅ Todas as receitas foram recebidas!")
 
 def render_control_metrics(month_df, dl_instance, month_str):
     """Main function to render control metrics panel"""

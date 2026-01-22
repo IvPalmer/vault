@@ -14,7 +14,7 @@ def verify():
     jan_expenses = jan_data[jan_data['amount'] < 0]['amount'].sum()
     print(f"\n📅 Jan 2026 Expenses: R$ {abs(jan_expenses):,.2f}")
     
-    print("\n🔍 Breakdown by Source (Jan 2026):")
+    print("\n[Validação] Breakdown by Source (Jan 2026):")
     breakdown = jan_data[jan_data['amount'] < 0].groupby('source')['amount'].sum()
     print(breakdown)
     
@@ -42,15 +42,15 @@ def verify():
     # "Pix Aut SEM PARAR" should be -94.17
     sem_parar = df[df['description'].str.contains("SEM PARAR", na=False)]
     if not sem_parar.empty:
-        print(f"\n✅ Found 'SEM PARAR': {sem_parar.iloc[0]['amount']}")
+        print(f"\n[OK] Found 'SEM PARAR': {sem_parar.iloc[0]['amount']}")
     else:
-        print("\n❌ 'SEM PARAR' not found!")
+        print("\n[Erro] 'SEM PARAR' not found!")
         
-    print("\n🔍 Top 5 Positive Transactions (Visa/Master):")
+    print("\n[Validação] Top 5 Positive Transactions (Visa/Master):")
     positives = df[(df['amount'] > 0) & (df['account'].isin(['Visa Infinite', 'Mastercard Black']))]
     print(positives.sort_values(by='amount', ascending=False).head(5)[['date', 'description', 'amount', 'account']])
     
-    print("\n🔍 Top 5 Duplicate Candidates (Description match):")
+    print("\n[Validação] Top 5 Duplicate Candidates (Description match):")
     # Check for "UBER" or similar common matches
     matches = df[df['description'].str.contains("UBER", na=False, case=False)]
     print(matches.head(10)[['date', 'description', 'amount', 'account']])
