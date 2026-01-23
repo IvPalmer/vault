@@ -4,19 +4,70 @@ def apply_custom_styles():
         /* Import Fonts */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-        /* Light Theme Variávels */
+        /* Design System Tokens */
         :root {
+            /* Colors - Base */
             --bg-color: #f3f4f6;
             --card-bg: #ffffff;
             --text-primary: #111827;
             --text-secondary: #6b7280;
             --accent-color: #2563eb; /* Royal Blue */
             --border-color: #e5e7eb;
+
+            /* Colors - Semantic */
+            --color-positive: #16a34a;     /* Green - income, success */
+            --color-positive-bg: #dcfce7;
+            --color-negative: #dc2626;     /* Red - expenses, errors */
+            --color-negative-bg: #fee2e2;
+            --color-warning: #ea580c;      /* Orange - installments, alerts */
+            --color-warning-bg: #ffedd5;
+            --color-neutral: #6b7280;      /* Gray - secondary info */
+            --color-neutral-bg: #f3f4f6;
+
+            /* Legacy semantic colors (for backward compatibility) */
             --success-bg: #dcfce7;
             --success-text: #166534;
             --danger-bg: #fee2e2;
             --danger-text: #991b1b;
+
+            /* Spacing Scale */
+            --spacing-xs: 4px;
+            --spacing-sm: 8px;
+            --spacing-md: 16px;
+            --spacing-lg: 24px;
+            --spacing-xl: 32px;
+            --spacing-2xl: 48px;
+
+            /* Typography - Font Sizes */
+            --font-size-xs: 0.75rem;   /* 12px - labels */
+            --font-size-sm: 0.875rem;  /* 14px - secondary text */
+            --font-size-base: 1rem;    /* 16px - body */
+            --font-size-lg: 1.125rem;  /* 18px - subheadings */
+            --font-size-xl: 1.25rem;   /* 20px - section titles */
+            --font-size-2xl: 1.5rem;   /* 24px - page titles */
+            --font-size-3xl: 2rem;     /* 32px - hero */
+
+            /* Typography - Font Weights */
+            --font-weight-normal: 400;
+            --font-weight-medium: 500;
+            --font-weight-semibold: 600;
+            --font-weight-bold: 700;
+
+            /* Typography - Line Heights */
+            --line-height-tight: 1.25;
+            --line-height-normal: 1.5;
+            --line-height-relaxed: 1.75;
+
+            /* Shadows */
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.05);
+            --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+
+            /* Border Radius */
             --border-radius: 12px;
+            --border-radius-sm: 8px;
+
+            /* Font Family */
             --font-main: 'Inter', sans-serif;
         }
 
