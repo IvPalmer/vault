@@ -4,6 +4,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from table_component import VaultTable, create_recurring_table, create_cards_table
 
 def render_summary_cards(month_df):
     """Renders the top summary cards with defensive column checks."""
@@ -87,49 +88,42 @@ def render_fixed_management(dl_instance, month_str):
             st.rerun()
 
 def render_checklist_grid(df, key_suffix, is_income=False):
-    """Renders the standard AgGrid for Fixo Items with FLEX columns."""
+    """Renders the standard table for Fixo Items using VaultTable."""
     if df.empty:
         st.info("No items to display.")
         return None
-        
-    gb = GridOptionsBuilder.from_dataframe(df)
-    
-    # Flex configuration to fill width
-    gb.configure_column("Item", pinned="left", editable=False, minWidth=150, flex=2)
-    gb.configure_column("Renamed", editable=True, flex=2) 
-    gb.configure_column("Original", editable=False, hide=True) # Hide original to save space
-    gb.configure_column("Source", hide=True)
-    gb.configure_column("Due", hide=True) 
-    
-    gb.configure_column("Actual", type=["numericColumn"], precision=2, cellStyle={'fontWeight': 'bold'}, flex=1)
-    gb.configure_column("Expected", type=["numericColumn"], precision=2, editable=True, flex=1)
-    
-    gb.configure_column("Suggested Match", flex=2, cellStyle={'fontStyle': 'italic', 'color': '#6b7280'})
-    
-    # Status styling
-    status_js = JsCode("""
-    function(params) {
-        if (params.value == 'Pago') return {'color': '#166534', 'backgroundColor': '#dcfce7', 'fontWeight': '600', 'borderRadius': '4px', 'textAlign': 'center'};
-        if (params.value == 'Faltando') return {'color': '#991b1b', 'backgroundColor': '#fee2e2', 'fontWeight': '600', 'borderRadius': '4px', 'textAlign': 'center'};
-        return {'color': '#854d0e', 'backgroundColor': '#fef9c3', 'borderRadius': '4px', 'textAlign': 'center'};
-    }
-    """)
-    gb.configure_column("Status", cellStyle=status_js, flex=1, minWidth=100)
-    gb.configure_column("_raw_match", hide=True)
-    
-    gb.configure_selection('single')
-    gb.configure_grid_options(domLayout='autoHeight') # Auto height!
-    
-    return AgGrid(
-        df, 
-        gridOptions=gb.build(), 
-        fit_columns_on_grid_load=True, # Force fit
-        width='100%', # explicit
-        allow_unsafe_jscode=True, 
-        key=key_suffix,
-        update_mode=GridUpdateMode.SELECTION_CHANGED | GridUpdateMode.VALUE_CHANGED,
-        theme='alpine' # Cleaner light theme
-    )
+
+    # Create VaultTable instance
+    table = VaultTable(df, empty_message="No items to display.")
+
+    # Configure columns
+    table.configure_column("Item", header_name="Item", pinned="left", min_width=150, flex=2)
+    table.configure_column("Renamed", editable=True, flex=2)
+    table.configure_column("Original", hide=True)
+    table.configure_column("Source", hide=True)
+    table.configure_column("Due", hide=True)
+
+    # Numeric columns
+    actual_style = JsCode("function(params) { return {'fontWeight': 'bold'}; }")
+    table.configure_column("Actual", numeric=True, cell_style=actual_style, flex=1)
+    table.configure_column("Expected", numeric=True, editable=True, flex=1)
+
+    # Suggested Match column
+    match_style = JsCode("function(params) { return {'fontStyle': 'italic', 'color': '#6b7280'}; }")
+    table.configure_column("Suggested Match", flex=2, cell_style=match_style)
+
+    # Status column with badge styling
+    table.configure_status_badge("Status")
+    table.configure_column("Status", flex=1, min_width=100)
+
+    # Hide internal columns
+    table.configure_column("_raw_match", hide=True)
+
+    # Single selection
+    table.configure_selection(mode='single')
+
+    # Render
+    return table.render(key=key_suffix)
 
 def render_transaction_editor(dataframe, key_suffix, budget_keys):
     """Renders the interactive transaction editor."""
@@ -281,8 +275,8 @@ def render_vault_summary(month_df, dl_instance, month_str):
 
 def render_recurring_grid(df, key_suffix, title="RECORRENTES"):
     """
-    Simulates the structure:
-    DATA | TIPO | DESCRIÇÃO | VALOR | STATUS | TRANSAÇÃO MAPEADA
+    Renders recurring items table using VaultTable.
+    Structure: DATA | DESCRIÇÃO | VALOR | STATUS | TRANSAÇÃO MAPEADA
     """
     # Only show title if provided
     if title:
@@ -292,53 +286,15 @@ def render_recurring_grid(df, key_suffix, title="RECORRENTES"):
         st.info("Nenhum item.")
         return
 
-    gb = GridOptionsBuilder.from_dataframe(df)
-    
-    # Columns Mapping
-    # We expect 'Item' (Category/Rule Name) -> DESCRIÇÃO
-    # Expected -> VALOR (Target)
-    # Status -> STATUS
-    # Suggested Match -> TRANSAÇÃO MAPEADA
+    # Use factory function for recurring tables
+    table = create_recurring_table(df, key=key_suffix)
 
-    gb.configure_column("Due", headerName="DATA", width=70)
-    gb.configure_column("Item", headerName="DESCRIÇÃO", flex=2)
-    gb.configure_column("Expected", headerName="VALOR", type=["numericColumn"], precision=2, editable=True, flex=1)
-    
-    # Status Badge
-    status_js = JsCode("""
-    function(params) {
-        if (params.value == 'Pago') return {'backgroundColor': '#dcfce7', 'color': '#166534', 'borderRadius': '4px', 'textAlign': 'center', 'fontWeight': 'bold'};
-        if (params.value == 'Faltando') return {'backgroundColor': '#fee2e2', 'color': '#991b1b', 'borderRadius': '4px', 'textAlign': 'center', 'fontWeight': 'bold'};
-        return {'backgroundColor': '#f3f4f6', 'color': '#1f2937'};
-    }
-    """)
-    gb.configure_column("Status", headerName="STATUS", cellStyle=status_js, flex=1)
-    
-    # Transação Mapeada (Ideally a dropdown, but for now Text showing the match)
-    gb.configure_column("Suggested Match", headerName="TRANSAÇÃO MAPEADA", flex=3, cellStyle={'fontStyle': 'italic', 'color': '#4b5563'})
-    
-    # Hide others
-    gb.configure_column("Renamed", hide=True)
-    gb.configure_column("Original", hide=True)
-    gb.configure_column("Source", hide=True)
-    gb.configure_column("Actual", hide=True)
-    gb.configure_column("_raw_match", hide=True)
-
-    gb.configure_selection('single')
-    
-    AgGrid(
-        df, 
-        gridOptions=gb.build(), 
-        height=400, 
-        width='100%', 
-        fit_columns_on_grid_load=True, 
-        allow_unsafe_jscode=True, 
-        key=key_suffix,
-        update_mode=GridUpdateMode.SELECTION_CHANGED | GridUpdateMode.VALUE_CHANGED
-    )
+    # Render the table
+    table.render(key=key_suffix)
 
 def render_cards_grid(df, key_suffix):
     """
+    Renders credit card transactions table using VaultTable.
     Structure: DATA | CARTÃO | CATEGORIA | SUBCATEGORIA | DESCRIÇÃO | VALOR | PARCELA
     Fixed height container with internal scroll (500px)
     """
@@ -346,50 +302,11 @@ def render_cards_grid(df, key_suffix):
         st.info("Sem transações de cartão.")
         return
 
-    # Prepare data specifically for this view
-    df = df.copy()
-    import re
-    def extract_parcela(desc):
-        m = re.search(r'(\d{1,2}/\d{1,2})', str(desc))
-        return m.group(1) if m else "-"
+    # Use factory function for card tables
+    table = create_cards_table(df, key=key_suffix)
 
-    df['Parcela'] = df['description'].apply(extract_parcela)
-
-    # Include account column if showing all cards (TODOS view)
-    display_cols = ['date', 'account', 'category', 'subcategory', 'description', 'amount', 'Parcela']
-    # Filter only existing columns
-    display_cols = [c for c in display_cols if c in df.columns]
-
-    gb = GridOptionsBuilder.from_dataframe(df[display_cols])
-
-    gb.configure_column("date", headerName="DATA", type=["dateColumn"], valueFormatter="x ? new Date(x).toLocaleDateString('pt-BR') : ''", width=110, pinned='left')
-
-    # Add account column for TODOS view
-    if 'account' in df.columns:
-        gb.configure_column("account", headerName="CARTÃO", width=150)
-
-    gb.configure_column("category", headerName="CATEGORIA", editable=True, width=140)
-
-    if 'subcategory' in df.columns:
-        gb.configure_column("subcategory", headerName="SUBCATEGORIA", editable=True, width=140)
-
-    gb.configure_column("description", headerName="DESCRIÇÃO", editable=True, flex=3, minWidth=250)
-    gb.configure_column("amount", headerName="VALOR", type=["numericColumn"], precision=2, width=130, aggFunc='sum')
-    gb.configure_column("Parcela", headerName="PARCELA", width=100, cellStyle={'textAlign': 'center', 'fontWeight': 'bold', 'color': '#ea580c'})
-
-    gb.configure_selection('multiple', use_checkbox=True)
-    gb.configure_side_bar() # Enable sidebar for filtering
-
-    # Fixed height container with internal scroll
-    AgGrid(
-        df,
-        gridOptions=gb.build(),
-        height=500,
-        width='100%',
-        allow_unsafe_jscode=True,
-        key=key_suffix,
-        theme='alpine'
-    )
+    # Render the table
+    table.render(key=key_suffix)
 
 def render_transaction_mapper(df, dl_instance, key_suffix):
     """
