@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 1 of 5 (UI Foundation)
-Plan: 2 of 5 in current phase
+Plan: 4 of 5 in current phase
 Status: In progress
-Last activity: 2026-01-23 — Completed 01-02-PLAN.md (Design System)
+Last activity: 2026-01-23 — Completed 01-04-PLAN.md (Inline Dropdown Component)
 
-Progress: [████░░░░░░] 40%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 2
-- Average duration: 3.4 min
-- Total execution time: 0.11 hours
+- Total plans completed: 4
+- Average duration: 2.9 min
+- Total execution time: 0.19 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01-ui-foundation | 2 | 6.7 min | 3.4 min |
+| 01-ui-foundation | 4 | 11.6 min | 2.9 min |
 
 **Recent Trend:**
-- Last 5 plans: 3 min, 3.7 min
-- Trend: Consistent velocity
+- Last 5 plans: 3 min, 3.7 min, 2.2 min, 2 min
+- Trend: Improving velocity
 
 *Updated after each plan completion*
 
@@ -53,6 +53,9 @@ Recent decisions affecting current work:
 - CSS custom properties for all design tokens (01-02)
 - Semantic color naming: positive/negative/warning (01-02)
 - Inter font standardized across all UI elements (01-02)
+- Use Streamlit native selectbox for dropdown components (01-04)
+- Provide helper functions for category/subcategory/transaction dropdowns (01-04)
+- Support grouped options in API but render flat for now (01-04)
 
 ### Pending Todos
 
@@ -65,5 +68,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-23 (plan execution)
-Stopped at: Completed 01-02-PLAN.md (Design System)
+Stopped at: Completed 01-04-PLAN.md (Inline Dropdown Component)
 Resume file: None
