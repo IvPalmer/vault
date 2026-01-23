@@ -232,5 +232,86 @@ def apply_custom_styles():
             font-weight: var(--font-weight-semibold);
         }
 
+        /* Dropdown Component Styling */
+        .stSelectbox div[data-baseweb="select"] {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius-sm);
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+
+        .stSelectbox div[data-baseweb="select"]:hover {
+            border-color: var(--accent-color);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .stSelectbox div[data-baseweb="select"]:focus-within {
+            border-color: var(--accent-color);
+            outline: 2px solid rgba(37, 99, 235, 0.1);
+            outline-offset: 1px;
+        }
+
+        /* Dropdown Menu */
+        div[data-baseweb="popover"] {
+            box-shadow: var(--shadow-lg);
+            border-radius: var(--border-radius-sm);
+            border: 1px solid var(--border-color);
+            background-color: var(--card-bg);
+        }
+
+        /* Dropdown Options */
+        div[role="option"] {
+            padding: var(--spacing-sm) var(--spacing-md);
+            font-size: var(--font-size-sm);
+            color: var(--text-primary);
+            transition: background-color 0.15s ease;
+        }
+
+        div[role="option"]:hover {
+            background-color: var(--color-neutral-bg);
+            color: var(--accent-color);
+        }
+
+        div[aria-selected="true"] {
+            background-color: rgba(37, 99, 235, 0.1);
+            color: var(--accent-color);
+            font-weight: var(--font-weight-medium);
+        }
+
+        /* Group Headers in Dropdown */
+        div[role="presentation"] > div[role="group"] {
+            border-top: 1px solid var(--border-color);
+            margin-top: var(--spacing-xs);
+            padding-top: var(--spacing-xs);
+        }
+
+        div[role="presentation"] > div[role="group"]:first-child {
+            border-top: none;
+            margin-top: 0;
+            padding-top: 0;
+        }
+
+        /* Clear Option Styling */
+        div[role="option"][data-value="None"],
+        div[role="option"][data-value="Não categorizado"] {
+            color: var(--text-secondary);
+            font-style: italic;
+            border-top: 1px solid var(--border-color);
+            margin-top: var(--spacing-xs);
+        }
+
+        /* Dropdown Search Input */
+        div[data-baseweb="select"] input {
+            font-size: var(--font-size-sm);
+            color: var(--text-primary);
+            padding: var(--spacing-xs);
+        }
+
+        div[data-baseweb="select"] input::placeholder {
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
     </style>
     """
