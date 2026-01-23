@@ -11,8 +11,10 @@ from components import (
     render_transaction_editor,
     render_transaction_mapper,
     render_installment_tracker,
-    render_analytics_dashboard
+    render_analytics_dashboard,
+    render_fixed_management
 )
+from table_component import VaultTable
 from validation_ui import (
     render_validation_report,
     render_data_quality_metrics,
@@ -161,21 +163,71 @@ with tab_analytics:
 
 # --- SETTINGS TAB ---
 with tab_settings:
-    st.markdown("### Settings")
+    st.markdown("## Settings")
 
-    # Nested tabs for settings sections
+    # Nested tabs for settings sections (styled as secondary via design system CSS)
     settings_tabs = st.tabs(["Categories", "Rules", "Budgets", "Import"])
 
     with settings_tabs[0]:  # Categories
-        st.info("Category management will be implemented in future phase")
+        st.markdown("### Category Management")
+
+        # Build categories dataframe from budget configuration
+        categories_data = []
+        for cat_name, cat_meta in dl_instance.engine.budget.items():
+            categories_data.append({
+                'Category': cat_name,
+                'Type': cat_meta.get('type', 'Variavel'),
+                'Limit': cat_meta.get('limit', 0.0)
+            })
+
+        if categories_data:
+            categories_df = pd.DataFrame(categories_data)
+            cat_table = VaultTable(
+                dataframe=categories_df,
+                key="settings_categories",
+                empty_message="No categories configured.",
+                show_checkbox=False,
+                show_actions=True
+            )
+            cat_table.configure_column('Category', header_name='CATEGORIA', flex=2)
+            cat_table.configure_column('Type', header_name='TIPO', width=120)
+            cat_table.configure_column('Limit', header_name='LIMITE', numeric=True, width=130)
+            cat_table.render(key="settings_categories")
+        else:
+            st.info("No categories configured yet.")
 
     with settings_tabs[1]:  # Rules
-        st.info("Rule management will be implemented in future phase")
+        st.markdown("### Categorization Rules")
+
+        # Build rules dataframe from engine rules
+        rules_data = []
+        for keyword, category in dl_instance.engine.rules.items():
+            rules_data.append({
+                'Keyword': keyword,
+                'Category': category
+            })
+
+        if rules_data:
+            rules_df = pd.DataFrame(rules_data)
+            rules_table = VaultTable(
+                dataframe=rules_df,
+                key="settings_rules",
+                empty_message="No categorization rules configured.",
+                show_checkbox=False,
+                show_actions=True
+            )
+            rules_table.configure_column('Keyword', header_name='PALAVRA-CHAVE', flex=2)
+            rules_table.configure_column('Category', header_name='CATEGORIA', flex=2)
+            rules_table.render(key="settings_rules")
+        else:
+            st.info("No categorization rules configured yet.")
 
     with settings_tabs[2]:  # Budgets
-        st.markdown("#### Budget Management")
-        # Fixed management placeholder
-        st.info("Budget/fixed expense management will be implemented in future phase")
+        st.markdown("### Budget Configuration")
+
+        # Render the fixed management component
+        render_fixed_management(dl_instance, "settings")
 
     with settings_tabs[3]:  # Import
-        st.info("Data import tools will be implemented in future phase")
+        st.markdown("### Import Settings")
+        st.info("Import configuration coming in a future phase.")
