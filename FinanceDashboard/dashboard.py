@@ -25,21 +25,8 @@ from st_aggrid import GridOptionsBuilder, AgGrid
 st.set_page_config(page_title="THE VAULT", layout="wide", page_icon="")
 st.markdown(apply_custom_styles(), unsafe_allow_html=True)
 
-# Custom Title Style
-st.markdown("""
-<style>
-    .vault-title {
-        font-family: 'Outfit', sans-serif;
-        font-size: 3rem;
-        font-weight: 800;
-        letter-spacing: 0.1rem;
-        color: #fca5a5; /* Light Orange/Peach tone */
-        text-shadow: 2px 2px 0px #000000;
-        margin-bottom: 20px;
-    }
-</style>
-<div class='vault-title'>THE VAULT</div>
-""", unsafe_allow_html=True)
+# Custom Title (styled via design system in styles.py)
+st.markdown("<div class='vault-title'>THE VAULT</div>", unsafe_allow_html=True)
 
 # --- DATA LOADING ---
 dl_instance = DataLoader()

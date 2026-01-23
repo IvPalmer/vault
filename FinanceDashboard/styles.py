@@ -76,51 +76,68 @@ def apply_custom_styles():
             background-color: var(--bg-color);
             font-family: var(--font-main);
             color: var(--text-primary);
+            padding: var(--spacing-lg);
         }
 
         h1, h2, h3, h4 {
             font-family: var(--font-main) !important;
-            font-weight: 600;
+            font-weight: var(--font-weight-semibold);
             color: var(--text-primary);
             letter-spacing: -0.02em;
         }
-        
+
         h1 {
-            font-weight: 700;
+            font-weight: var(--font-weight-bold);
             background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
+        }
+
+        h3 {
+            margin-top: var(--spacing-xl);
+            margin-bottom: var(--spacing-md);
+            font-size: var(--font-size-xl);
+        }
+
+        /* Custom Vault Title */
+        .vault-title {
+            font-size: var(--font-size-3xl);
+            font-weight: var(--font-weight-bold);
+            color: var(--accent-color);
+            letter-spacing: -0.02em;
+            margin-bottom: var(--spacing-lg);
+            line-height: var(--line-height-tight);
         }
 
         /* Card Styling (Metrics & content containers) */
         .stMetric, .element-container .stMarkdown, .stDataFrame {
             border-radius: var(--border-radius);
         }
-        
+
         .stMetric {
             background-color: var(--card-bg);
-            padding: 16px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            padding: var(--spacing-md);
+            box-shadow: var(--shadow-sm);
             border: 1px solid var(--border-color);
         }
 
         [data-testid="stMetricValue"] {
-            font-size: 1.8rem !important;
-            font-weight: 700 !important;
+            font-size: var(--font-size-2xl) !important;
+            font-weight: var(--font-weight-bold) !important;
             color: var(--text-primary) !important;
         }
-        
+
         [data-testid="stMetricLabel"] {
-            font-size: 0.9rem !important;
+            font-size: var(--font-size-sm) !important;
             color: var(--text-secondary) !important;
-            font-weight: 500 !important;
+            font-weight: var(--font-weight-medium) !important;
         }
 
         /* Tabs - Main Navigation */
         .stTabs [data-baseweb="tab-list"] {
             gap: var(--spacing-xl);
             background-color: var(--card-bg);
-            padding: 12px 20px;
+            padding: var(--spacing-sm) var(--spacing-lg);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             margin-bottom: var(--spacing-lg);
@@ -133,7 +150,7 @@ def apply_custom_styles():
             color: var(--text-secondary);
             font-weight: var(--font-weight-medium);
             font-size: var(--font-size-base);
-            padding-bottom: 12px;
+            padding-bottom: var(--spacing-sm);
             transition: color 0.2s ease;
         }
 
@@ -158,7 +175,7 @@ def apply_custom_styles():
         .stTabs .stTabs [data-baseweb="tab"] {
             font-size: var(--font-size-sm);
             font-weight: var(--font-weight-normal);
-            padding-bottom: 8px;
+            padding-bottom: var(--spacing-sm);
         }
 
         .stTabs .stTabs [aria-selected="true"] {
@@ -168,35 +185,51 @@ def apply_custom_styles():
 
         /* Buttons */
         .stButton button {
-            border-radius: 8px;
-            font-weight: 500;
+            border-radius: var(--border-radius-sm);
+            font-weight: var(--font-weight-medium);
             border: none;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            box-shadow: var(--shadow-sm);
             transition: transform 0.1s;
         }
-        
+
         .stButton button:hover {
              transform: translateY(-1px);
         }
 
         /* Dataframe Headers */
         .stDataFrame div[data-testid="stHorizontalBlock"] {
-            background: red; 
+            background: red;
         }
 
         div[data-testid="stExpander"] {
             background-color: var(--card-bg);
             border: 1px solid var(--border-color);
             border-radius: var(--border-radius);
-            box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+            box-shadow: var(--shadow-sm);
         }
-        
+
         /* Input Fields */
         .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] {
             background-color: var(--card-bg);
             border: 1px solid var(--border-color);
             color: var(--text-primary);
-            border-radius: 8px;
+            border-radius: var(--border-radius-sm);
+        }
+
+        /* Amount Styling */
+        .amount-positive {
+            color: var(--color-positive);
+            font-weight: var(--font-weight-semibold);
+        }
+
+        .amount-negative {
+            color: var(--color-negative);
+            font-weight: var(--font-weight-semibold);
+        }
+
+        .amount-warning {
+            color: var(--color-warning);
+            font-weight: var(--font-weight-semibold);
         }
 
     </style>
