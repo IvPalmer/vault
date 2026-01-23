@@ -29,10 +29,14 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. All table/grid components use standardized OOP pattern and behave consistently
   3. User can perform actions inline (dropdowns in cells) without floating panels
   4. Navigation uses tab-based structure (Monthly Overview, Analytics, Settings)
-**Plans**: TBD
+**Plans**: 5 plans
 
 Plans:
-- [ ] TBD during planning
+- [ ] 01-01-PLAN.md — Restructure navigation to three-tab layout (Overview, Analytics, Settings)
+- [ ] 01-02-PLAN.md — Create design system with typography, spacing, and color tokens
+- [ ] 01-03-PLAN.md — Build standardized VaultTable component with consistent behavior
+- [ ] 01-04-PLAN.md — Create InlineDropdown component for cell-level editing
+- [ ] 01-05-PLAN.md — Integrate all components and add row actions/export
 
 ### Phase 2: Recurrent Management
 **Goal**: User can define and manage expected monthly recurring transactions
@@ -97,7 +101,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. UI Foundation | 0/0 | Not started | - |
+| 1. UI Foundation | 0/5 | Planned | - |
 | 2. Recurrent Management | 0/0 | Not started | - |
 | 3. Transaction Reconciliation | 0/0 | Not started | - |
 | 4. Future Projections | 0/0 | Not started | - |
