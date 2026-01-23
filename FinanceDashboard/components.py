@@ -273,10 +273,16 @@ def render_vault_summary(month_df, dl_instance, month_str):
 
     st.markdown("---")
 
-def render_recurring_grid(df, key_suffix, title="RECORRENTES"):
+def render_recurring_grid(df, key_suffix, title="RECORRENTES", show_export=True):
     """
     Renders recurring items table using VaultTable.
     Structure: DATA | DESCRIÇÃO | VALOR | STATUS | TRANSAÇÃO MAPEADA
+
+    Args:
+        df: DataFrame with recurring items
+        key_suffix: Unique key for table
+        title: Section title (empty string to skip)
+        show_export: Show CSV export button
     """
     # Only show title if provided
     if title:
@@ -289,14 +295,22 @@ def render_recurring_grid(df, key_suffix, title="RECORRENTES"):
     # Use factory function for recurring tables
     table = create_recurring_table(df, key=key_suffix)
 
-    # Render the table
-    table.render(key=key_suffix)
+    # Render with or without export
+    if show_export:
+        table.render_with_export(key=key_suffix)
+    else:
+        table.render(key=key_suffix)
 
-def render_cards_grid(df, key_suffix):
+def render_cards_grid(df, key_suffix, show_export=True):
     """
     Renders credit card transactions table using VaultTable.
     Structure: DATA | CARTÃO | CATEGORIA | SUBCATEGORIA | DESCRIÇÃO | VALOR | PARCELA
     Fixed height container with internal scroll (500px)
+
+    Args:
+        df: DataFrame with card transactions
+        key_suffix: Unique key for table
+        show_export: Show CSV export button
     """
     if df.empty:
         st.info("Sem transações de cartão.")
@@ -305,8 +319,11 @@ def render_cards_grid(df, key_suffix):
     # Use factory function for card tables
     table = create_cards_table(df, key=key_suffix)
 
-    # Render the table
-    table.render(key=key_suffix)
+    # Render with or without export
+    if show_export:
+        table.render_with_export(key=key_suffix)
+    else:
+        table.render(key=key_suffix)
 
 def render_transaction_mapper(df, dl_instance, key_suffix):
     """

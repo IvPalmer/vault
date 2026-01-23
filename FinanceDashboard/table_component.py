@@ -28,16 +28,23 @@ class VaultTable:
         result = table.render(key="my_table")
     """
 
-    def __init__(self, dataframe, empty_message="No data to display."):
+    def __init__(self, dataframe, key="table", empty_message="No data to display.",
+                 show_checkbox=True, show_actions=False):
         """
         Initialize VaultTable with a DataFrame.
 
         Args:
             dataframe: pandas DataFrame to display
+            key: Unique key for the table component
             empty_message: Message to show when DataFrame is empty
+            show_checkbox: Show selection checkboxes
+            show_actions: Show three-dot action menu column
         """
         self.df = dataframe
+        self.key = key
         self.empty_message = empty_message
+        self.show_checkbox = show_checkbox
+        self.show_actions = show_actions
         self.gb = None
         self.selection_mode = None
         self.height = 400
@@ -292,6 +299,9 @@ class VaultTable:
         else:
             filtered_df = self.df
 
+        # Add action column if enabled
+        self._add_action_column()
+
         # Render AG Grid
         grid_options = self.gb.build()
 
@@ -329,6 +339,89 @@ class VaultTable:
             return pd.DataFrame(selected)
 
         return pd.DataFrame()
+
+    def _add_action_column(self):
+        """Add three-dot action menu column."""
+        if not self.show_actions or self.gb is None:
+            return
+
+        # Add _actions column to dataframe if not present
+        if '_actions' not in self.df.columns:
+            self.df = self.df.copy()
+            self.df['_actions'] = ''
+
+        # AG Grid action menu using custom cell renderer
+        action_renderer = JsCode("""
+        class ActionRenderer {
+            init(params) {
+                this.params = params;
+                this.eGui = document.createElement('div');
+                this.eGui.innerHTML = `
+                    <button class="action-btn" style="
+                        background: none;
+                        border: none;
+                        cursor: pointer;
+                        font-size: 18px;
+                        padding: 4px 8px;
+                        color: #6b7280;
+                    " title="Actions">&#8942;</button>
+                `;
+            }
+            getGui() { return this.eGui; }
+        }
+        """)
+
+        self.gb.configure_column(
+            '_actions',
+            headerName='',
+            width=50,
+            cellRenderer=action_renderer,
+            pinned='right',
+            suppressMenu=True,
+            sortable=False
+        )
+
+    def render_with_export(self, key=None):
+        """
+        Render table with export button above.
+
+        Args:
+            key: Optional key override for the table
+
+        Returns:
+            AgGrid response object
+        """
+        render_key = key or self.key
+
+        # Handle empty state
+        if self.df.empty:
+            st.info(self.empty_message)
+            return None
+
+        col1, col2 = st.columns([4, 1])
+
+        with col2:
+            csv = self.df.to_csv(index=False)
+            st.download_button(
+                label="Export CSV",
+                data=csv,
+                file_name=f"{render_key}_export.csv",
+                mime="text/csv",
+                key=f"{render_key}_download"
+            )
+
+        return self.render(key=render_key)
+
+    def _export_csv(self):
+        """Export current dataframe to CSV download."""
+        csv = self.df.to_csv(index=False)
+        st.download_button(
+            label="Download",
+            data=csv,
+            file_name=f"{self.key}_export.csv",
+            mime="text/csv",
+            key=f"{self.key}_download"
+        )
 
 
 # Convenience factory functions for common table patterns
