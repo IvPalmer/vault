@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 1 of 5 (UI Foundation)
-Plan: 4 of 5 in current phase
+Plan: 3 of 5 in current phase
 Status: In progress
-Last activity: 2026-01-23 — Completed 01-04-PLAN.md (Inline Dropdown Component)
+Last activity: 2026-01-23 — Completed 01-03-PLAN.md (Standardized Table Component)
 
-Progress: [████████░░] 80%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: 2.9 min
-- Total execution time: 0.19 hours
+- Total plans completed: 3
+- Average duration: 3.5 min
+- Total execution time: 0.17 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01-ui-foundation | 4 | 11.6 min | 2.9 min |
+| 01-ui-foundation | 3 | 10.5 min | 3.5 min |
 
 **Recent Trend:**
-- Last 5 plans: 3 min, 3.7 min, 2.2 min, 2 min
-- Trend: Improving velocity
+- Last 5 plans: 3 min, 3.7 min, 3.8 min
+- Trend: Consistent velocity
 
 *Updated after each plan completion*
 
@@ -53,9 +53,10 @@ Recent decisions affecting current work:
 - CSS custom properties for all design tokens (01-02)
 - Semantic color naming: positive/negative/warning (01-02)
 - Inter font standardized across all UI elements (01-02)
-- Use Streamlit native selectbox for dropdown components (01-04)
-- Provide helper functions for category/subcategory/transaction dropdowns (01-04)
-- Support grouped options in API but render flat for now (01-04)
+- Single VaultTable class wraps st_aggrid for all dashboard tables (01-03)
+- Factory functions for common table patterns (recurring, cards) (01-03)
+- Color-coded amounts use design system semantic colors (01-03)
+- Global search enabled by default for tables with >5 rows (01-03)
 
 ### Pending Todos
 
@@ -68,5 +69,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-23 (plan execution)
-Stopped at: Completed 01-04-PLAN.md (Inline Dropdown Component)
+Stopped at: Completed 01-03-PLAN.md (Standardized Table Component)
 Resume file: None
