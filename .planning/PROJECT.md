@@ -10,65 +10,69 @@ A personal finance dashboard that imports bank and credit card extracts to give 
 
 Everything else — recurrent tracking, installment visibility, budget alerts, habit suggestions — serves this goal.
 
+## Architecture
+
+**Stack (current — post-rewrite):**
+- Backend: Django 5.2 + Django REST Framework, PostgreSQL 15
+- Frontend: React 18 + Vite, TanStack Table/Query, Recharts
+- Deploy: Docker Compose or local start.sh
+- Legacy: FinanceDashboard/ (Streamlit) kept for data import pipeline
+
+**Key files:**
+- `backend/api/services.py` — all business logic (2000+ lines)
+- `backend/api/models.py` — 9 Django models
+- `backend/api/views.py` — 20+ API endpoints
+- `src/components/` — 17 React components
+- `src/api/client.js` — API wrapper
+- `src/context/MonthContext.jsx` — global month state
+
 ## Requirements
 
-### Validated
+### Validated (Shipped)
 
-<!-- Shipped and confirmed valuable. Inferred from existing codebase. -->
+- ✓ Multi-source transaction import (CSV, OFX, TXT from checking and credit cards)
+- ✓ Auto-categorization via keyword rules engine
+- ✓ Installment detection and flagging (XX/YY pattern)
+- ✓ Duplicate detection and deduplication logic
+- ✓ Month-based transaction filtering and navigation
+- ✓ Control metrics (A PAGAR, A ENTRAR, GASTO DIÁRIO, etc.)
+- ✓ Validation engine with data integrity checks
+- ✓ Budget metadata per category (limits, types)
+- ✓ Transaction description normalization (renames)
+- ✓ Subcategory classification
 
-- ✓ Multi-source transaction import (CSV, OFX, TXT from checking and credit cards) — existing
-- ✓ Auto-categorization via keyword rules engine — existing
-- ✓ Installment detection and flagging (XX/YY pattern) — existing
-- ✓ Duplicate detection and deduplication logic — existing
-- ✓ Month-based transaction filtering and navigation — existing
-- ✓ Basic control metrics (A PAGAR, A ENTRAR) — existing
-- ✓ Validation engine with data integrity checks — existing
-- ✓ Budget metadata per category (limits, types) — existing
-- ✓ Transaction description normalization (renames) — existing
-- ✓ Subcategory classification — existing
-
-### Active
-
-<!-- Current scope. Building toward these. -->
+### Implemented (Post-rewrite)
 
 **Recurrent Transaction Management:**
-- [ ] Configurable list of expected monthly recurrents (salary, rent, subscriptions, etc.)
-- [ ] Recurrents editable per month (values change, items deleted, new items added)
-- [ ] Support positive (income) and negative (expenses/investments) recurrents
-- [ ] Distinguish fixed recurrents (rent, therapy) from variable (credit card payment)
+- [x] Configurable list of expected monthly recurrents (templates in Settings)
+- [x] Recurrents editable per month (values, items, skip/restore)
+- [x] Support positive (income) and negative (expenses/investments) recurrents
+- [x] Distinguish fixed/variable/income/investment types
 
 **Transaction Reconciliation:**
-- [ ] Link recurrent items to actual transactions from extracts to mark as paid/received
-- [ ] Inline dropdown picker from "mapped transaction" cell
-- [ ] Smart suggestions based on name, date, expected value
-- [ ] Search and browse all transactions option
-- [ ] Filter picker to current month only (prevent cross-month mistakes)
-- [ ] Credit card payment reconciliation (match checking withdrawal to card total)
+- [x] Link recurrent items to actual transactions (TransactionPicker)
+- [x] Inline dropdown picker from mapped-transaction cell
+- [x] Smart suggestions based on name/date/amount similarity
+- [x] Search and browse all transactions
+- [x] Filter picker to current month only
 
-**Future Month Projections:**
-- [ ] View any month with projected installments + expected recurrents
-- [ ] Clearly distinguish actual transactions from projections
-- [ ] Cash flow forecast: will balance go negative before next salary?
+**Future Projections:**
+- [x] 6-month projection chart + breakdown table
+- [x] UI distinguishes actual vs projected (PROJETADO badge)
+- [x] Cash flow forecast with cumulative balance line
 
-**Installment Analytics:**
-- [ ] Dedicated analytics tab for installment deep-dive
-- [ ] Visibility into installment commitments across future months
-- [ ] Impact on monthly available budget
+**Budgeting (Partial):**
+- [x] Category spending limits with progress bars (Orçamento section)
+- [x] Visual alerts when category spending exceeds limit (red/orange/green)
+- [ ] AI-powered spending analysis and suggestions
+- [ ] Multiple budget profiles
+- [ ] Target savings percentage
 
-**Smart Budgeting:**
-- [ ] Intelligent algorithm that analyzes spending habits
-- [ ] Auto-suggested budget based on historical patterns
-- [ ] Editable category limits with overspending alerts
-- [ ] Multiple budget profiles (overall, vacation, new equipment, etc.)
-- [ ] AI suggestions for lifestyle/habit changes to stay within budget
-- [ ] Target savings percentage based on income
-
-**Modern UI Overhaul:**
-- [ ] Minimalistic, clean design
-- [ ] Inline interactions (dropdowns in cells, not floating panels)
-- [ ] Standardized OOP components (tables look/behave consistently)
-- [ ] Intuitive tab-based navigation (Monthly Overview, Analytics, Settings)
-- [ ] Integrated artifacts — no disjointed control panels
+**Modern UI:**
+- [x] Clean React SPA with tab navigation (Overview, Analytics, Settings)
+- [x] Inline interactions (InlineEdit, TransactionPicker)
+- [x] Standardized VaultTable component (sorting, search, semantic colors)
+- [x] CSS Module design system with custom properties
 
 ### Out of Scope
 
@@ -81,38 +85,30 @@ Everything else — recurrent tracking, installment visibility, budget alerts, h
 
 ## Context
 
-**Current State:**
-- Working ETL pipeline: DataLoader, CategoryEngine, DataNormalizer, ValidationEngine
-- Streamlit dashboard with month tabs and basic metrics
-- JSON-based configuration (budget.json, rules.json, renames.json, subcategory_rules.json)
-- ~7800 transactions loaded across 4 accounts, 32 months of history
-- Auto-categorization working but needs validation/tuning
-- UI is functional but amateur-looking, interactions are clunky
-
 **The Problem Being Solved:**
-User is caught in an overdraft cycle: salary arrives, credit card payment drains account, not enough left for monthly bills, forced to use negative balance with fees/interest until next salary. Almost out of it but needs complete visibility and control to stay out permanently.
+User is caught in an overdraft cycle: salary arrives, credit card payment drains account, not enough left for monthly bills, forced to use negative balance with fees/interest until next salary. Needs complete visibility and control to stay out permanently.
 
-**Technical Environment:**
-- Python 3.13.1 with Streamlit
-- pandas for data processing, Plotly for charts, AG Grid for tables
-- Local file storage (CSV/OFX data files, JSON config)
-- No database, no external APIs
-
-## Constraints
-
-- **Tech stack**: Stay with Python/Streamlit — working well, no reason to migrate
-- **Data source**: Bank/card CSV and OFX exports only — no API integrations
-- **Single user**: No auth system needed, this is personal software
-- **Local-first**: No cloud hosting requirement, runs on localhost
+**Monthly Workflow:**
+1. Import credit card CSVs and checking OFX
+2. Reconcile recurring items (verify/map values)
+3. Update checking account balance
+4. Review dashboard (cash on hand, incoming, to-pay, daily budget)
+5. Check 6-month projection
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Keep Streamlit | Already working, good for rapid iteration, sufficient for single-user dashboard | — Pending |
-| Inline dropdown for transaction mapping | User wants integrated experience, not floating panels | — Pending |
-| Multiple budget profiles | User needs different spending patterns for different life situations | — Pending |
-| AI budget suggestions | User wants intelligent analysis, not just manual limits | — Pending |
+| Migrate to Django + React | Need proper database, API, interactive UI | Done |
+| Keep FinanceDashboard/ as import source | Reuse existing ETL pipeline | Done |
+| PostgreSQL for storage | Proper relational DB for financial data | Done |
+| TanStack Table | Feature-rich, headless, composable tables | Done |
+| React Query for server state | Caching, invalidation, stale-time management | Done |
+| CSS Modules | Scoped styles, no class name conflicts | Done |
+| Portuguese-Brazil UI | User's native language | Done |
+| invoice_month for CC sections | Cash flow: show what's being PAID this month | Done |
+| month_str for other sections | Transaction date for spending/budget tracking | Done |
+| Installment dedup (lowest position) | CC bills list all future positions; only lowest is the actual charge | Done |
 
 ---
-*Last updated: 2026-01-22 after initialization*
+*Last updated: 2026-02-06 after installment/CC bug fixes*

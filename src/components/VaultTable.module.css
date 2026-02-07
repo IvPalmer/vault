@@ -1,0 +1,204 @@
+.wrapper {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.searchBar {
+  position: relative;
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.searchInput {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  padding-right: 32px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.searchInput:focus {
+  border-color: var(--color-accent);
+}
+
+.searchInput::placeholder {
+  color: var(--color-text-secondary);
+}
+
+.clearBtn {
+  position: absolute;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 1.2rem;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.clearBtn:hover {
+  color: var(--color-text);
+}
+
+.tableContainer {
+  overflow: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+.thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.th {
+  background: var(--color-bg);
+  padding: var(--space-sm) var(--space-md);
+  text-align: left;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--color-border);
+  user-select: none;
+}
+
+.th.sortable {
+  cursor: pointer;
+}
+
+.th.sortable:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+
+.headerContent {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tr {
+  transition: background-color 0.15s;
+}
+
+.tr:hover {
+  background: var(--color-surface-hover);
+}
+
+.td {
+  padding: var(--space-sm) var(--space-md);
+  font-size: 0.85rem;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table.compact .td {
+  padding: 4px var(--space-md);
+  font-size: 0.8rem;
+}
+
+.table.compact .th {
+  padding: 4px var(--space-md);
+}
+
+.footer {
+  padding: var(--space-xs) var(--space-md);
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+  border-top: 1px solid var(--color-border);
+  text-align: right;
+}
+
+.empty {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-xl);
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: 0.9rem;
+}
+
+/* Utility cell styles */
+.positive {
+  color: var(--color-green);
+  font-weight: 600;
+}
+
+.negative {
+  color: var(--color-red);
+  font-weight: 600;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.badgePago {
+  background: rgba(58, 138, 92, 0.1);
+  color: var(--color-green);
+}
+
+.badgeFaltando {
+  background: rgba(192, 57, 43, 0.1);
+  color: var(--color-red);
+}
+
+.badgeParcial {
+  background: rgba(200, 122, 42, 0.1);
+  color: var(--color-orange);
+}
+
+.badgePulado {
+  background: rgba(74, 127, 181, 0.1);
+  color: var(--color-blue);
+}
+
+.suggested {
+  font-style: italic;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+}
+
+.parcela {
+  font-weight: 700;
+  color: var(--color-orange);
+  text-align: center;
+}
+
+/* Row modifier for skipped recurring items */
+.skippedRow {
+  opacity: 0.45;
+}
+
+.skippedRow .td {
+  text-decoration: line-through;
+  text-decoration-color: var(--color-text-secondary);
+}

@@ -1,0 +1,71 @@
+.display {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: left;
+  white-space: nowrap;
+  font-family: var(--font-sans);
+}
+
+.display:hover:not(.disabled) {
+  border-color: var(--color-border);
+  background: var(--color-surface-hover);
+}
+
+.display.disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.placeholder {
+  font-weight: 400;
+  font-style: italic;
+  color: var(--color-text-secondary);
+  opacity: 0.6;
+  font-size: 0.8rem;
+}
+
+.editWrapper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.prefix {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.input {
+  width: 100px;
+  padding: 2px 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  background: var(--color-surface);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  outline: none;
+}
+
+.input:focus {
+  box-shadow: 0 0 0 2px rgba(184, 101, 48, 0.15);
+}
+
+/* Hide number spinners */
+.input[type='number']::-webkit-inner-spin-button,
+.input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.input[type='number'] {
+  -moz-appearance: textfield;
+}

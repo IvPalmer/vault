@@ -1,0 +1,244 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--color-text-secondary);
+}
+
+.addBtn {
+  padding: 4px 12px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.addBtn:hover {
+  border-color: var(--color-accent);
+  background: rgba(79, 143, 247, 0.08);
+}
+
+.loading {
+  text-align: center;
+  color: var(--color-text-secondary);
+  padding: var(--space-xl);
+}
+
+/* Tab bar */
+.tabBar {
+  display: flex;
+  gap: 2px;
+  background: var(--color-bg);
+  border-radius: var(--radius-md);
+  padding: 3px;
+  overflow-x: auto;
+}
+
+.tab {
+  flex: 1;
+  padding: var(--space-sm) var(--space-md);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+
+.tab.active {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-sm);
+}
+
+.tabContent {
+  min-height: 200px;
+}
+
+/* Variable tab summary */
+.varSummary {
+  padding: var(--space-sm) var(--space-md);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-sm);
+}
+
+.varCount {
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+/* Actions column */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.actionBtn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.actionBtn:hover {
+  color: var(--color-text);
+  border-color: var(--color-border);
+  background: var(--color-surface-hover);
+}
+
+.deleteBtn:hover {
+  color: var(--color-red);
+  border-color: rgba(220, 38, 38, 0.3);
+  background: rgba(220, 38, 38, 0.08);
+}
+
+/* Type badge */
+.typeBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  border: none;
+  font-family: var(--font-sans);
+}
+
+.typeBadgeClickable {
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.typeBadgeClickable:hover {
+  filter: brightness(1.2);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.typeFixo {
+  background: rgba(220, 38, 38, 0.1);
+  color: var(--color-red);
+}
+
+.typeIncome {
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--color-green);
+}
+
+.typeInvest {
+  background: rgba(79, 143, 247, 0.1);
+  color: var(--color-accent);
+}
+
+.typeVariable {
+  background: rgba(234, 179, 8, 0.1);
+  color: var(--color-orange);
+}
+
+/* Type selector dropdown */
+.typeSelectWrap {
+  position: relative;
+  display: inline-block;
+}
+
+.typeDropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 100;
+  margin-top: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  min-width: 120px;
+}
+
+.typeOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: left;
+}
+
+.typeOption:hover {
+  background: var(--color-surface-hover);
+}
+
+.typeOptionActive {
+  font-weight: 700;
+}
+
+.typeDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.typeDot.typeFixo { background: var(--color-red); }
+.typeDot.typeIncome { background: var(--color-green); }
+.typeDot.typeInvest { background: var(--color-accent); }
+.typeDot.typeVariable { background: var(--color-orange); }
+
+/* Custom item name styling */
+.customName {
+  font-style: italic;
+  color: var(--color-accent);
+}

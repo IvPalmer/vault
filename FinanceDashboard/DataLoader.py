@@ -63,14 +63,31 @@ class DataLoader:
             try:
                 df = self._parse_file(path, filename)
                 if df is not None and not df.empty:
-                    # Apply Logic based on Source Type
-                    if "Finanças" in filename:
-                        # HISTORICAL: Kept full history as per user request
-                        pass
-                    else:
-                        # RAW/MODERN: Only keep data AFTER/ON cutoff (to avoid older duplicates if any)
-                        pass
-                        
+                    # Apply cutoff to avoid overlap between historical and modern sources.
+                    # Only apply to CSVs whose invoice_month is ON or BEFORE the cutoff.
+                    # Post-cutoff invoices keep ALL rows (installments from older purchases
+                    # have earlier dates but are real charges on the bill).
+                    if "finanças" not in filename.lower() and 'date' in df.columns:
+                        fn_lower = filename.lower()
+                        if fn_lower.startswith('master-') or fn_lower.startswith('visa-'):
+                            # Extract invoice_month from filename (e.g. master-0126 → 2026-01)
+                            import re as _re
+                            _inv_match = _re.search(r'(master|visa)-(\d{2})(\d{2})\.csv', fn_lower)
+                            if _inv_match:
+                                _inv_month = int(_inv_match.group(2))
+                                _inv_year = 2000 + int(_inv_match.group(3))
+                                _inv_date = pd.Timestamp(_inv_year, _inv_month, 1)
+                                if _inv_date <= self.HISTORICAL_CUTOFF:
+                                    # Old invoice — apply cutoff to avoid overlap with Google Sheets
+                                    before = len(df)
+                                    df = df[df['date'] >= self.HISTORICAL_CUTOFF].copy()
+                                    if len(df) < before:
+                                        print(f"   [Cutoff] Old invoice ({_inv_year}-{_inv_month:02d}): {before} → {len(df)} transactions (from {self.HISTORICAL_CUTOFF.date()})")
+                                else:
+                                    # Post-cutoff invoice — keep ALL rows (installments
+                                    # from older purchases are real charges on this bill)
+                                    print(f"   [No cutoff] Post-cutoff invoice ({_inv_year}-{_inv_month:02d}): keeping all {len(df)} rows")
+
                     if not df.empty:
                         all_data.append(df)
                         print(f"   [OK] Loaded {filename}: {len(df)} rows")
@@ -127,25 +144,27 @@ class DataLoader:
 
     def get_balance_override(self, month_str):
         """Retrieves manually set balance for a month."""
+        import json
         path = os.path.join(self.data_dir, "../balance_overrides.json")
         if not os.path.exists(path): return None
         try:
-             import json
-             with open(path, 'r') as f:
-                 data = json.load(f)
-                 return data.get(month_str)
-        except:
+            with open(path, 'r') as f:
+                data = json.load(f)
+                return data.get(month_str)
+        except (json.JSONDecodeError, IOError, OSError) as e:
+            print(f"   [Aviso] Could not read balance overrides: {e}")
             return None
 
     def save_balance_override(self, month_str, value):
         """Saves manual balance."""
+        import json
         path = os.path.join(self.data_dir, "../balance_overrides.json")
         data = {}
-        import json
         if os.path.exists(path):
             try:
                 with open(path, 'r') as f: data = json.load(f)
-            except: pass
+            except (json.JSONDecodeError, IOError, OSError):
+                data = {}
         
         data[month_str] = value
         with open(path, 'w') as f:
@@ -185,7 +204,8 @@ class DataLoader:
             if df.shape[1] < 2:
                  # Try semicolon
                  df = pd.read_csv(path, delimiter=';', dayfirst=False)
-        except:
+        except (pd.errors.EmptyDataError, pd.errors.ParserError, ValueError, OSError) as e:
+            print(f"   [Erro] CSV parse error {path}: {e}")
             return None
             
         # Rename Cols (Lowercase match)
@@ -217,10 +237,12 @@ class DataLoader:
                  df['amount'] = pd.to_numeric(df['amount'])
         
         # Sign Inversion
-        # Modern CSVs have Positive Expenses. We need Negative.
+        # CC CSVs: positive = charges (money owed), negative = refunds/credits (money back)
+        # DB convention: negative = expenses, positive = income/credits
+        # Simple negation preserves refund signs correctly.
         if "Visa" in account or "Master" in account:
              if 'amount' in df.columns:
-                 df['amount'] = -df['amount'].abs()
+                 df['amount'] = -df['amount']
 
                  # FILTER OUT PAYMENT ENTRIES
                  # Credit card CSVs include the previous month's payment as multiple entries:
@@ -242,11 +264,8 @@ class DataLoader:
                      if filtered_count > 0:
                          print(f"   [Payment Filter] {os.path.basename(path)}: Removed {filtered_count} payment entries (already in checking)")
 
-                     # Keep real credits/refunds (actual money back, not payment-related)
-                     # CREDITO and ESTORNO are okay UNLESS they contain "SALDO CREDOR" (payment-related)
-                     mask_positive = df['description'].str.contains('CREDITO|ESTORNO', case=False, na=False) & \
-                                   ~df['description'].str.contains('SALDO CREDOR', case=False, na=False)
-                     df.loc[mask_positive, 'amount'] = df.loc[mask_positive, 'amount'].abs()
+                     # Note: real refunds/credits (negative CSV values) are now correctly
+                     # positive in the DB thanks to simple negation (no abs()).
 
         df['account'] = account
         
@@ -378,12 +397,26 @@ class DataLoader:
                 elif 'DESC' in c: target = 'description'
                 elif 'VALOR' in c: target = 'amount'
                 elif 'CAT' in c and 'SUB' not in c and 'CONTROLE' not in c: target = 'category' # Exclude SUB and CONTROLE
-                
+                elif c == 'ANO/MES': target = 'invoice_month_raw'
+
                 if target and target not in seen_targets:
                     new_cols[col] = target
                     seen_targets.add(target)
-            
+
             df = df.rename(columns=new_cols)
+
+            # Convert ANO/MES (YYYYMM integer) to invoice_month (YYYY-MM string)
+            if 'invoice_month_raw' in df.columns:
+                def _convert_anomes(val):
+                    try:
+                        val = int(val)
+                        year = val // 100
+                        month = val % 100
+                        return f'{year}-{month:02d}'
+                    except (ValueError, TypeError):
+                        return ''
+                df['invoice_month'] = df['invoice_month_raw'].apply(_convert_anomes)
+                df = df.drop(columns=['invoice_month_raw'])
             
             # Ensure we found essential columns
             if 'date' not in df.columns or 'amount' not in df.columns:
@@ -428,6 +461,24 @@ class DataLoader:
                 if mask.any():
                      df.loc[mask, 'category'] = df.loc[mask, 'description'].apply(self.engine.categorize)
 
+            # Normalize historical category names to match current conventions
+            # Historical Google Sheets used UPPERCASE; current rules use mixed case
+            category_normalize = {
+                'CASA': 'Casa',
+                'SAUDE': 'Saúde',
+                'LAZER': 'Lazer',
+                'TRANSPORTE': 'Transporte',
+                'ALIMENTACAO': 'Alimentação',
+                'SERVICOS': 'Serviços',
+                'CONTAS': 'Contas',
+                'COMPRAS GERAIS': 'Compras',
+                'MUSICA': 'Lazer',
+                'ANIMAIS': 'OUTROS',
+                'VIAGEM': 'Lazer',
+                'Plano de Saude': 'Saúde',
+            }
+            df['category'] = df['category'].replace(category_normalize)
+
             # SIGN CORRECTION
             def fix_sign(row):
                 try:
@@ -435,15 +486,15 @@ class DataLoader:
                     cat = row['category'] if 'category' in row.index else ''
                     amt = row['amount']
                     if pd.isna(amt): return 0.0
-                    
+
                     meta = self.engine.get_category_metadata(cat)
                     ctype = meta.get('type', 'Variável')
-                    
+
                     if ctype == 'Income':
                         return abs(amt)
                     else:
                         return -abs(amt)
-                except:
+                except (KeyError, TypeError, ValueError):
                     return 0.0
             
             df['amount'] = df.apply(fix_sign, axis=1)
@@ -460,6 +511,8 @@ class DataLoader:
                 print(f"   [Cutoff] Google Sheets: {original_count} → {filtered_count} transactions (before {self.HISTORICAL_CUTOFF.date()})")
 
             target_cols = ['date', 'description', 'amount', 'account', 'category', 'source']
+            if 'invoice_month' in df.columns:
+                target_cols.append('invoice_month')
             for c in target_cols:
                 if c not in df.columns: df[c] = None
             return df[target_cols]

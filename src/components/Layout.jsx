@@ -1,0 +1,41 @@
+import { NavLink } from 'react-router-dom'
+import MonthPicker from './MonthPicker'
+import styles from './Layout.module.css'
+
+function Layout({ children }) {
+  return (
+    <div className={styles.layout}>
+      <header className={styles.header}>
+        <div className={styles.topRow}>
+          <h1 className={styles.title}>vault</h1>
+          <nav className={styles.nav}>
+            <NavLink
+              to="/overview"
+              className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}
+            >
+              Mensal
+            </NavLink>
+            <NavLink
+              to="/analytics"
+              className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}
+            >
+              Analytics
+            </NavLink>
+            <NavLink
+              to="/settings"
+              className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}
+            >
+              Config
+            </NavLink>
+          </nav>
+        </div>
+        <MonthPicker />
+      </header>
+      <main className={styles.main}>
+        {children}
+      </main>
+    </div>
+  )
+}
+
+export default Layout
