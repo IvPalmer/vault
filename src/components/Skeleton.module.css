@@ -1,0 +1,90 @@
+/* Shimmer animation */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.line {
+  height: 12px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--color-surface) 25%,
+    var(--color-surface-hover) 50%,
+    var(--color-surface) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  margin-bottom: 8px;
+}
+
+.lineShort {
+  width: 40%;
+}
+
+.lineMedium {
+  width: 70%;
+}
+
+.lineFull {
+  width: 100%;
+}
+
+/* Card grid skeleton */
+.cardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-sm);
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+}
+
+/* Chart skeleton */
+.chart {
+  height: 200px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  position: relative;
+}
+
+.shimmer {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 25%,
+    var(--color-surface-hover) 50%,
+    transparent 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Row skeleton */
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.row {
+  padding: var(--space-sm) var(--space-md);
+}
+
+/* Text block skeleton */
+.textBlock {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-md);
+}

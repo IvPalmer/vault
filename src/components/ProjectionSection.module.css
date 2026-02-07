@@ -1,0 +1,98 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
+}
+
+.title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--color-text);
+}
+
+.subtitle {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.chartWrap {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md) var(--space-sm);
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.table th {
+  padding: var(--space-sm) var(--space-md);
+  text-align: left;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.table tbody tr:hover {
+  background: var(--color-surface-hover);
+}
+
+.numCol {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.monthCell {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.currentRow {
+  background: var(--color-surface);
+}
+
+.green {
+  color: var(--color-green);
+}
+
+.red {
+  color: var(--color-red);
+}
+
+.orange {
+  color: var(--color-orange);
+}
+
+.dimmed {
+  color: var(--color-text-secondary);
+}
+
+.loading,
+.error {
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  padding: var(--space-lg);
+}

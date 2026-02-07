@@ -39,3 +39,11 @@
   background: var(--color-accent);
   color: white;
 }
+
+.future {
+  opacity: 0.45;
+}
+
+.future:hover {
+  opacity: 0.75;
+}

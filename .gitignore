@@ -32,3 +32,14 @@ Thumbs.db
 build/
 dist/
 *.egg-info/
+
+# Node
+node_modules/
+
+# Django
+backend/staticfiles/
+backend/media/
+backend/db.sqlite3
+
+# Docker
+postgres_data/

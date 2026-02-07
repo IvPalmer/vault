@@ -89,26 +89,29 @@ class ControlMetrics:
 
         return total, pending_income
 
-    def calculate_days_to_closing(self, closing_day: int = 10) -> int:
+    def calculate_days_to_closing(self, closing_day: int = 10) -> Tuple[int, bool]:
         """
-        Calculate days until credit card closing
-        Default closing day: 10th of next month
+        Calculate days until credit card closing for the selected month.
+        Returns: (days, is_current_month) - days is -1 if month is in the past.
         """
         today = datetime.now()
+        is_current = (today.year == self.year and today.month == self.month)
+
+        if not is_current:
+            # For past/future months, this metric isn't meaningful
+            return -1, False
 
         # Credit card closing is typically on the Xth of next month
         if today.day <= closing_day:
-            # Closing is this month
             closing_date = datetime(today.year, today.month, closing_day)
         else:
-            # Closing is next month
             if today.month == 12:
                 closing_date = datetime(today.year + 1, 1, closing_day)
             else:
                 closing_date = datetime(today.year, today.month + 1, closing_day)
 
         days_to_close = (closing_date - today).days
-        return max(0, days_to_close)
+        return max(0, days_to_close), True
 
     def calculate_current_spend(self) -> Dict:
         """Calculate current month spending vs budget"""
@@ -181,7 +184,7 @@ class ControlMetrics:
         # Calculate all metrics
         a_pagar_total, a_pagar_items = self.calculate_a_pagar()
         a_entrar_total, a_entrar_items = self.calculate_a_entrar()
-        days_to_close = self.calculate_days_to_closing()
+        days_to_close, is_current_month = self.calculate_days_to_closing()
         spend_data = self.calculate_current_spend()
         daily_rec = self.calculate_recommended_daily_spend()
 
@@ -199,11 +202,14 @@ class ControlMetrics:
             """
 
         with row1_col1:
+            # BUG 8 fix: only show pending count when there's actually money to pay
+            a_pagar_subtitle = f"{len(a_pagar_items)} itens pendentes" if a_pagar_total > 0 else "tudo pago"
+            a_pagar_color = "#dc2626" if a_pagar_total > 0 else "#16a34a"
             st.markdown(_control_metric(
                 "A PAGAR",
                 f"R$ {a_pagar_total:,.0f}",
-                f"{len(a_pagar_items)} itens pendentes",
-                "#dc2626"
+                a_pagar_subtitle,
+                a_pagar_color
             ), unsafe_allow_html=True)
 
         with row1_col2:
@@ -223,10 +229,16 @@ class ControlMetrics:
             ), unsafe_allow_html=True)
 
         with row2_col1:
+            if is_current_month:
+                closing_value = f"{days_to_close} dias"
+                closing_subtitle = "até o fechamento"
+            else:
+                closing_value = "—"
+                closing_subtitle = "mês encerrado"
             st.markdown(_control_metric(
                 "PRÓXIMO FECHAMENTO",
-                f"{days_to_close} dias",
-                "até o fechamento",
+                closing_value,
+                closing_subtitle,
                 "#6366f1"
             ), unsafe_allow_html=True)
 

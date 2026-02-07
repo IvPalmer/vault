@@ -1,103 +1,79 @@
 {
     "IMPOSTO": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 1660.0,
         "day": 20
     },
     "ALUGUEL": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 5273.71,
         "day": 5
     },
     "PLANO DE SAUDE EU E RAFA": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 1860.0,
         "day": 20
     },
     "LUZ": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 250.0,
         "day": 18
     },
     "CONTADOR": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 300.0,
         "day": 10
     },
     "INTERNET + CELULAR": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 233.28,
         "day": 26
     },
     "TERAPIA": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 900.0,
         "day": 10
     },
     "ACADEMIA (CC)": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 335.0,
         "day": 10
     },
     "FAMILIA": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 630.0,
         "day": 23
     },
     "DSRPTV": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 600.0,
         "day": 5
     },
     "TTR": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 0.0
     },
     "SEGURO CARRO (CC)": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 273.25
     },
     "SEGURO DE VIDA (CC)": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 472.83
     },
     "PARCELA CARRO": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 1633.31,
         "day": 3
     },
     "CONSORCIO": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 5925.39,
         "day": 3
     },
     "TARIFA ITAU": {
-        "type": "Fixed",
+        "type": "Fixo",
         "limit": 86.80
-    },
-    "OUTROS": {
-        "type": "Variable",
-        "limit": 1000.0
-    },
-    "SEM PARAR": {
-        "type": "Variable",
-        "limit": 65.28,
-        "day": 10
-    },
-    "CC BB": {
-        "type": "Variable",
-        "limit": 0.0,
-        "day": 10
-    },
-    "TOTAL CC MASTER BLACK": {
-        "type": "Variable",
-        "limit": 1358.51,
-        "day": 5
-    },
-    "TOTAL CC VISA BLACK": {
-        "type": "Variable",
-        "limit": 5335.05,
-        "day": 5
     },
     "FS": {
         "type": "Income",
@@ -105,27 +81,47 @@
         "day": 20
     },
     "Investimentos": {
-        "type": "Investment",
+        "type": "Investimento",
         "limit": 5000.0
     },
-    "Mercado": {
-        "type": "Variable",
-        "limit": 2000.0
+    "OUTROS": {
+        "type": "Variável",
+        "limit": 1000.0
     },
     "Transporte": {
-        "type": "Variable",
+        "type": "Variável",
         "limit": 800.0
     },
     "Lazer": {
-        "type": "Variable",
+        "type": "Variável",
         "limit": 1000.0
     },
     "Compras": {
-        "type": "Variable",
+        "type": "Variável",
         "limit": 1000.0
     },
-    "Uncategorized": {
-        "type": "Variable",
+    "Alimentação": {
+        "type": "Variável",
+        "limit": 1500.0
+    },
+    "Saúde": {
+        "type": "Variável",
+        "limit": 500.0
+    },
+    "Serviços": {
+        "type": "Variável",
+        "limit": 500.0
+    },
+    "Contas": {
+        "type": "Variável",
+        "limit": 500.0
+    },
+    "Casa": {
+        "type": "Variável",
+        "limit": 500.0
+    },
+    "Não categorizado": {
+        "type": "Variável",
         "limit": 0.0
     }
 }

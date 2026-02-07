@@ -1,0 +1,150 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--color-text);
+}
+
+.headerTotal {
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.headerPct {
+  margin-left: var(--space-xs);
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+/* Grid of budget cards */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-sm);
+}
+
+/* Individual card */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  transition: border-color 0.15s ease;
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.catName {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--color-text);
+  text-transform: uppercase;
+}
+
+.catPct {
+  font-size: 0.85rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Progress bar */
+.barTrack {
+  height: 4px;
+  background: var(--color-surface-hover);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.barOverflow {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  background: var(--color-red);
+  opacity: 0.4;
+  animation: pulse-bar 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-bar {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.6; }
+}
+
+/* Card body rows */
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cardRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.72rem;
+}
+
+.cardLabel {
+  color: var(--color-text-secondary);
+}
+
+.cardValue {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.cardValueDim {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+/* Status colors */
+.ok {
+  color: var(--color-green);
+}
+
+.warning {
+  color: var(--color-orange);
+}
+
+.over {
+  color: var(--color-red);
+}
+
+/* Loading / error */
+.loading,
+.error {
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  padding: var(--space-lg);
+}

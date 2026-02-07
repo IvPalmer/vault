@@ -1,135 +1,105 @@
-# 💰 Vault - Personal Finance Analytics
+# THE VAULT — Personal Finance Dashboard
 
-A comprehensive financial dashboard for tracking income, expenses, investments, and cash flow across multiple accounts.
+Django + React application for tracking income, expenses, investments, and cash flow across multiple accounts.
 
-**Version:** 2.0.0
-**Status:** 🟢 Production Ready
-**Validation Accuracy:** 99-100%
+## Stack
 
----
+- **Backend:** Django 5.2 + Django REST Framework
+- **Frontend:** React 18 + TanStack Table + TanStack Query + Recharts
+- **Database:** PostgreSQL 15
+- **Dev Server:** Vite
 
-## 🎯 Key Features
-
-- ✅ Multi-account tracking with automated categorization
-- ✅ Invoice period mapping with bank statement validation
-- ✅ Budget tracking with control metrics
-- ✅ Internal transfer detection (avoid double-counting)
-- ✅ Balance reconciliation across all accounts
-- ✅ Data validation with 99%+ accuracy
-
----
-
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
-# Install dependencies
+# Backend
+cd backend
 pip install -r requirements.txt
+python manage.py migrate
+python manage.py runserver 8001
 
-# Run dashboard
-streamlit run FinanceDashboard/main.py
+# Frontend
+npm install
+npx vite --port 5175
 ```
 
-Dashboard opens at `http://localhost:8501`
+Backend API at `http://localhost:8001/api/`
+Frontend at `http://localhost:5175/`
 
----
-
-## 📊 Recent Updates (v2.0.0 - Jan 22, 2026)
-
-### Critical Invoice Validation Fix
-
-**Problem:** Invoice totals inflated by 6x (R$ 68k vs R$ 11k actual)
-
-**Solution:**
-- ✅ Fixed payment entry duplication (R$ 30k per invoice)
-- ✅ Fixed installment filtering logic (R$ 3k per invoice)
-- ✅ Added invoice period metadata for cash flow tracking
-
-**Results:**
-```
-January 2026: 99.8% match (R$ 18.37 diff)
-December 2025: 100% match (R$ 0.48 diff)
-```
-
-See `FINAL_SOLUTION_SUMMARY.md` for details.
-
----
-
-## 📁 Project Structure
+## Project Structure
 
 ```
 Vault/
-├── FinanceDashboard/              # Main dashboard application
-│   ├── main.py                    # Streamlit app
-│   ├── DataLoader.py              # ETL pipeline ✨ UPDATED
-│   ├── DataNormalizer.py          # Data standardization ✨ NEW
-│   ├── CategoryEngine.py          # Categorization logic
-│   ├── ValidationEngine.py        # Data validation
-│   └── SampleData/                # Transaction data
-│
-├── CHANGELOG.md                   # Version history ✨ NEW
-├── PROJECT_STATUS.md              # Current state & roadmap ✨ NEW
-├── FINAL_SOLUTION_SUMMARY.md     # Technical details ✨ NEW
-└── README.md                      # This file
+├── backend/                  # Django API
+│   ├── vault_project/        # Django project settings
+│   ├── api/                  # DRF app (models, views, services)
+│   │   ├── models.py         # Account, Category, Transaction, RecurringMapping, etc.
+│   │   ├── views.py          # ViewSets + analytics endpoints
+│   │   ├── services.py       # Business logic (metricas, recurring, projection)
+│   │   └── management/       # Import commands
+│   └── requirements.txt
+├── src/                      # React frontend
+│   ├── api/                  # API client
+│   ├── context/              # MonthContext (shared month state)
+│   ├── hooks/                # useInvalidateAnalytics
+│   ├── components/           # UI components
+│   │   ├── Layout.jsx        # Tab navigation + MonthPicker
+│   │   ├── MetricasSection   # Unified metrics dashboard (15 cards + balance input)
+│   │   ├── RecurringSection  # Recurring items with inline editing
+│   │   ├── OrcamentoSection  # Variable budget tracking
+│   │   ├── CardsSection      # Credit card transactions
+│   │   ├── CheckingSection   # Checking account transactions
+│   │   ├── ProjectionSection # 6-month projection chart + table
+│   │   └── VaultTable.jsx    # Shared table component (TanStack)
+│   ├── App.jsx
+│   └── main.jsx
+├── FinanceDashboard/         # Legacy Streamlit app (data loader/ETL still used)
+├── docker-compose.yml
+├── package.json
+└── vite.config.js
 ```
 
----
+## Features
 
-## 📚 Documentation
+### Monthly Overview
+- **METRICAS** — 15 unified metric cards in a 5-column grid:
+  - Income: ENTRADAS ATUAIS, ENTRADAS PROJETADAS
+  - Expenses: GASTOS ATUAIS, GASTOS PROJETADOS, GASTOS FIXOS, GASTOS VARIAVEIS
+  - Credit Cards: FATURA MASTER (Black + Rafa combined), FATURA VISA
+  - Installments: PARCELAS
+  - Pending: A ENTRAR, A PAGAR (from RecurringMapping unlinked items)
+  - Projections: SALDO PROJETADO, DIAS ATE FECHAMENTO, GASTO DIARIO MAX
+  - Health: SAUDE DO MES (SAUDAVEL / ATENCAO / CRITICO)
+- **SALDO EM CONTA** — Manual bank balance input that drives projected metrics
+- **RECORRENTES** — Recurring budget items with inline transaction matching
+- **ORCAMENTO VARIAVEL** — Category-level variable spending with progress bars
+- **CONTROLE CARTOES** — CC transactions per card (Mastercard/Visa/Rafa tabs)
+- **CONTA CORRENTE** — Checking account transactions
+- **PROJECAO** — 6-month stacked bar chart + table
 
-### Getting Started
-- `README.md` (this file) - Quick overview
-- `FinanceDashboard/README.md` - Detailed setup
+### Settings
+- Recurring item template editor (global defaults applied to new months)
+- CSV/OFX statement import
 
-### Implementation
-- `FINAL_SOLUTION_SUMMARY.md` - Complete v2.0.0 solution
-- `CHANGELOG.md` - Version history
-- `PROJECT_STATUS.md` - Current state and roadmap
+### Accounts
+- Checking (Itau)
+- Mastercard Black (credit card)
+- Visa Infinite (credit card)
+- Mastercard - Rafa (credit card)
 
-### Technical
-- `INVOICE_SYSTEM_FINAL.md` - Invoice mapping system
-- `MODELO_DADOS_PADRONIZADO.md` - Data model specification
-- `VALIDACAO_FATURAS_IMPLEMENTADA.md` - Validation methodology
+## API Endpoints
 
----
-
-## 🎓 Key Concepts
-
-### Invoice Period Mapping
-- CSV filename indicates **invoice month**, not transaction month
-- `master-0126.csv` = January 2026 invoice (contains December purchases)
-- Payment due: 5th of invoice month
-
-### Installment Handling
-- `"01/12"` = 1st installment of 12, NOT invoice month
-- Bank CSVs already contain correct transactions
-- No filtering needed
-
-### Payment Filtering
-- Card CSVs include previous payment as 3 entries
-- Automatically filtered to prevent duplication
-
----
-
-## 📊 Statistics
-
-- **Transactions:** 7,835
-- **Date Range:** Sep 2022 - Jan 2026 (40 months)
-- **Accounts:** 4 (Checking, 2x Credit Cards, 1x Additional)
-- **Validation:** 99-100% accuracy
-- **Load Time:** ~2 seconds
-
----
-
-## 🔒 Security
-
-- All data stored locally
-- No external API calls
-- No data transmission
-- Data files git-ignored
-
----
-
-**Last Updated:** 2026-01-22
-**Next Review:** As needed
-
-For detailed information, see `PROJECT_STATUS.md`
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/analytics/metricas/` | GET | Unified dashboard metrics (15 cards) |
+| `/api/analytics/recurring/` | GET | Recurring items with status/suggestions |
+| `/api/analytics/cards/` | GET | Credit card transactions by invoice |
+| `/api/analytics/installments/` | GET | Installment breakdown |
+| `/api/analytics/checking/` | GET | Checking account transactions |
+| `/api/analytics/projection/` | GET | 6-month cash flow projection |
+| `/api/analytics/orcamento/` | GET | Variable budget by category |
+| `/api/analytics/balance/` | POST | Save manual bank balance |
+| `/api/analytics/recurring/map/` | POST/DELETE | Link/unlink transactions |
+| `/api/analytics/recurring/reapply/` | POST | Reset month from template |
+| `/api/analytics/smart-categorize/` | POST | Auto-categorize transactions |
+| `/api/import/` | GET/POST | Statement import management |

@@ -161,7 +161,15 @@ class DataNormalizer:
         amount = row['amount']
 
         # 1. Credit card payment from checking
-        if 'PAGAMENTO EFETUADO' in desc_original:
+        cc_payment_patterns = [
+            'PAGAMENTO EFETUADO',
+            'INT MC BLACK',
+            'INT PERSON INFI',
+            'FATURA PAGA',
+            'ITAUCARD',
+            'DEVOLUCAO SALDO CREDOR',
+        ]
+        if any(pattern in desc_original for pattern in cc_payment_patterns):
             return True
 
         # 2. PIX/TED from Checking (likely internal)

@@ -42,7 +42,7 @@ def initialize_month(month_str):
     Returns dict with created count and total count.
     """
     categories = Category.objects.filter(
-        category_type__in=['Fixo', 'Income', 'Investimento', 'Variavel'],
+        category_type__in=['Fixo', 'Income', 'Investimento'],
         is_active=True,
         default_limit__gt=0,
     )
@@ -243,7 +243,6 @@ def get_recurring_data(month_str):
     fixo_items = []
     income_items = []
     investimento_items = []
-    variable_items = []
 
     for mapping in mappings:
         cat_type = _get_type(mapping)
@@ -283,16 +282,14 @@ def get_recurring_data(month_str):
             income_items.append(item)
         elif cat_type == 'Investimento':
             investimento_items.append(item)
-        elif cat_type == 'Variavel':
-            variable_items.append(item)
+        # Skip Variavel — variable expenses are tracked in Orçamento, not as recurring items
 
     return {
         'month_str': month_str,
         'fixo': fixo_items,
         'income': income_items,
         'investimento': investimento_items,
-        'variable': variable_items,
-        'all': income_items + fixo_items + variable_items + investimento_items,
+        'all': income_items + fixo_items + investimento_items,
         'initialized': was_initialized,
     }
 
@@ -594,193 +591,201 @@ def delete_recurring_template(category_id):
 
 
 # ---------------------------------------------------------------------------
-# Summary metrics (FIXED GASTOS FIXOS)
+# Unified metrics (MÉTRICAS)
+# Replaces the old get_summary_metrics() and get_control_metrics() functions.
 # ---------------------------------------------------------------------------
 
-def get_summary_metrics(month_str):
+def get_metricas(month_str):
     """
-    RESUMO — 5 metric cards.
-    Returns: dict with entradas, parcelas, gastos_fixos, gastos_variaveis, saldo
+    MÉTRICAS — unified dashboard metrics replacing both get_summary_metrics
+    and get_control_metrics. Returns 15 metrics computed with shared queries.
+    """
+    import calendar
 
-    GASTOS FIXOS fix: Instead of filtering transactions by category_type='Fixo'
-    (which returns R$0 because fixed expenses are often categorized under variable
-    categories like Transporte, Contas), we now sum actual amounts from
-    RecurringMapping items of type 'Fixo' that have a linked transaction or
-    category-matched transactions.
-    """
+    year = int(month_str[:4])
+    month = int(month_str[5:7])
+    today = datetime.now()
+    is_current = (today.year == year and today.month == month)
+
+    # --- Shared transaction queries (exclude internal transfers) ---
     txns = Transaction.objects.filter(
         month_str=month_str,
         is_internal_transfer=False,
-    ).select_related('category')
+    ).select_related('category', 'account')
 
-    # ENTRADAS — income (amount > 0)
-    entradas = txns.filter(amount__gt=0).aggregate(
+    income_txns = txns.filter(amount__gt=0)
+    expense_txns = txns.filter(amount__lt=0)
+
+    # =====================================================================
+    # 1. ENTRADAS ATUAIS — actual income received this month
+    # =====================================================================
+    entradas_atuais = income_txns.aggregate(
         total=Sum('amount')
     )['total'] or Decimal('0.00')
 
-    # All expenses
-    expenses = txns.filter(amount__lt=0)
+    # =====================================================================
+    # 2. ENTRADAS PROJETADAS — total expected income from recurring template
+    # =====================================================================
+    income_mappings = RecurringMapping.objects.filter(
+        month_str=month_str,
+    ).filter(
+        Q(category__category_type='Income') | Q(is_custom=True, custom_type='Income')
+    ).exclude(status='skipped').select_related('category', 'transaction')
 
-    # PARCELAS — installments
-    # Uses real CC data if available for this month, otherwise projects
-    # from older CC statements. _compute_installment_schedule handles
-    # the real-vs-projected logic internally (no double counting).
-    schedule = _compute_installment_schedule(month_str, num_future_months=0)
-    parcelas = Decimal(str(schedule.get(month_str, 0))) * -1  # negative
+    entradas_projetadas = Decimal('0.00')
+    for m in income_mappings:
+        entradas_projetadas += m.expected_amount
 
-    # GASTOS FIXOS — sum from RecurringMapping where type is Fixo
-    # This correctly captures fixed expenses even when the underlying
-    # transaction is categorized under a Variavel-type category
-    fixo_mappings = RecurringMapping.objects.filter(
+    # =====================================================================
+    # 3. GASTOS ATUAIS — total actual expenses (CC + checking)
+    # =====================================================================
+    gastos_atuais = abs(expense_txns.aggregate(
+        total=Sum('amount')
+    )['total'] or Decimal('0.00'))
+
+    # =====================================================================
+    # 4. GASTOS PROJETADOS — expected total expenses for the month
+    #    = fixo template + installments + variable budget
+    # =====================================================================
+    fixo_mappings_all = RecurringMapping.objects.filter(
         month_str=month_str,
     ).filter(
         Q(category__category_type='Fixo') | Q(is_custom=True, custom_type='Fixo')
     ).exclude(status='skipped').select_related('category', 'transaction')
 
+    fixo_expected_total = Decimal('0.00')
+    for m in fixo_mappings_all:
+        fixo_expected_total += m.expected_amount
+
+    schedule = _compute_installment_schedule(month_str, num_future_months=0)
+    parcelas_total = Decimal(str(schedule.get(month_str, 0)))
+
+    variable_budget = Category.objects.filter(
+        category_type='Variavel', is_active=True,
+    ).aggregate(total=Sum('default_limit'))['total'] or Decimal('0.00')
+
+    gastos_projetados = fixo_expected_total + parcelas_total + variable_budget
+
+    # =====================================================================
+    # 5. GASTOS FIXOS — actual fixed expenses paid (linked + category-matched)
+    # =====================================================================
     gastos_fixos = Decimal('0.00')
-    for mapping in fixo_mappings:
+    for mapping in fixo_mappings_all:
         if mapping.transaction:
             gastos_fixos += abs(mapping.transaction.amount)
         elif mapping.category:
-            cat_actual = expenses.filter(category=mapping.category).aggregate(
+            cat_actual = expense_txns.filter(category=mapping.category).aggregate(
                 total=Sum('amount')
             )['total']
             if cat_actual:
                 gastos_fixos += abs(cat_actual)
 
-    # GASTOS VARIÁVEIS — category_type == 'Variavel'
-    gastos_variaveis = expenses.filter(
+    # =====================================================================
+    # 6. GASTOS VARIÁVEIS — actual variable expenses from transactions
+    # =====================================================================
+    gastos_variaveis = abs(expense_txns.filter(
         category__category_type='Variavel'
-    ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+    ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
 
-    # INVESTIMENTOS
-    investimentos = txns.filter(
-        category__category_type='Investimento'
-    ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+    # =====================================================================
+    # 7. FATURA MASTER — Mastercard Black + Mastercard - Rafa combined
+    # =====================================================================
+    fatura_master = abs(Transaction.objects.filter(
+        invoice_month=month_str,
+        account__name__icontains='Mastercard',
+    ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
 
-    # SALDO — income - fixed expenses - variable expenses + investments(if negative)
-    inv_component = investimentos if investimentos < 0 else Decimal('0.00')
-    saldo = entradas - gastos_fixos + gastos_variaveis + inv_component
+    # =====================================================================
+    # 8. FATURA VISA — Visa Infinite
+    # =====================================================================
+    fatura_visa = abs(Transaction.objects.filter(
+        invoice_month=month_str,
+        account__name__icontains='Visa',
+    ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
 
-    # Balance override
+    # =====================================================================
+    # 9. PARCELAS — installment total (already computed above)
+    # =====================================================================
+    # parcelas_total already set
+
+    # =====================================================================
+    # 10. A ENTRAR — pending income (from unlinked/unmatched recurring items)
+    #     Uses exact comparison: any shortfall counts as pending.
+    # =====================================================================
+    a_entrar = Decimal('0.00')
+    for mapping in income_mappings:
+        expected = mapping.expected_amount
+        if mapping.transaction:
+            actual = mapping.transaction.amount
+            if actual >= expected:
+                continue  # Fully received
+            elif actual > 0:
+                a_entrar += expected - actual  # Partial
+            else:
+                a_entrar += expected  # Nothing received
+        elif mapping.category:
+            cat_income = income_txns.filter(category=mapping.category).aggregate(
+                total=Sum('amount')
+            )['total'] or Decimal('0.00')
+            if cat_income >= expected:
+                continue  # Fully received
+            else:
+                a_entrar += expected - cat_income
+        else:
+            a_entrar += expected  # Custom with no txn
+
+    # =====================================================================
+    # 11. A PAGAR — pending fixed expenses (from unlinked/unmatched recurring)
+    #     Uses exact comparison: any shortfall counts as pending.
+    # =====================================================================
+    a_pagar = Decimal('0.00')
+    for mapping in fixo_mappings_all:
+        expected = mapping.expected_amount
+        if mapping.transaction:
+            actual = abs(mapping.transaction.amount)
+            if actual >= expected:
+                continue  # Fully paid
+            elif actual > 0:
+                a_pagar += expected - actual  # Partial
+            else:
+                a_pagar += expected  # Not paid
+        elif mapping.category:
+            cat_actual = expense_txns.filter(category=mapping.category).aggregate(
+                total=Sum('amount')
+            )['total']
+            actual = abs(cat_actual) if cat_actual else Decimal('0.00')
+            if actual >= expected:
+                continue  # Fully paid
+            else:
+                a_pagar += expected - actual
+        else:
+            a_pagar += expected  # Custom with no txn
+
+    # =====================================================================
+    # 12. BALANCE OVERRIDE + SALDO PROJETADO
+    # =====================================================================
     balance_override = None
     try:
         bo = BalanceOverride.objects.get(month_str=month_str)
-        balance_override = bo.balance
+        balance_override = float(bo.balance)
     except BalanceOverride.DoesNotExist:
         pass
 
-    return {
-        'month_str': month_str,
-        'entradas': float(entradas),
-        'parcelas': float(abs(parcelas)),
-        'gastos_fixos': float(gastos_fixos),
-        'gastos_variaveis': float(abs(gastos_variaveis)),
-        'investimentos': float(abs(investimentos)),
-        'saldo': float(saldo),
-        'balance_override': float(balance_override) if balance_override is not None else None,
-    }
+    if balance_override is not None:
+        saldo_projetado = Decimal(str(balance_override)) + a_entrar - a_pagar
+    else:
+        # Fallback: computed saldo from actual transactions
+        saldo_projetado = entradas_atuais - gastos_fixos - gastos_variaveis - parcelas_total
 
-
-# ---------------------------------------------------------------------------
-# Control metrics
-# ---------------------------------------------------------------------------
-
-def get_control_metrics(month_str):
-    """
-    CONTROLE GASTOS — 6 metric cards.
-    Note: Does NOT filter internal transfers for control metrics (by design).
-    """
-    year = int(month_str[:4])
-    month = int(month_str[5:7])
-
-    # Full month transactions (no internal transfer filter — by design)
-    txns = Transaction.objects.filter(
-        month_str=month_str,
-    ).select_related('category')
-
-    # Budget categories
-    categories = Category.objects.filter(is_active=True)
-
-    # --- A PAGAR ---
-    # Both Fixo and Income in the a_pagar loop
-    recurring_cats = categories.filter(
-        category_type__in=['Fixo', 'Income'],
-        default_limit__gt=0,
-    )
-    a_pagar_total = Decimal('0.00')
-    a_pagar_items = []
-
-    for cat in recurring_cats:
-        cat_txns = txns.filter(category=cat)
-        if not cat_txns.exists():
-            a_pagar_items.append({
-                'category': cat.name,
-                'amount': float(cat.default_limit),
-                'due_day': cat.due_day,
-                'type': cat.category_type,
-            })
-            # Only Fixo items add to the total
-            if cat.category_type == 'Fixo':
-                a_pagar_total += cat.default_limit
-
-    # --- A ENTRAR ---
-    income_cats = categories.filter(category_type='Income', default_limit__gt=0)
-    a_entrar_total = Decimal('0.00')
-    a_entrar_items = []
-
-    for cat in income_cats:
-        cat_txns = txns.filter(category=cat, amount__gt=0)
-        received = cat_txns.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-        if received < cat.default_limit:
-            pending = cat.default_limit - received
-            a_entrar_total += pending
-            a_entrar_items.append({
-                'category': cat.name,
-                'expected': float(cat.default_limit),
-                'received': float(received),
-                'pending': float(pending),
-                'due_day': cat.due_day,
-            })
-
-    # --- GASTO MAX ATUAL ---
-    expenses = txns.filter(amount__lt=0)
-    total_spent = abs(expenses.aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
-
-    fixed_budget = categories.filter(
-        category_type='Fixo'
-    ).aggregate(total=Sum('default_limit'))['total'] or Decimal('0.00')
-
-    variable_budget = categories.filter(
-        category_type='Variavel'
-    ).aggregate(total=Sum('default_limit'))['total'] or Decimal('0.00')
-
-    total_budget = fixed_budget + variable_budget
-
-    # Fixed vs variable spent
-    fixed_spent = abs(expenses.filter(
-        category__category_type='Fixo'
-    ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
-
-    variable_spent = abs(expenses.filter(
-        category__category_type='Variavel'
-    ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
-
-    variable_remaining = max(Decimal('0.00'), variable_budget - variable_spent)
-
-    # --- PRÓXIMO FECHAMENTO ---
-    today = datetime.now()
-    is_current = (today.year == year and today.month == month)
-    # Use the actual closing day from credit card accounts (default 30)
+    # =====================================================================
+    # 13. DIAS ATÉ O FECHAMENTO
+    # =====================================================================
     cc_account = Account.objects.filter(
         account_type='credit_card', is_active=True
     ).first()
     closing_day = cc_account.closing_day if cc_account and cc_account.closing_day else 30
 
-    import calendar
-
     def _safe_closing_date(y, m, day):
-        """Create a closing date, clamping day to the last day of the month."""
         max_day = calendar.monthrange(y, m)[1]
         return datetime(y, m, min(day, max_day))
 
@@ -792,11 +797,13 @@ def get_control_metrics(month_str):
                 closing_date = _safe_closing_date(today.year + 1, 1, closing_day)
             else:
                 closing_date = _safe_closing_date(today.year, today.month + 1, closing_day)
-        days_to_close = max(0, (closing_date - today).days)
+        dias_fechamento = max(0, (closing_date - today).days)
     else:
-        days_to_close = -1
+        dias_fechamento = -1
 
-    # --- GASTO DIÁRIO RECOMENDADO ---
+    # =====================================================================
+    # 14. GASTO DIÁRIO MAX RECOMENDADO
+    # =====================================================================
     if is_current:
         if month == 12:
             next_month = datetime(year + 1, 1, 1)
@@ -804,48 +811,48 @@ def get_control_metrics(month_str):
             next_month = datetime(year, month + 1, 1)
         last_day = next_month - timedelta(days=1)
         days_remaining = max(1, (last_day - today).days + 1)
-        daily_recommended = float(variable_remaining / days_remaining)
+        diario_recomendado = float(saldo_projetado / days_remaining)
     else:
-        # For past months, show average per day
         if month == 12:
             next_month = datetime(year + 1, 1, 1)
         else:
             next_month = datetime(year, month + 1, 1)
         days_in_month = (next_month - timedelta(days=1)).day
-        daily_recommended = float(variable_budget / days_in_month) if days_in_month > 0 else 0.0
+        diario_recomendado = float(saldo_projetado / days_in_month) if days_in_month > 0 else 0.0
 
-    # --- SAÚDE ORÇAMENTO ---
-    variable_pct = float(variable_spent / variable_budget * 100) if variable_budget > 0 else 0.0
+    # =====================================================================
+    # 15. SAÚDE DO MÊS
+    # =====================================================================
+    if float(saldo_projetado) <= 0:
+        saude = 'CRÍTICO'
+        saude_level = 'danger'
+    elif float(gastos_atuais) > float(gastos_projetados) * 0.9:
+        saude = 'ATENÇÃO'
+        saude_level = 'warning'
+    else:
+        saude = 'SAUDÁVEL'
+        saude_level = 'good'
 
     return {
         'month_str': month_str,
-        'a_pagar': {
-            'total': float(a_pagar_total),
-            'items': a_pagar_items,
-            'count': len(a_pagar_items),
-        },
-        'a_entrar': {
-            'total': float(a_entrar_total),
-            'items': a_entrar_items,
-            'count': len(a_entrar_items),
-        },
-        'gasto_max': {
-            'total_spent': float(total_spent),
-            'total_budget': float(total_budget),
-            'fixed_spent': float(fixed_spent),
-            'fixed_budget': float(fixed_budget),
-            'variable_spent': float(variable_spent),
-            'variable_budget': float(variable_budget),
-            'variable_remaining': float(variable_remaining),
-        },
-        'fechamento': {
-            'days': days_to_close,
-            'is_current_month': is_current,
-        },
-        'diario_recomendado': daily_recommended,
-        'saude_orcamento': {
-            'variable_pct': round(variable_pct, 1),
-        },
+        'balance_override': balance_override,
+        'entradas_atuais': float(entradas_atuais),
+        'entradas_projetadas': float(entradas_projetadas),
+        'gastos_atuais': float(gastos_atuais),
+        'gastos_projetados': float(gastos_projetados),
+        'gastos_fixos': float(gastos_fixos),
+        'gastos_variaveis': float(gastos_variaveis),
+        'fatura_master': float(fatura_master),
+        'fatura_visa': float(fatura_visa),
+        'parcelas': float(parcelas_total),
+        'a_entrar': float(a_entrar),
+        'a_pagar': float(a_pagar),
+        'saldo_projetado': float(saldo_projetado),
+        'dias_fechamento': dias_fechamento,
+        'is_current_month': is_current,
+        'diario_recomendado': round(diario_recomendado, 2),
+        'saude': saude,
+        'saude_level': saude_level,
     }
 
 
@@ -1925,4 +1932,66 @@ def smart_categorize(month_str=None, dry_run=False):
         'total_uncategorized': len(uncategorized),
         'details': results[:100],  # Limit response size
         'dry_run': dry_run,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Reapply Template to Month
+# ---------------------------------------------------------------------------
+
+def reapply_template_to_month(month_str):
+    """
+    Delete all existing RecurringMapping rows for the month and re-initialize
+    from the current Category template. This lets the user reset a month's
+    recurring items after editing the template.
+    """
+    deleted_count = RecurringMapping.objects.filter(month_str=month_str).delete()[0]
+    result = initialize_month(month_str)
+    result['deleted'] = deleted_count
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Checking Account Transactions
+# ---------------------------------------------------------------------------
+
+def get_checking_transactions(month_str):
+    """
+    Fetch all checking account transactions for a given month.
+    Returns transactions grouped with summary totals.
+    """
+    txns = Transaction.objects.filter(
+        month_str=month_str,
+        account__account_type='checking',
+    ).select_related('account', 'category').order_by('date')
+
+    items = []
+    total_in = 0.0
+    total_out = 0.0
+
+    for t in txns:
+        amt = float(t.amount)
+        if amt > 0:
+            total_in += amt
+        else:
+            total_out += amt
+
+        items.append({
+            'id': str(t.id),
+            'date': str(t.date),
+            'description': t.description,
+            'amount': amt,
+            'category': t.category.name if t.category else 'Não categorizado',
+            'category_id': str(t.category.id) if t.category else None,
+            'is_internal_transfer': t.is_internal_transfer,
+            'is_recurring': t.is_recurring,
+        })
+
+    return {
+        'month_str': month_str,
+        'transactions': items,
+        'count': len(items),
+        'total_in': round(total_in, 2),
+        'total_out': round(total_out, 2),
+        'net': round(total_in + total_out, 2),
     }

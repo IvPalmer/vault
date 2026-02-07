@@ -569,6 +569,12 @@ def create_cards_table(df, key):
         table.configure_column('Parcela', header_name='PARCELA', width=100,
                               cell_style=parcela_style)
 
+    # Hide internal/metadata columns that shouldn't be user-facing
+    visible_cols = {'date', 'description', 'amount', 'account', 'category', 'subcategory', 'Parcela'}
+    for col in df.columns:
+        if col not in visible_cols:
+            table.configure_column(col, hide=True)
+
     # Multi-select with sidebar for filtering
     table.configure_selection(mode='multiple', use_checkbox=True)
     table.configure_height(height=500, auto_height=False)

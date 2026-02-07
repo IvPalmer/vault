@@ -31,10 +31,18 @@ st.markdown(apply_custom_styles(), unsafe_allow_html=True)
 st.markdown("<div class='vault-title'>THE VAULT</div>", unsafe_allow_html=True)
 
 # --- DATA LOADING ---
-dl_instance = DataLoader()
-# We reload data on every run for simplicity with this structure, or ideally cache
-dl = dl_instance
-df = dl.load_all()
+@st.cache_resource
+def get_data_loader():
+    """Cache the DataLoader instance across reruns."""
+    return DataLoader()
+
+@st.cache_data
+def load_data(_dl):
+    """Cache the loaded DataFrame across reruns."""
+    return _dl.load_all()
+
+dl_instance = get_data_loader()
+df = load_data(dl_instance)
 
 if df.empty:
     st.warning("No data found.")
@@ -64,7 +72,7 @@ with tab_overview:
     selected_month = st.selectbox(
         "Select Month",
         options=visible_months,
-        index=len(visible_months) - 1 if current_m_str in visible_months else 0,
+        index=len(visible_months) - 1,
         key="month_picker"
     )
 
@@ -118,11 +126,19 @@ with tab_overview:
         variable_txns = m_data[m_data['cat_type'] == 'Variável']
         if not variable_txns.empty:
             st.markdown(f"**Total Gastos Variáveis:** R$ {abs(variable_txns['amount'].sum()):,.2f}")
-            st.dataframe(
-                variable_txns[['date', 'description', 'category', 'subcategory', 'amount']],
-                use_container_width=True,
-                hide_index=True
+            var_display = variable_txns[['date', 'description', 'category', 'amount']].copy()
+            var_display['date'] = var_display['date'].dt.strftime('%d/%m/%Y')
+            var_table = VaultTable(
+                dataframe=var_display,
+                key=f"rec_var_{selected_month}",
+                empty_message="Nenhum gasto variável.",
+                show_checkbox=False
             )
+            var_table.configure_column('date', header_name='DATA', width=110)
+            var_table.configure_column('description', header_name='DESCRIÇÃO', flex=3)
+            var_table.configure_column('category', header_name='CATEGORIA', width=150)
+            var_table.configure_column('amount', header_name='VALOR', numeric=True, width=130)
+            var_table.render(key=f"rec_var_{selected_month}")
         else:
             st.info("Nenhum gasto variável neste mês.")
 
@@ -147,10 +163,10 @@ with tab_overview:
         render_cards_grid(m_data, f"card_all_{selected_month}")
 
     with t_card2:
-        render_cards_grid(m_data[m_data['account'].str.contains("Master", case=False)], f"card_mas_{selected_month}")
+        render_cards_grid(m_data[m_data['account'].str.contains("Master", case=False, na=False)], f"card_mas_{selected_month}")
 
     with t_card3:
-         render_cards_grid(m_data[m_data['account'].str.contains("Visa", case=False)], f"card_vis_{selected_month}")
+         render_cards_grid(m_data[m_data['account'].str.contains("Visa", case=False, na=False)], f"card_vis_{selected_month}")
 
     with t_card4:
          render_cards_grid(m_data[m_data['account'] == "Mastercard - Rafa"], f"card_raf_{selected_month}")

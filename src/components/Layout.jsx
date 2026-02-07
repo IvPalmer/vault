@@ -1,8 +1,11 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import MonthPicker from './MonthPicker'
 import styles from './Layout.module.css'
 
 function Layout({ children }) {
+  const { pathname } = useLocation()
+  const showMonthPicker = pathname !== '/settings'
+
   return (
     <div className={styles.layout}>
       <header className={styles.header}>
@@ -29,7 +32,7 @@ function Layout({ children }) {
             </NavLink>
           </nav>
         </div>
-        <MonthPicker />
+        {showMonthPicker && <MonthPicker />}
       </header>
       <main className={styles.main}>
         {children}

@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useMemo } from 'react'
 import { useMonth } from '../context/MonthContext'
 import styles from './MonthPicker.module.css'
 
@@ -15,13 +15,24 @@ function formatMonth(month) {
   return `${MONTH_LABELS[m]} ${year.slice(2)}`
 }
 
+function getCurrentMonth() {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  return `${y}-${m}`
+}
+
 function MonthPicker() {
   const { months, selectedMonth, setSelectedMonth, isLoading } = useMonth()
   const activeRef = useRef(null)
   const scrollRef = useRef(null)
+  const currentMonth = useMemo(() => getCurrentMonth(), [])
 
-  // Only show months from MIN_MONTH onwards
-  const visibleMonths = months.filter(m => m >= MIN_MONTH)
+  // Only show months from MIN_MONTH onwards, sorted ascending (left-to-right)
+  const visibleMonths = useMemo(() =>
+    months.filter(m => m >= MIN_MONTH).slice().sort(),
+    [months]
+  )
 
   // Scroll active tab into view
   useEffect(() => {
@@ -40,16 +51,23 @@ function MonthPicker() {
 
   return (
     <div className={styles.bar} ref={scrollRef}>
-      {visibleMonths.map((month) => (
-        <button
-          key={month}
-          ref={month === selectedMonth ? activeRef : null}
-          className={`${styles.tab} ${month === selectedMonth ? styles.active : ''}`}
-          onClick={() => setSelectedMonth(month)}
-        >
-          {formatMonth(month)}
-        </button>
-      ))}
+      {visibleMonths.map((month) => {
+        const isFuture = month > currentMonth
+        return (
+          <button
+            key={month}
+            ref={month === selectedMonth ? activeRef : null}
+            className={[
+              styles.tab,
+              month === selectedMonth ? styles.active : '',
+              isFuture && month !== selectedMonth ? styles.future : '',
+            ].filter(Boolean).join(' ')}
+            onClick={() => setSelectedMonth(month)}
+          >
+            {formatMonth(month)}
+          </button>
+        )
+      })}
     </div>
   )
 }
