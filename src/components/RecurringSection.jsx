@@ -254,6 +254,10 @@ function RecurringSection() {
             categoryName={item.name}
             currentMatch={getValue()}
             matchedTransactionId={item.matched_transaction_id}
+            matchedTransactionIds={item.matched_transaction_ids}
+            matchType={item.match_type}
+            matchCount={item.match_count}
+            matchMode={item.match_mode}
             suggested={item.suggested}
             status={item.status}
           />
@@ -309,6 +313,8 @@ function RecurringSection() {
   })
 
   const [reapplying, setReapplying] = useState(false)
+  const [autoLinking, setAutoLinking] = useState(false)
+  const [autoLinkResult, setAutoLinkResult] = useState(null)
 
   // Row class for skipped items
   const rowClassName = useCallback((row) => {
@@ -333,6 +339,21 @@ function RecurringSection() {
     }
   }, [recData, activeTab])
 
+  // Drag-to-reorder handler
+  const handleReorder = useCallback(async (newData) => {
+    // Optimistic: invalidate after saving to backend
+    const orderedIds = newData.map((item) => item.mapping_id)
+    try {
+      await api.post('/analytics/recurring/reorder/', {
+        month_str: selectedMonth,
+        ordered_mapping_ids: orderedIds,
+      })
+      invalidateAll()
+    } catch (err) {
+      console.error('Failed to reorder:', err)
+    }
+  }, [selectedMonth, invalidateAll])
+
   const handleReapplyTemplate = useCallback(async () => {
     if (!confirm('Reaplicar template a este mês? Todos os itens recorrentes serão recriados a partir do template atual.')) return
     setReapplying(true)
@@ -346,16 +367,42 @@ function RecurringSection() {
     }
   }, [selectedMonth, invalidateAll])
 
+  const handleAutoLink = useCallback(async () => {
+    setAutoLinking(true)
+    setAutoLinkResult(null)
+    try {
+      const result = await api.post('/analytics/recurring/auto-link/', { month_str: selectedMonth })
+      setAutoLinkResult(result)
+      invalidateAll()
+      // Auto-dismiss after 5 seconds
+      setTimeout(() => setAutoLinkResult(null), 5000)
+    } catch (err) {
+      console.error('Auto-link failed:', err)
+      setAutoLinkResult({ linked: 0, error: true })
+      setTimeout(() => setAutoLinkResult(null), 4000)
+    } finally {
+      setAutoLinking(false)
+    }
+  }, [selectedMonth, invalidateAll])
+
   if (recLoading) {
-    return <div className={styles.loading}>Carregando recorrentes...</div>
+    return <div className={styles.loading}>Carregando controle...</div>
   }
 
   return (
     <div className={styles.section}>
       {/* Header with title + add button */}
       <div className={styles.header}>
-        <h3 className={styles.title}>RECORRENTES</h3>
+        <h3 className={styles.title}>CONTROLE</h3>
         <div className={styles.headerActions}>
+          <button
+            className={styles.autoLinkBtn}
+            onClick={handleAutoLink}
+            disabled={autoLinking}
+            title="Vincular automaticamente itens por nome, valor e padrão do mês anterior"
+          >
+            {autoLinking ? '...' : '⚡ Auto-link'}
+          </button>
           <button
             className={styles.reapplyBtn}
             onClick={handleReapplyTemplate}
@@ -372,6 +419,24 @@ function RecurringSection() {
           </button>
         </div>
       </div>
+
+      {/* Auto-link result toast */}
+      {autoLinkResult && (
+        <div className={`${styles.autoLinkToast} ${autoLinkResult.error ? styles.toastError : autoLinkResult.linked > 0 ? styles.toastSuccess : styles.toastNeutral}`}>
+          {autoLinkResult.error
+            ? 'Erro ao vincular automaticamente.'
+            : autoLinkResult.linked > 0
+              ? `✓ ${autoLinkResult.linked} de ${autoLinkResult.total_unlinked} itens vinculados automaticamente`
+              : 'Nenhum item pôde ser vinculado automaticamente.'
+          }
+          {autoLinkResult.details?.length > 0 && (
+            <span className={styles.toastDetails}>
+              {' — '}
+              {autoLinkResult.details.map(d => d.name).join(', ')}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Inline add form */}
       {showAddForm && (
@@ -400,6 +465,8 @@ function RecurringSection() {
           searchable={false}
           maxHeight={450}
           rowClassName={rowClassName}
+          draggable
+          onReorder={handleReorder}
         />
       </div>
     </div>

@@ -4,12 +4,78 @@
   gap: var(--space-md);
 }
 
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
 .title {
   font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 1.5px;
   color: var(--color-text-secondary);
+}
+
+.titleActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.actionBtn {
+  font-size: 0.6rem;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-weight: 500;
+  font-family: inherit;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.actionBtn:hover {
+  background: var(--color-border);
+  color: var(--color-text);
+}
+
+.lockBtn {
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1;
+}
+.lockBtn:hover {
+  background: var(--color-border);
+}
+.lockBtnActive {
+  border-color: var(--color-accent);
+  background: rgba(79, 143, 247, 0.08);
+}
+
+.addBtn {
+  font-size: 0.6rem;
+  padding: 2px 8px;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: rgba(79, 143, 247, 0.06);
+  color: var(--color-accent);
+  cursor: pointer;
+  font-weight: 600;
+  font-family: inherit;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.addBtn:hover {
+  background: rgba(79, 143, 247, 0.14);
 }
 
 .grid {
@@ -48,6 +114,215 @@
   letter-spacing: 0.8px;
   color: var(--color-text-secondary);
   white-space: nowrap;
+}
+
+.balanceAuto {
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.balanceHint {
+  font-size: 0.55rem;
+  color: var(--color-text-secondary);
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+/* ── Drag & Drop ── */
+.draggable {
+  position: relative;
+  cursor: grab;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  border-radius: var(--radius-md);
+}
+
+.draggable:active {
+  cursor: grabbing;
+}
+
+.dragHandle {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 0.7rem;
+  color: transparent;
+  z-index: 2;
+  pointer-events: none;
+  transition: color 0.15s;
+  line-height: 1;
+  user-select: none;
+}
+
+.draggable:hover .dragHandle {
+  color: var(--color-text-secondary);
+}
+
+.dragging {
+  opacity: 0.4;
+  transform: scale(0.97);
+}
+
+.dragOver {
+  transform: scale(1.02);
+  box-shadow: 0 0 0 2px var(--color-accent, #6366f1);
+  border-radius: var(--radius-md);
+}
+
+/* ── Hide / Remove card button ── */
+.hideBtn {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  font-size: 0.6rem;
+  color: var(--color-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  line-height: 1;
+  padding: 2px;
+  font-family: inherit;
+}
+
+.draggable:hover .hideBtn {
+  opacity: 0.5;
+}
+
+.hideBtn:hover {
+  opacity: 1 !important;
+  color: var(--color-red);
+}
+
+/* ── Hidden cards section ── */
+.hiddenSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hiddenToggle {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 0.65rem;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+  text-align: left;
+  transition: color 0.15s;
+}
+.hiddenToggle:hover {
+  color: var(--color-text);
+}
+
+.hiddenList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hiddenChip {
+  font-size: 0.6rem;
+  padding: 3px 8px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.hiddenChip:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: rgba(79, 143, 247, 0.06);
+}
+
+/* ── Add Card Form ── */
+.addCardForm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  flex-wrap: wrap;
+}
+
+.addCardSelect {
+  flex: 0 0 auto;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  color: var(--color-text);
+  font-size: 0.75rem;
+  font-family: inherit;
+  outline: none;
+  min-width: 0;
+}
+.addCardSelect:focus {
+  border-color: var(--color-accent);
+}
+
+.addCardInput {
+  flex: 1;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  color: var(--color-text);
+  font-size: 0.75rem;
+  font-family: inherit;
+  outline: none;
+  min-width: 80px;
+}
+.addCardInput:focus {
+  border-color: var(--color-accent);
+}
+.addCardInput::placeholder {
+  color: var(--color-text-secondary);
+}
+
+.addCardSaveBtn {
+  padding: 4px 12px;
+  background: var(--color-accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+.addCardSaveBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.addCardCancelBtn {
+  padding: 4px 10px;
+  background: none;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.addCardCancelBtn:hover {
+  background: var(--color-border);
+  color: var(--color-text);
 }
 
 @media (max-width: 1200px) {

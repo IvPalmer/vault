@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import InlineEdit from './InlineEdit'
@@ -68,6 +68,15 @@ function Settings() {
   const [newAmount, setNewAmount] = useState('')
   const [newDueDay, setNewDueDay] = useState('')
   const [newSaving, setNewSaving] = useState(false)
+
+  // Categories management
+  const [showNewCatForm, setShowNewCatForm] = useState(false)
+  const [newCatName, setNewCatName] = useState('')
+  const [newCatType, setNewCatType] = useState('Variavel')
+  const [newCatSaving, setNewCatSaving] = useState(false)
+  const [expandedCat, setExpandedCat] = useState(null)
+  const [newSubName, setNewSubName] = useState('')
+  const [newSubSaving, setNewSubSaving] = useState(false)
 
   const { data: status, refetch: refetchStatus } = useQuery({
     queryKey: ['import-status'],
@@ -180,6 +189,97 @@ function Settings() {
       console.error('Failed to create template:', err)
     } finally {
       setNewSaving(false)
+    }
+  }
+
+  // Categories + subcategories query (uses REST ViewSet)
+  const { data: categoriesData, refetch: refetchCategories } = useQuery({
+    queryKey: ['all-categories'],
+    queryFn: () => api.get('/categories/'),
+  })
+
+  const allCategories = useMemo(() => {
+    if (!categoriesData) return []
+    // categoriesData is the list from DRF ViewSet
+    const list = Array.isArray(categoriesData) ? categoriesData : (categoriesData.results || [])
+    return list.filter((c) => c.is_active)
+  }, [categoriesData])
+
+  const categoriesByType = useMemo(() => {
+    const groups = {}
+    for (const cat of allCategories) {
+      const type = cat.category_type || 'Variavel'
+      if (!groups[type]) groups[type] = []
+      groups[type].push(cat)
+    }
+    return groups
+  }, [allCategories])
+
+  const handleCreateCategory = async (e) => {
+    e.preventDefault()
+    if (!newCatName.trim()) return
+    setNewCatSaving(true)
+    try {
+      await api.post('/categories/', {
+        name: newCatName.trim(),
+        category_type: newCatType,
+        default_limit: 0,
+        is_active: true,
+      })
+      refetchCategories()
+      setShowNewCatForm(false)
+      setNewCatName('')
+      setNewCatType('Variavel')
+    } catch (err) {
+      console.error('Failed to create category:', err)
+    } finally {
+      setNewCatSaving(false)
+    }
+  }
+
+  const handleUpdateCategory = async (catId, field, value) => {
+    try {
+      await api.patch(`/categories/${catId}/`, { [field]: value })
+      refetchCategories()
+    } catch (err) {
+      console.error('Failed to update category:', err)
+    }
+  }
+
+  const handleDeleteCategory = async (catId, name) => {
+    if (!confirm(`Desativar categoria "${name}"?`)) return
+    try {
+      await api.patch(`/categories/${catId}/`, { is_active: false, default_limit: 0 })
+      refetchCategories()
+    } catch (err) {
+      console.error('Failed to deactivate category:', err)
+    }
+  }
+
+  const handleCreateSubcategory = async (catId) => {
+    if (!newSubName.trim()) return
+    setNewSubSaving(true)
+    try {
+      await api.post('/subcategories/', {
+        name: newSubName.trim(),
+        category: catId,
+      })
+      refetchCategories()
+      setNewSubName('')
+    } catch (err) {
+      console.error('Failed to create subcategory:', err)
+    } finally {
+      setNewSubSaving(false)
+    }
+  }
+
+  const handleDeleteSubcategory = async (subId, name) => {
+    if (!confirm(`Excluir subcategoria "${name}"?`)) return
+    try {
+      await api.delete(`/subcategories/${subId}/`)
+      refetchCategories()
+    } catch (err) {
+      console.error('Failed to delete subcategory:', err)
     }
   }
 
@@ -342,6 +442,159 @@ function Settings() {
                     </button>
                   </div>
                 ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* ---- CATEGORIES & SUBCATEGORIES ---- */}
+      <h2 className={styles.heading}>Categorias & Subcategorias</h2>
+      <p className={styles.templateDesc}>
+        Gerencie as categorias de gastos usadas para classificar transações.
+        Subcategorias são opcionais e ajudam a detalhar os gastos.
+      </p>
+
+      <div className={styles.templateSection}>
+        <div className={styles.templateHeader}>
+          <span className={styles.templateCount}>
+            {allCategories.length} categorias ativas
+          </span>
+          <button
+            className={styles.addTplBtn}
+            onClick={() => setShowNewCatForm(!showNewCatForm)}
+          >
+            {showNewCatForm ? 'Cancelar' : '+ Nova Categoria'}
+          </button>
+        </div>
+
+        {/* New category form */}
+        {showNewCatForm && (
+          <form className={styles.newTplForm} onSubmit={handleCreateCategory}>
+            <input
+              className={styles.tplInput}
+              type="text"
+              placeholder="Nome da categoria"
+              value={newCatName}
+              onChange={(e) => setNewCatName(e.target.value)}
+              autoFocus
+            />
+            <select
+              className={styles.tplSelect}
+              value={newCatType}
+              onChange={(e) => setNewCatType(e.target.value)}
+            >
+              <option value="Variavel">Variável</option>
+              <option value="Fixo">Fixo</option>
+              <option value="Income">Entrada</option>
+              <option value="Investimento">Investimento</option>
+            </select>
+            <button
+              className={styles.tplSaveBtn}
+              type="submit"
+              disabled={newCatSaving || !newCatName.trim()}
+            >
+              {newCatSaving ? '...' : 'Criar'}
+            </button>
+          </form>
+        )}
+
+        {/* Categories by type */}
+        {groupOrder.map((groupType) => {
+          const items = categoriesByType[groupType]
+          if (!items || items.length === 0) return null
+          return (
+            <div key={`cat-${groupType}`} className={styles.tplGroup}>
+              <div className={styles.tplGroupHeader}>
+                <span className={styles.tplGroupTitle}>{groupLabels[groupType]}</span>
+                <span className={styles.tplGroupTotal}>{items.length} categorias</span>
+              </div>
+              <div className={styles.tplList}>
+                {items.map((cat) => {
+                  const isExpanded = expandedCat === cat.id
+                  const subCount = cat.subcategories?.length || 0
+                  return (
+                    <div key={cat.id}>
+                      <div className={styles.catRow}>
+                        <button
+                          className={styles.catExpandBtn}
+                          onClick={() => setExpandedCat(isExpanded ? null : cat.id)}
+                          title={isExpanded ? 'Fechar' : 'Subcategorias'}
+                        >
+                          {isExpanded ? '▾' : '▸'}
+                        </button>
+                        <span className={styles.catNameCol}>
+                          <InlineEdit
+                            value={cat.name}
+                            onSave={(val) => handleUpdateCategory(cat.id, 'name', val)}
+                            format="text"
+                            prefix=""
+                            color="var(--color-text)"
+                          />
+                        </span>
+                        <span className={styles.tplType}>
+                          <TemplateTypeSelector
+                            value={cat.category_type}
+                            onChange={(val) => handleUpdateCategory(cat.id, 'category_type', val)}
+                          />
+                        </span>
+                        <span className={styles.catSubCount}>
+                          {subCount > 0 ? `${subCount} sub` : ''}
+                        </span>
+                        <button
+                          className={styles.tplDeleteBtn}
+                          onClick={() => handleDeleteCategory(cat.id, cat.name)}
+                          title="Desativar categoria"
+                        >
+                          {'\u00d7'}
+                        </button>
+                      </div>
+
+                      {/* Subcategories (expanded) */}
+                      {isExpanded && (
+                        <div className={styles.subSection}>
+                          {cat.subcategories?.map((sub) => (
+                            <div key={sub.id} className={styles.subRow}>
+                              <span className={styles.subIndent}>{'\u2514'}</span>
+                              <span className={styles.subName}>{sub.name}</span>
+                              <button
+                                className={styles.tplDeleteBtn}
+                                onClick={() => handleDeleteSubcategory(sub.id, sub.name)}
+                                title="Excluir subcategoria"
+                              >
+                                {'\u00d7'}
+                              </button>
+                            </div>
+                          ))}
+                          <div className={styles.subAddRow}>
+                            <span className={styles.subIndent}>+</span>
+                            <input
+                              className={styles.subInput}
+                              type="text"
+                              placeholder="Nova subcategoria..."
+                              value={expandedCat === cat.id ? newSubName : ''}
+                              onChange={(e) => setNewSubName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  handleCreateSubcategory(cat.id)
+                                }
+                              }}
+                            />
+                            <button
+                              className={styles.tplSaveBtn}
+                              onClick={() => handleCreateSubcategory(cat.id)}
+                              disabled={newSubSaving || !newSubName.trim()}
+                              style={{ padding: '3px 10px', fontSize: '0.7rem' }}
+                            >
+                              {newSubSaving ? '...' : 'Adicionar'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )

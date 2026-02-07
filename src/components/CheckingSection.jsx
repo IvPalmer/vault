@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useMonth } from '../context/MonthContext'
 import api from '../api/client'
@@ -14,6 +15,19 @@ function AmountCell({ value }) {
   return <span className={cls}>R$ {fmt(value)}</span>
 }
 
+function DescriptionCell({ value, row }) {
+  const moved = row.original.moved_to_month
+  if (!moved) return value
+  const mm = moved.slice(5)
+  const yy = moved.slice(0, 4)
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ opacity: 0.5 }}>{value}</span>
+      <span className={styles.movedBadge}>movida → {mm}/{yy}</span>
+    </span>
+  )
+}
+
 const checkingColumns = [
   {
     accessorKey: 'date',
@@ -28,6 +42,7 @@ const checkingColumns = [
     accessorKey: 'description',
     header: 'DESCRIÇÃO',
     minSize: 300,
+    cell: ({ getValue, row }) => <DescriptionCell value={getValue()} row={row} />,
   },
   {
     accessorKey: 'category',
@@ -50,6 +65,11 @@ function CheckingSection() {
     queryFn: () => api.get(`/analytics/checking/?month_str=${selectedMonth}`),
     enabled: !!selectedMonth,
   })
+
+  const rowClassName = useCallback((row) => {
+    if (row.original.moved_to_month) return styles.movedRow
+    return ''
+  }, [])
 
   if (isLoading) {
     return <div className={styles.loading}>Carregando conta corrente...</div>
@@ -84,6 +104,7 @@ function CheckingSection() {
         data={data.transactions}
         emptyMessage="Sem transações de conta corrente neste mês."
         maxHeight={500}
+        rowClassName={rowClassName}
       />
     </div>
   )

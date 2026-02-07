@@ -142,13 +142,30 @@ class Transaction(models.Model):
 
 
 class RecurringMapping(models.Model):
+    MATCH_MODE_CHOICES = (
+        ('manual', 'Manual'),       # Explicitly linked transaction(s)
+        ('category', 'Category'),   # Auto-match all txns in category
+    )
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     category = models.ForeignKey(
         Category, on_delete=models.CASCADE, null=True, blank=True, related_name='recurring_mappings'
     )
+    # Legacy single-transaction FK (kept for backward compat during migration)
     transaction = models.ForeignKey(
         Transaction, on_delete=models.SET_NULL, null=True, blank=True, related_name='recurring_mappings'
     )
+    # New: multiple transaction links
+    transactions = models.ManyToManyField(
+        Transaction, blank=True, related_name='recurring_mapping_links'
+    )
+    # Cross-month links: transactions from a DIFFERENT month linked here.
+    # These get excluded from their original month's metrics and shown as
+    # "Movido para {month_str}" in the source month's view.
+    cross_month_transactions = models.ManyToManyField(
+        Transaction, blank=True, related_name='cross_month_links'
+    )
+    match_mode = models.CharField(max_length=20, choices=MATCH_MODE_CHOICES, default='manual')
     month_str = models.CharField(max_length=7, db_index=True)
     status = models.CharField(max_length=20, choices=[
         ('mapped', 'Mapped'),
@@ -162,6 +179,7 @@ class RecurringMapping(models.Model):
     is_custom = models.BooleanField(default=False)
     custom_name = models.CharField(max_length=200, blank=True)
     custom_type = models.CharField(max_length=20, choices=CATEGORY_TYPE_CHOICES, blank=True)
+    display_order = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -173,7 +191,7 @@ class RecurringMapping(models.Model):
                 name='unique_category_month_non_null',
             ),
         ]
-        ordering = ['month_str', 'category__display_order']
+        ordering = ['month_str', 'display_order', 'category__display_order']
 
     def __str__(self):
         name = self.custom_name if self.is_custom else (self.category.name if self.category else '?')
@@ -208,3 +226,50 @@ class BalanceOverride(models.Model):
 
     def __str__(self):
         return f"{self.month_str}: R$ {self.balance}"
+
+
+class MetricasOrderConfig(models.Model):
+    """
+    Stores metric card order per month.
+    A row with month_str='__default__' is the global default order.
+    All other rows are per-month overrides.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    month_str = models.CharField(max_length=20, unique=True)
+    card_order = models.JSONField(default=list)
+    hidden_cards = models.JSONField(default=list)
+    is_locked = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-month_str']
+
+    def __str__(self):
+        locked = ' [LOCKED]' if self.is_locked else ''
+        return f"MetricasOrder {self.month_str}{locked}"
+
+
+class CustomMetric(models.Model):
+    """
+    User-defined metric card definitions.
+    Global (not per-month); computed values vary by month.
+    """
+    METRIC_TYPE_CHOICES = (
+        ('category_total', 'Category Total Spending'),
+        ('category_remaining', 'Category Budget Remaining'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    metric_type = models.CharField(max_length=30, choices=METRIC_TYPE_CHOICES)
+    label = models.CharField(max_length=100)
+    config = models.JSONField(default=dict)
+    color = models.CharField(max_length=50, default='var(--color-accent)')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['label']
+
+    def __str__(self):
+        return f"CustomMetric: {self.label} ({self.metric_type})"

@@ -35,3 +35,19 @@
 .transferRow {
   opacity: 0.5;
 }
+
+.movedRow {
+  opacity: 0.35;
+}
+
+.movedBadge {
+  flex-shrink: 0;
+  font-size: 0.6rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  background: rgba(99, 102, 241, 0.1);
+  color: #6366f1;
+  border-radius: var(--radius-sm, 4px);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}

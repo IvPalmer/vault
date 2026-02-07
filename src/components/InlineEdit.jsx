@@ -2,7 +2,25 @@ import { useState, useRef, useEffect } from 'react'
 import styles from './InlineEdit.module.css'
 
 /**
+ * Safely evaluate a math expression (supports +, -, *, /, parentheses).
+ * Returns the result or NaN if invalid.
+ */
+function evalFormula(expr) {
+  const cleaned = expr.replace(/\s/g, '').replace(/,/g, '.')
+  // Only allow digits, decimal points, operators, and parentheses
+  if (!/^[\d.+\-*/()]+$/.test(cleaned)) return NaN
+  try {
+    // Use Function constructor to evaluate (safe since we validated the charset)
+    const result = new Function(`return (${cleaned})`)()
+    return typeof result === 'number' && isFinite(result) ? result : NaN
+  } catch {
+    return NaN
+  }
+}
+
+/**
  * InlineEdit — click-to-edit pattern for amounts and text.
+ * Currency mode supports formula expressions (e.g., "1500 + 1800" evaluates to 3300).
  *
  * Props:
  *   value       - current value (number or string)
@@ -46,8 +64,16 @@ function InlineEdit({
     setEditing(false)
     const trimmed = draft.trim()
     if (!trimmed && format === 'currency') return
-    const newVal = format === 'currency' ? parseFloat(trimmed) : trimmed
-    if (format === 'currency' && isNaN(newVal)) return
+    let newVal
+    if (format === 'currency') {
+      // Try formula evaluation first (e.g., "1500 + 1800")
+      newVal = evalFormula(trimmed)
+      if (isNaN(newVal)) return
+      // Round to 2 decimal places
+      newVal = Math.round(newVal * 100) / 100
+    } else {
+      newVal = trimmed
+    }
     if (newVal !== value) {
       onSave(newVal)
     }
@@ -78,13 +104,14 @@ function InlineEdit({
         )}
         <input
           ref={inputRef}
-          type={format === 'currency' ? 'number' : 'text'}
+          type="text"
+          inputMode={format === 'currency' ? 'decimal' : 'text'}
           className={styles.input}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={handleSave}
           onKeyDown={handleKeyDown}
-          step="0.01"
+          placeholder={format === 'currency' ? 'ex: 1500 + 1800' : ''}
         />
       </div>
     )

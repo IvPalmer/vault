@@ -202,3 +202,37 @@
   text-decoration: line-through;
   text-decoration-color: var(--color-text-secondary);
 }
+
+/* ── Drag & Drop rows ── */
+.dragHandleCell {
+  width: 28px;
+  max-width: 28px;
+  padding: 0 4px !important;
+  text-align: center;
+  cursor: grab;
+  user-select: none;
+}
+
+.dragHandleCell:active {
+  cursor: grabbing;
+}
+
+.dragGrip {
+  color: var(--color-border);
+  font-size: 0.85rem;
+  line-height: 1;
+  transition: color 0.15s;
+}
+
+.tr:hover .dragGrip {
+  color: var(--color-text-secondary);
+}
+
+.draggingRow {
+  opacity: 0.35;
+  background: var(--color-bg) !important;
+}
+
+.dragOverRow {
+  box-shadow: inset 0 -2px 0 0 var(--color-accent, #6366f1);
+}

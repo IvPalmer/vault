@@ -16,6 +16,10 @@ export function useInvalidateAnalytics() {
     queryClient.invalidateQueries({ queryKey: ['analytics-metricas'] })
   }, [queryClient])
 
+  const invalidateMetricasOrder = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['metricas-order'] })
+  }, [queryClient])
+
   const invalidateRecurring = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['analytics-recurring'] })
   }, [queryClient])
@@ -34,17 +38,19 @@ export function useInvalidateAnalytics() {
 
   const invalidateAll = useCallback(() => {
     invalidateMetricas()
+    invalidateMetricasOrder()
     invalidateRecurring()
     invalidateCards()
     invalidateProjection()
     invalidateOrcamento()
   }, [
-    invalidateMetricas, invalidateRecurring,
+    invalidateMetricas, invalidateMetricasOrder, invalidateRecurring,
     invalidateCards, invalidateProjection, invalidateOrcamento,
   ])
 
   return {
     invalidateMetricas,
+    invalidateMetricasOrder,
     invalidateRecurring,
     invalidateCards,
     invalidateProjection,

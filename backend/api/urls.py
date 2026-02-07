@@ -7,7 +7,7 @@ from .views import (
     BudgetConfigViewSet, BalanceOverrideViewSet,
     AnalyticsMetricasView,
     RecurringDataView, CardTransactionsView, VariableTransactionsView,
-    MappingCandidatesView, MapTransactionView,
+    MappingCandidatesView, MapTransactionView, ToggleMatchModeView,
     ImportStatementsView,
     RecurringInitializeView, RecurringExpectedView, RecurringUpdateView,
     RecurringCustomView, RecurringSkipView, BalanceSaveView,
@@ -15,6 +15,11 @@ from .views import (
     SmartCategorizeView, InstallmentDetailsView,
     RecurringTemplatesView, ReapplyTemplateView,
     CheckingTransactionsView,
+    MonthCategoriesView,
+    AutoLinkRecurringView,
+    RecurringReorderView,
+    MetricasOrderView, MetricasMakeDefaultView, MetricasLockView,
+    CustomMetricsView,
 )
 
 router = DefaultRouter()
@@ -30,12 +35,17 @@ router.register(r'balance-overrides', BalanceOverrideViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('analytics/metricas/order/', MetricasOrderView.as_view(), name='metricas-order'),
+    path('analytics/metricas/make-default/', MetricasMakeDefaultView.as_view(), name='metricas-make-default'),
+    path('analytics/metricas/lock/', MetricasLockView.as_view(), name='metricas-lock'),
+    path('analytics/metricas/custom/', CustomMetricsView.as_view(), name='metricas-custom'),
     path('analytics/metricas/', AnalyticsMetricasView.as_view(), name='analytics-metricas'),
     path('analytics/recurring/', RecurringDataView.as_view(), name='analytics-recurring'),
     path('analytics/cards/', CardTransactionsView.as_view(), name='analytics-cards'),
     path('analytics/variable/', VariableTransactionsView.as_view(), name='analytics-variable'),
     path('analytics/recurring/candidates/', MappingCandidatesView.as_view(), name='mapping-candidates'),
     path('analytics/recurring/map/', MapTransactionView.as_view(), name='map-transaction'),
+    path('analytics/recurring/match-mode/', ToggleMatchModeView.as_view(), name='toggle-match-mode'),
     # Phase A: new recurring management endpoints
     path('analytics/recurring/initialize/', RecurringInitializeView.as_view(), name='recurring-initialize'),
     path('analytics/recurring/expected/', RecurringExpectedView.as_view(), name='recurring-expected'),
@@ -55,5 +65,8 @@ urlpatterns = [
     path('analytics/recurring/reapply/', ReapplyTemplateView.as_view(), name='recurring-reapply'),
     # Checking account
     path('analytics/checking/', CheckingTransactionsView.as_view(), name='analytics-checking'),
+    path('analytics/month-categories/', MonthCategoriesView.as_view(), name='analytics-month-categories'),
+    path('analytics/recurring/auto-link/', AutoLinkRecurringView.as_view(), name='auto-link-recurring'),
+    path('analytics/recurring/reorder/', RecurringReorderView.as_view(), name='recurring-reorder'),
     path('import/', ImportStatementsView.as_view(), name='import-statements'),
 ]

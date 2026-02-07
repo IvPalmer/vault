@@ -34,7 +34,13 @@ from .services import (
     get_last_installment_month,
     reapply_template_to_month,
     get_checking_transactions,
+    get_month_categories,
+    auto_link_recurring,
+    get_metricas_order, save_metricas_order, make_default_order,
+    toggle_metricas_lock, get_custom_metric_options,
+    create_custom_metric, delete_custom_metric,
 )
+from .models import CustomMetric
 
 
 class AccountViewSet(viewsets.ModelViewSet):
@@ -270,16 +276,60 @@ class MapTransactionView(APIView):
 
     def delete(self, request):
         transaction_id = request.data.get('transaction_id')
+        mapping_id = request.data.get('mapping_id')
         if not transaction_id:
             return Response(
                 {'error': 'transaction_id required'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            result = unmap_transaction(transaction_id)
+            result = unmap_transaction(transaction_id, mapping_id=mapping_id)
             return Response(result)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ToggleMatchModeView(APIView):
+    """
+    POST /api/analytics/recurring/match-mode/ — Toggle match_mode for a mapping
+    Body: { mapping_id, match_mode: 'manual' | 'category', category_id (optional) }
+
+    Switching to 'manual': preserves existing M2M linked transactions.
+    Switching to 'category' WITH category_id: clears M2M, sets category FK.
+    Switching to 'category' WITHOUT category_id: just sets mode (no data loss).
+    """
+    def post(self, request):
+        mapping_id = request.data.get('mapping_id')
+        match_mode = request.data.get('match_mode')
+        category_id = request.data.get('category_id')
+        if not mapping_id or match_mode not in ('manual', 'category'):
+            return Response(
+                {'error': 'mapping_id and match_mode (manual|category) required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            mapping = RecurringMapping.objects.get(id=mapping_id)
+            mapping.match_mode = match_mode
+            if match_mode == 'category' and category_id:
+                # Only clear M2M when explicitly selecting a category
+                # This prevents data loss from just clicking the tab
+                mapping.transactions.clear()
+                mapping.transaction = None
+                mapping.actual_amount = None
+                mapping.status = 'missing'  # Will be recomputed on next fetch
+                try:
+                    cat = Category.objects.get(id=category_id)
+                    mapping.category = cat
+                except Category.DoesNotExist:
+                    pass
+            mapping.save()
+            return Response({
+                'mapping_id': str(mapping.id),
+                'match_mode': mapping.match_mode,
+                'category_id': str(mapping.category_id) if mapping.category_id else None,
+            })
+        except RecurringMapping.DoesNotExist:
+            return Response({'error': 'Mapping not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
 class ImportStatementsView(APIView):
@@ -728,3 +778,152 @@ class CheckingTransactionsView(APIView):
             return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
         data = get_checking_transactions(month_str)
         return Response(data)
+
+
+class AutoLinkRecurringView(APIView):
+    """
+    POST /api/analytics/recurring/auto-link/ — Auto-link unmatched recurring items
+    Body: { month_str }
+    Tries to match unlinked items by name similarity, amount, and previous month patterns.
+    """
+    def post(self, request):
+        month_str = request.data.get('month_str')
+        if not month_str:
+            return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = auto_link_recurring(month_str)
+            return Response(result)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class RecurringReorderView(APIView):
+    """
+    POST /api/analytics/recurring/reorder/
+    Body: { month_str, ordered_mapping_ids: [uuid, uuid, ...] }
+    Updates display_order on RecurringMapping rows for the given month.
+    Assigns sequential display_order (0, 1, 2, ...) to ALL mappings in the month,
+    using the provided list as the new order for those items and keeping
+    unmentioned items in their original relative positions after the reordered ones.
+    """
+    def post(self, request):
+        month_str = request.data.get('month_str')
+        ordered_ids = request.data.get('ordered_mapping_ids', [])
+        if not month_str or not ordered_ids:
+            return Response(
+                {'error': 'month_str and ordered_mapping_ids required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        mappings = list(
+            RecurringMapping.objects.filter(month_str=month_str)
+            .order_by('display_order', 'category__display_order')
+        )
+        id_to_mapping = {str(m.id): m for m in mappings}
+        ordered_set = set(ordered_ids)
+
+        # Build final order: reordered items in their new positions,
+        # unreferenced items keep their relative order
+        reordered = [id_to_mapping[mid] for mid in ordered_ids if mid in id_to_mapping]
+        others = [m for m in mappings if str(m.id) not in ordered_set]
+
+        # If only a subset (tab filter), interleave: replace the slots
+        # where reordered items were with the new order
+        if len(reordered) < len(mappings):
+            final = []
+            reorder_iter = iter(reordered)
+            for m in mappings:
+                if str(m.id) in ordered_set:
+                    final.append(next(reorder_iter))
+                else:
+                    final.append(m)
+        else:
+            final = reordered
+
+        updated = 0
+        for idx, m in enumerate(final):
+            if m.display_order != idx:
+                m.display_order = idx
+                m.save(update_fields=['display_order'])
+                updated += 1
+        return Response({'updated': updated})
+
+
+class MonthCategoriesView(APIView):
+    """GET /api/analytics/month-categories/?month_str=2026-01"""
+    def get(self, request):
+        month_str = request.query_params.get('month_str')
+        if not month_str:
+            return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            data = get_month_categories(month_str)
+            return Response(data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class MetricasOrderView(APIView):
+    """
+    GET  /api/analytics/metricas/order/?month_str=2026-01
+    POST /api/analytics/metricas/order/  { month_str, card_order: [...] }
+    """
+    def get(self, request):
+        month_str = request.query_params.get('month_str')
+        if not month_str:
+            return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(get_metricas_order(month_str))
+
+    def post(self, request):
+        month_str = request.data.get('month_str')
+        card_order = request.data.get('card_order')
+        hidden_cards = request.data.get('hidden_cards')
+        if not month_str or not card_order:
+            return Response({'error': 'month_str and card_order required'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(save_metricas_order(month_str, card_order, hidden_cards))
+
+
+class MetricasMakeDefaultView(APIView):
+    """POST /api/analytics/metricas/make-default/  { card_order: [...], hidden_cards: [...] }"""
+    def post(self, request):
+        card_order = request.data.get('card_order')
+        hidden_cards = request.data.get('hidden_cards')
+        if not card_order:
+            return Response({'error': 'card_order required'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(make_default_order(card_order, hidden_cards))
+
+
+class MetricasLockView(APIView):
+    """POST /api/analytics/metricas/lock/  { month_str, locked: true/false }"""
+    def post(self, request):
+        month_str = request.data.get('month_str')
+        locked = request.data.get('locked')
+        if not month_str or locked is None:
+            return Response({'error': 'month_str and locked required'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(toggle_metricas_lock(month_str, locked))
+
+
+class CustomMetricsView(APIView):
+    """
+    GET    /api/analytics/metricas/custom/  — List definitions + options
+    POST   /api/analytics/metricas/custom/  — Create custom metric
+    DELETE /api/analytics/metricas/custom/  — Delete { id }
+    """
+    def get(self, request):
+        return Response(get_custom_metric_options())
+
+    def post(self, request):
+        metric_type = request.data.get('metric_type')
+        label = request.data.get('label')
+        config = request.data.get('config', {})
+        color = request.data.get('color', 'var(--color-accent)')
+        if not metric_type or not label:
+            return Response({'error': 'metric_type and label required'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(create_custom_metric(metric_type, label, config, color), status=status.HTTP_201_CREATED)
+
+    def delete(self, request):
+        metric_id = request.data.get('id')
+        if not metric_id:
+            return Response({'error': 'id required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            return Response(delete_custom_metric(metric_id))
+        except CustomMetric.DoesNotExist:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)

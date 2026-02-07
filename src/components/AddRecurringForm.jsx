@@ -21,7 +21,7 @@ function AddRecurringForm({ onClose }) {
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!name.trim() || !amount) return
+    if (!name.trim()) return
 
     setSaving(true)
     try {
@@ -29,7 +29,7 @@ function AddRecurringForm({ onClose }) {
         month_str: selectedMonth,
         name: name.trim(),
         category_type: type,
-        expected_amount: parseFloat(amount),
+        expected_amount: amount ? parseFloat(amount) : 0,
       })
       queryClient.invalidateQueries({ queryKey: ['analytics-recurring'] })
       queryClient.invalidateQueries({ queryKey: ['analytics-metricas'] })
@@ -76,7 +76,7 @@ function AddRecurringForm({ onClose }) {
       <button
         className={styles.saveBtn}
         type="submit"
-        disabled={saving || !name.trim() || !amount}
+        disabled={saving || !name.trim()}
       >
         {saving ? '...' : 'Salvar'}
       </button>

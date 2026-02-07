@@ -12,6 +12,7 @@ from dateutil.relativedelta import relativedelta
 from .models import (
     Transaction, Category, Account, BalanceOverride,
     RecurringMapping, BudgetConfig, CategorizationRule,
+    MetricasOrderConfig, CustomMetric,
 )
 
 
@@ -96,8 +97,10 @@ def get_recurring_data(month_str):
     # Fetch all mappings for this month
     mappings = RecurringMapping.objects.filter(
         month_str=month_str,
-    ).select_related('category', 'transaction', 'transaction__account').order_by(
-        'category__display_order', 'custom_name'
+    ).select_related('category', 'transaction', 'transaction__account').prefetch_related(
+        'transactions', 'transactions__account'
+    ).order_by(
+        'display_order', 'category__display_order', 'custom_name'
     )
 
     # Transaction pools for suggestion matching
@@ -124,27 +127,18 @@ def get_recurring_data(month_str):
 
     def _compute_status_and_actual(mapping, cat_type):
         """
-        Compute status and actual amount for a mapping.
-        If mapping has a linked transaction, use that.
-        Otherwise, look for transactions matching the category.
+        Compute status and actual amount for a mapping based on match_mode:
+        - 'category': sum all transactions in the category
+        - 'manual': use M2M linked transactions (or legacy FK)
         """
         # If explicitly skipped, preserve that
         if mapping.status == 'skipped':
             return 'Pulado', float(mapping.actual_amount or 0)
 
-        # If mapping has a linked transaction
-        if mapping.transaction:
-            actual = float(abs(mapping.transaction.amount)) if cat_type != 'Income' else float(mapping.transaction.amount)
-            expected = float(mapping.expected_amount)
-            if expected > 0 and actual >= expected * 0.9:
-                return 'Pago', actual
-            elif actual > 0:
-                return 'Parcial', actual
-            else:
-                return 'Faltando', 0
+        expected = float(mapping.expected_amount)
 
-        # For non-custom items: check if transactions with this category exist
-        if mapping.category:
+        if mapping.match_mode == 'category' and mapping.category:
+            # Category match: sum all transactions in category
             if cat_type == 'Income':
                 cat_txns = income_pool.filter(category=mapping.category)
             elif cat_type == 'Investimento':
@@ -154,16 +148,36 @@ def get_recurring_data(month_str):
 
             actual_agg = cat_txns.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
             actual = float(abs(actual_agg)) if cat_type != 'Income' else float(actual_agg)
-            expected = float(mapping.expected_amount)
 
             if actual == 0:
                 return 'Faltando', 0
-            elif expected > 0 and actual >= expected * 0.9:
+            elif expected == 0 or actual >= expected * 0.9:
                 return 'Pago', actual
             else:
                 return 'Parcial', actual
 
-        # Custom items with no transaction
+        # Manual mode: use M2M linked transactions
+        linked = list(mapping.transactions.all())
+        if linked:
+            total = sum(float(abs(t.amount)) if cat_type != 'Income' else float(t.amount) for t in linked)
+            if expected == 0 or total >= expected * 0.9:
+                return 'Pago', total
+            elif total > 0:
+                return 'Parcial', total
+            else:
+                return 'Faltando', 0
+
+        # Legacy fallback: single transaction FK
+        if mapping.transaction:
+            actual = float(abs(mapping.transaction.amount)) if cat_type != 'Income' else float(mapping.transaction.amount)
+            if expected == 0 or actual >= expected * 0.9:
+                return 'Pago', actual
+            elif actual > 0:
+                return 'Parcial', actual
+            else:
+                return 'Faltando', 0
+
+        # No match found
         return 'Faltando', 0
 
     def _find_suggestion(mapping, cat_type, status, pool, all_descs):
@@ -204,17 +218,14 @@ def get_recurring_data(month_str):
         return ''
 
     def _get_matched_info(mapping, cat_type):
-        """Get matched transaction info."""
-        if mapping.transaction:
-            txn = mapping.transaction
-            return {
-                'matched_desc': txn.description,
-                'matched_source': txn.account.name if txn.account else '',
-                'matched_transaction_id': str(txn.id),
-            }
+        """Get matched transaction info based on match_mode.
 
-        # Fallback: look at category-matched transactions
-        if mapping.category:
+        Returns match_type: 'direct' (single linked txn), 'multi' (multiple linked),
+        'category' (category-matched), or None (no match).
+        For multi/category, returns list of linked transaction IDs.
+        """
+        if mapping.match_mode == 'category' and mapping.category:
+            # Category match mode
             if cat_type == 'Income':
                 cat_txns = income_pool.filter(category=mapping.category)
             elif cat_type == 'Investimento':
@@ -222,21 +233,73 @@ def get_recurring_data(month_str):
             else:
                 cat_txns = expense_pool.filter(category=mapping.category)
 
-            if cat_txns.exists():
+            count = cat_txns.count()
+            if count > 0:
                 primary = cat_txns.order_by(
                     '-amount' if cat_type == 'Income' else 'amount'
                 ).first()
-                if primary:
-                    return {
-                        'matched_desc': primary.description,
-                        'matched_source': primary.account.name if primary.account else '',
-                        'matched_transaction_id': str(primary.id),
-                    }
+                desc = f"{count} transações via categoria" if count > 1 else primary.description
+                return {
+                    'matched_desc': desc,
+                    'matched_source': primary.account.name if primary.account else '',
+                    'matched_transaction_id': str(primary.id) if count == 1 else None,
+                    'matched_transaction_ids': [str(t.id) for t in cat_txns[:20]],
+                    'match_type': 'category',
+                    'match_count': count,
+                }
+
+            return {
+                'matched_desc': '',
+                'matched_source': '',
+                'matched_transaction_id': None,
+                'matched_transaction_ids': [],
+                'match_type': 'category',
+                'match_count': 0,
+            }
+
+        # Manual mode: check M2M linked transactions
+        linked = list(mapping.transactions.all())
+        if linked:
+            count = len(linked)
+            primary = linked[0]
+            if count == 1:
+                return {
+                    'matched_desc': primary.description,
+                    'matched_source': primary.account.name if primary.account else '',
+                    'matched_transaction_id': str(primary.id),
+                    'matched_transaction_ids': [str(primary.id)],
+                    'match_type': 'direct',
+                    'match_count': 1,
+                }
+            else:
+                return {
+                    'matched_desc': f"{count} transações vinculadas",
+                    'matched_source': '',
+                    'matched_transaction_id': None,
+                    'matched_transaction_ids': [str(t.id) for t in linked],
+                    'match_type': 'multi',
+                    'match_count': count,
+                }
+
+        # Legacy fallback: single transaction FK
+        if mapping.transaction:
+            txn = mapping.transaction
+            return {
+                'matched_desc': txn.description,
+                'matched_source': txn.account.name if txn.account else '',
+                'matched_transaction_id': str(txn.id),
+                'matched_transaction_ids': [str(txn.id)],
+                'match_type': 'direct',
+                'match_count': 1,
+            }
 
         return {
             'matched_desc': '',
             'matched_source': '',
             'matched_transaction_id': None,
+            'matched_transaction_ids': [],
+            'match_type': None,
+            'match_count': 0,
         }
 
     # Build items from mappings
@@ -270,19 +333,25 @@ def get_recurring_data(month_str):
             'matched_desc': matched_info['matched_desc'],
             'matched_source': matched_info['matched_source'],
             'matched_transaction_id': matched_info['matched_transaction_id'],
+            'matched_transaction_ids': matched_info['matched_transaction_ids'],
+            'match_type': matched_info['match_type'],
+            'match_count': matched_info['match_count'],
+            'match_mode': mapping.match_mode,
             'suggested': suggestion,
             'category_type': cat_type,
             'is_custom': mapping.is_custom,
             'is_skipped': mapping.status == 'skipped',
+            'has_cross_month': mapping.cross_month_transactions.exists(),
+            'cross_month_count': mapping.cross_month_transactions.count(),
         }
 
-        if cat_type == 'Fixo':
-            fixo_items.append(item)
-        elif cat_type == 'Income':
+        if cat_type == 'Income':
             income_items.append(item)
         elif cat_type == 'Investimento':
             investimento_items.append(item)
-        # Skip Variavel — variable expenses are tracked in Orçamento, not as recurring items
+        else:
+            # Fixo + Variavel + any other type go into fixo list
+            fixo_items.append(item)
 
     return {
         'month_str': month_str,
@@ -595,10 +664,38 @@ def delete_recurring_template(category_id):
 # Replaces the old get_summary_metrics() and get_control_metrics() functions.
 # ---------------------------------------------------------------------------
 
-def get_metricas(month_str):
+def _get_prev_month_saldo(month_str):
+    """
+    Get the previous month's saldo projetado to use as this month's
+    starting balance when no BalanceOverride is set.
+
+    Calls get_metricas() for the previous month (with _cascade=False to
+    prevent infinite recursion on months without a BO anchor).
+    """
+    prev_str = _month_str_add(month_str, -1)
+
+    # Check if prev month has any transactions at all
+    has_data = Transaction.objects.filter(month_str=prev_str).exists()
+    if not has_data:
+        # Also check if prev month has a BalanceOverride
+        try:
+            BalanceOverride.objects.get(month_str=prev_str)
+        except BalanceOverride.DoesNotExist:
+            return None
+
+    # Compute prev month's full metricas to get its saldo_projetado
+    prev_metricas = get_metricas(prev_str, _cascade=False)
+    return Decimal(str(prev_metricas['saldo_projetado']))
+
+
+def get_metricas(month_str, _cascade=True):
     """
     MÉTRICAS — unified dashboard metrics replacing both get_summary_metrics
     and get_control_metrics. Returns 15 metrics computed with shared queries.
+
+    _cascade: if True, attempts to cascade saldo from previous month.
+              Set to False to prevent infinite recursion when called from
+              _get_prev_month_saldo().
     """
     import calendar
 
@@ -607,21 +704,64 @@ def get_metricas(month_str):
     today = datetime.now()
     is_current = (today.year == year and today.month == month)
 
-    # --- Shared transaction queries (exclude internal transfers) ---
+    # --- Cross-month exclusions ---
+    # Find transactions from THIS month that have been claimed by a DIFFERENT
+    # month's recurring mapping. These should be excluded from this month's
+    # income/expense totals to avoid double-counting.
+    cross_month_exclude_ids = set()
+    cross_month_targets = {}  # txn_id -> target month_str
+    other_month_mappings = RecurringMapping.objects.exclude(
+        month_str=month_str
+    ).prefetch_related('cross_month_transactions')
+    for om in other_month_mappings:
+        for t in om.cross_month_transactions.filter(month_str=month_str):
+            cross_month_exclude_ids.add(t.id)
+            cross_month_targets[t.id] = om.month_str
+
+    # --- Shared transaction queries (exclude internal transfers + cross-month moved) ---
     txns = Transaction.objects.filter(
         month_str=month_str,
         is_internal_transfer=False,
+    ).exclude(
+        id__in=cross_month_exclude_ids
     ).select_related('category', 'account')
 
     income_txns = txns.filter(amount__gt=0)
     expense_txns = txns.filter(amount__lt=0)
 
+    # Unfiltered pools for recurring matching (includes internal transfers,
+    # but still excludes cross-month moved transactions)
+    all_txns = Transaction.objects.filter(
+        month_str=month_str
+    ).exclude(
+        id__in=cross_month_exclude_ids
+    ).select_related('category', 'account')
+    all_income = all_txns.filter(amount__gt=0)
+    all_expense = all_txns.filter(amount__lt=0)
+
+    # --- Cross-month INCLUSIONS ---
+    # Transactions from OTHER months that are cross-month linked TO this
+    # month's recurring mappings. These should count toward this month's
+    # income/expense totals (e.g., December salary linked to January).
+    cross_month_include_income = Decimal('0.00')
+    cross_month_include_expense = Decimal('0.00')
+    this_month_mappings_cm = RecurringMapping.objects.filter(
+        month_str=month_str
+    ).prefetch_related('cross_month_transactions')
+    for m in this_month_mappings_cm:
+        for t in m.cross_month_transactions.all():
+            if t.amount > 0:
+                cross_month_include_income += t.amount
+            else:
+                cross_month_include_expense += t.amount
+
     # =====================================================================
     # 1. ENTRADAS ATUAIS — actual income received this month
+    #    Includes cross-month transactions linked TO this month's mappings
     # =====================================================================
-    entradas_atuais = income_txns.aggregate(
+    entradas_atuais = (income_txns.aggregate(
         total=Sum('amount')
-    )['total'] or Decimal('0.00')
+    )['total'] or Decimal('0.00')) + cross_month_include_income
 
     # =====================================================================
     # 2. ENTRADAS PROJETADAS — total expected income from recurring template
@@ -630,7 +770,7 @@ def get_metricas(month_str):
         month_str=month_str,
     ).filter(
         Q(category__category_type='Income') | Q(is_custom=True, custom_type='Income')
-    ).exclude(status='skipped').select_related('category', 'transaction')
+    ).exclude(status='skipped').select_related('category', 'transaction').prefetch_related('transactions')
 
     entradas_projetadas = Decimal('0.00')
     for m in income_mappings:
@@ -638,10 +778,11 @@ def get_metricas(month_str):
 
     # =====================================================================
     # 3. GASTOS ATUAIS — total actual expenses (CC + checking)
+    #    Includes cross-month expense transactions linked TO this month
     # =====================================================================
-    gastos_atuais = abs(expense_txns.aggregate(
+    gastos_atuais = abs((expense_txns.aggregate(
         total=Sum('amount')
-    )['total'] or Decimal('0.00'))
+    )['total'] or Decimal('0.00')) + cross_month_include_expense)
 
     # =====================================================================
     # 4. GASTOS PROJETADOS — expected total expenses for the month
@@ -651,7 +792,7 @@ def get_metricas(month_str):
         month_str=month_str,
     ).filter(
         Q(category__category_type='Fixo') | Q(is_custom=True, custom_type='Fixo')
-    ).exclude(status='skipped').select_related('category', 'transaction')
+    ).exclude(status='skipped').select_related('category', 'transaction').prefetch_related('transactions')
 
     fixo_expected_total = Decimal('0.00')
     for m in fixo_mappings_all:
@@ -666,26 +807,70 @@ def get_metricas(month_str):
 
     gastos_projetados = fixo_expected_total + parcelas_total + variable_budget
 
+    # --- Helper: compute actual for a recurring mapping ---
+    def _get_actual_for_mapping(mapping, is_income=False):
+        """Compute actual amount for a mapping based on its match_mode.
+        Uses unfiltered pools (includes internal transfers) since recurring
+        items may be paid via internal transfers (e.g., CC bill payments).
+        Also includes cross-month transactions linked to this mapping.
+        """
+        pool = all_income if is_income else all_expense
+        if mapping.match_mode == 'category' and mapping.category:
+            agg = pool.filter(category=mapping.category).aggregate(
+                total=Sum('amount')
+            )['total'] or Decimal('0.00')
+            # Also add cross-month transactions for this mapping
+            cross_total = sum(
+                t.amount for t in mapping.cross_month_transactions.all()
+            )
+            combined = agg + cross_total
+            return combined if is_income else abs(combined)
+        else:
+            # Manual mode: use M2M linked transactions + cross-month
+            linked = list(mapping.transactions.all()) + list(mapping.cross_month_transactions.all())
+            if linked:
+                total = sum(t.amount for t in linked)
+                return total if is_income else abs(total)
+            # Legacy fallback: single transaction FK
+            if mapping.transaction:
+                amt = mapping.transaction.amount
+                return amt if is_income else abs(amt)
+            return Decimal('0.00')
+
     # =====================================================================
     # 5. GASTOS FIXOS — actual fixed expenses paid (linked + category-matched)
     # =====================================================================
     gastos_fixos = Decimal('0.00')
     for mapping in fixo_mappings_all:
-        if mapping.transaction:
-            gastos_fixos += abs(mapping.transaction.amount)
-        elif mapping.category:
-            cat_actual = expense_txns.filter(category=mapping.category).aggregate(
-                total=Sum('amount')
-            )['total']
-            if cat_actual:
-                gastos_fixos += abs(cat_actual)
+        gastos_fixos += _get_actual_for_mapping(mapping, is_income=False)
 
     # =====================================================================
     # 6. GASTOS VARIÁVEIS — actual variable expenses from transactions
+    #    Excludes transactions that are linked to Fixo recurring mappings
+    #    (via M2M or category match) to avoid double-counting with gastos_fixos.
     # =====================================================================
-    gastos_variaveis = abs(expense_txns.filter(
-        category__category_type='Variavel'
-    ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
+    # Collect transaction IDs linked to Fixo mappings
+    fixo_linked_txn_ids = set()
+    for mapping in fixo_mappings_all:
+        if mapping.match_mode == 'category' and mapping.category:
+            # Category match: all transactions in the category count as fixo
+            cat_txn_ids = all_expense.filter(
+                category=mapping.category
+            ).values_list('id', flat=True)
+            fixo_linked_txn_ids.update(cat_txn_ids)
+        else:
+            # Manual mode: M2M linked transactions
+            for t in mapping.transactions.all():
+                fixo_linked_txn_ids.add(t.id)
+            # Legacy FK
+            if mapping.transaction_id:
+                fixo_linked_txn_ids.add(mapping.transaction_id)
+
+    variavel_qs = expense_txns.filter(category__category_type='Variavel')
+    if fixo_linked_txn_ids:
+        variavel_qs = variavel_qs.exclude(id__in=fixo_linked_txn_ids)
+    gastos_variaveis = abs(variavel_qs.aggregate(
+        total=Sum('amount'))['total'] or Decimal('0.00'))
 
     # =====================================================================
     # 7. FATURA MASTER — Mastercard Black + Mastercard - Rafa combined
@@ -710,56 +895,33 @@ def get_metricas(month_str):
 
     # =====================================================================
     # 10. A ENTRAR — pending income (from unlinked/unmatched recurring items)
-    #     Uses exact comparison: any shortfall counts as pending.
+    #     Uses match_mode to determine how to compute actual received.
     # =====================================================================
     a_entrar = Decimal('0.00')
     for mapping in income_mappings:
         expected = mapping.expected_amount
-        if mapping.transaction:
-            actual = mapping.transaction.amount
-            if actual >= expected:
-                continue  # Fully received
-            elif actual > 0:
-                a_entrar += expected - actual  # Partial
-            else:
-                a_entrar += expected  # Nothing received
-        elif mapping.category:
-            cat_income = income_txns.filter(category=mapping.category).aggregate(
-                total=Sum('amount')
-            )['total'] or Decimal('0.00')
-            if cat_income >= expected:
-                continue  # Fully received
-            else:
-                a_entrar += expected - cat_income
+        actual = _get_actual_for_mapping(mapping, is_income=True)
+        if actual >= expected:
+            continue  # Fully received
+        elif actual > 0:
+            a_entrar += expected - actual  # Partial
         else:
-            a_entrar += expected  # Custom with no txn
+            a_entrar += expected  # Nothing received
 
     # =====================================================================
     # 11. A PAGAR — pending fixed expenses (from unlinked/unmatched recurring)
-    #     Uses exact comparison: any shortfall counts as pending.
+    #     Uses match_mode to determine how to compute actual paid.
     # =====================================================================
     a_pagar = Decimal('0.00')
     for mapping in fixo_mappings_all:
         expected = mapping.expected_amount
-        if mapping.transaction:
-            actual = abs(mapping.transaction.amount)
-            if actual >= expected:
-                continue  # Fully paid
-            elif actual > 0:
-                a_pagar += expected - actual  # Partial
-            else:
-                a_pagar += expected  # Not paid
-        elif mapping.category:
-            cat_actual = expense_txns.filter(category=mapping.category).aggregate(
-                total=Sum('amount')
-            )['total']
-            actual = abs(cat_actual) if cat_actual else Decimal('0.00')
-            if actual >= expected:
-                continue  # Fully paid
-            else:
-                a_pagar += expected - actual
+        actual = _get_actual_for_mapping(mapping, is_income=False)
+        if actual >= expected:
+            continue  # Fully paid
+        elif actual > 0:
+            a_pagar += expected - actual  # Partial
         else:
-            a_pagar += expected  # Custom with no txn
+            a_pagar += expected  # Not paid
 
     # =====================================================================
     # 12. BALANCE OVERRIDE + SALDO PROJETADO
@@ -771,10 +933,26 @@ def get_metricas(month_str):
     except BalanceOverride.DoesNotExist:
         pass
 
+    # Cascade: compute previous month's projected ending balance
+    prev_month_saldo = None
+    prev_month_saldo_float = None
+    if _cascade:
+        prev_month_saldo = _get_prev_month_saldo(month_str)
+        prev_month_saldo_float = float(prev_month_saldo) if prev_month_saldo is not None else None
+
     if balance_override is not None:
+        # User manually set balance for this month — use it.
+        # BO already reflects all realized transactions, so only add pending.
         saldo_projetado = Decimal(str(balance_override)) + a_entrar - a_pagar
+    elif prev_month_saldo is not None:
+        # No manual balance — cascade from previous month's projected saldo.
+        # Starting from prev ending balance, add this month's realized +
+        # pending income, subtract realized + pending expenses.
+        saldo_projetado = (prev_month_saldo
+                           + entradas_atuais + a_entrar
+                           - gastos_atuais - a_pagar)
     else:
-        # Fallback: computed saldo from actual transactions
+        # No anchor at all — fallback to simple computation
         saldo_projetado = entradas_atuais - gastos_fixos - gastos_variaveis - parcelas_total
 
     # =====================================================================
@@ -833,9 +1011,24 @@ def get_metricas(month_str):
         saude = 'SAUDÁVEL'
         saude_level = 'good'
 
-    return {
+    # Build cross-month moved info for UI
+    cross_month_info = []
+    for txn_id, target in cross_month_targets.items():
+        try:
+            t = Transaction.objects.get(id=txn_id)
+            cross_month_info.append({
+                'id': str(txn_id),
+                'description': t.description,
+                'amount': float(t.amount),
+                'moved_to': target,
+            })
+        except Transaction.DoesNotExist:
+            pass
+
+    result_dict = {
         'month_str': month_str,
         'balance_override': balance_override,
+        'prev_month_saldo': prev_month_saldo_float,
         'entradas_atuais': float(entradas_atuais),
         'entradas_projetadas': float(entradas_projetadas),
         'gastos_atuais': float(gastos_atuais),
@@ -853,7 +1046,290 @@ def get_metricas(month_str):
         'diario_recomendado': round(diario_recomendado, 2),
         'saude': saude,
         'saude_level': saude_level,
+        'cross_month_moved': cross_month_info,
     }
+
+    # Append custom metrics computed from this month's data
+    result_dict['custom_metrics'] = _compute_custom_metrics(month_str, result_dict)
+    return result_dict
+
+
+# ---------------------------------------------------------------------------
+# Metricas order + custom metrics
+# ---------------------------------------------------------------------------
+
+BUILTIN_CARD_ORDER = [
+    'entradas_atuais', 'entradas_projetadas', 'a_entrar', 'a_pagar',
+    'dias_fechamento', 'gastos_atuais', 'gastos_projetados', 'gastos_fixos',
+    'gastos_variaveis', 'diario_max', 'fatura_master', 'fatura_visa',
+    'parcelas', 'saldo_projetado', 'saude',
+]
+
+
+def _compute_custom_metrics(month_str, metricas_data):
+    """
+    Compute values for all active CustomMetrics for the given month.
+    Takes already-computed metricas_data to avoid circular calls.
+    """
+    custom_metrics = CustomMetric.objects.filter(is_active=True).order_by('label')
+    if not custom_metrics.exists():
+        return []
+
+    results = []
+
+    for cm in custom_metrics:
+        card_id = f'custom_{str(cm.id)}'
+        value = 'R$ 0'
+        subtitle = ''
+        color = cm.color
+
+        if cm.metric_type == 'category_total':
+            cat_id = cm.config.get('category_id')
+            if cat_id:
+                spent_agg = Transaction.objects.filter(
+                    month_str=month_str,
+                    category_id=cat_id,
+                    amount__lt=0,
+                    is_internal_transfer=False,
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                spent = abs(spent_agg)
+                value = f'R$ {int(spent):,}'.replace(',', '.')
+                subtitle = 'gasto na categoria'
+
+        elif cm.metric_type == 'category_remaining':
+            cat_id = cm.config.get('category_id')
+            if cat_id:
+                try:
+                    cat = Category.objects.get(id=cat_id)
+                except Category.DoesNotExist:
+                    continue
+                # Get budget (override or default)
+                try:
+                    bc = BudgetConfig.objects.get(category_id=cat_id, month_str=month_str)
+                    limit = float(bc.limit_override)
+                except BudgetConfig.DoesNotExist:
+                    limit = float(cat.default_limit)
+
+                spent_agg = Transaction.objects.filter(
+                    month_str=month_str,
+                    category_id=cat_id,
+                    amount__lt=0,
+                    is_internal_transfer=False,
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                spent = float(abs(spent_agg))
+                remaining = max(0, limit - spent)
+                pct = (spent / limit * 100) if limit > 0 else 0
+
+                value = f'R$ {int(remaining):,}'.replace(',', '.')
+                subtitle = f'{pct:.0f}% usado'
+                if pct > 100:
+                    color = 'var(--color-red)'
+                elif pct > 80:
+                    color = 'var(--color-orange)'
+                else:
+                    color = 'var(--color-green)'
+
+        results.append({
+            'id': str(cm.id),
+            'card_id': card_id,
+            'label': cm.label,
+            'value': value,
+            'subtitle': subtitle,
+            'color': color,
+            'metric_type': cm.metric_type,
+        })
+
+    return results
+
+
+def _get_all_known_card_ids():
+    """Return set of all valid card IDs (builtin + active custom)."""
+    custom_ids = [
+        f'custom_{str(cid)}'
+        for cid in CustomMetric.objects.filter(is_active=True)
+            .order_by('label')
+            .values_list('id', flat=True)
+    ]
+    return BUILTIN_CARD_ORDER + custom_ids
+
+
+def _reconcile_order(order, hidden, all_known_ids):
+    """
+    Ensure order + hidden contain exactly all_known_ids.
+    - New cards not in order or hidden get appended to order.
+    - Stale cards (deleted) get removed from both.
+    """
+    all_known = set(all_known_ids)
+    hidden_set = set(hidden)
+    order_set = set(order)
+    # Append genuinely new cards (not hidden, not in order)
+    for cid in all_known_ids:
+        if cid not in order_set and cid not in hidden_set:
+            order.append(cid)
+    # Remove stale
+    order = [cid for cid in order if cid in all_known]
+    hidden = [cid for cid in hidden if cid in all_known]
+    return order, hidden
+
+
+def get_metricas_order(month_str):
+    """
+    Return the card order + hidden cards + lock status for a month.
+    Resolution: per-month override > global default > hardcoded BUILTIN_CARD_ORDER.
+    """
+    all_known_ids = _get_all_known_card_ids()
+
+    # Global default
+    global_hidden = []
+    try:
+        global_cfg = MetricasOrderConfig.objects.get(month_str='__default__')
+        global_order = list(global_cfg.card_order)
+        global_hidden = list(global_cfg.hidden_cards or [])
+    except MetricasOrderConfig.DoesNotExist:
+        global_order = list(all_known_ids)
+
+    global_order, global_hidden = _reconcile_order(
+        global_order, global_hidden, all_known_ids
+    )
+
+    # Per-month override
+    try:
+        month_cfg = MetricasOrderConfig.objects.get(month_str=month_str)
+        effective_order = list(month_cfg.card_order)
+        effective_hidden = list(month_cfg.hidden_cards or [])
+        is_locked = month_cfg.is_locked
+        has_month_override = True
+    except MetricasOrderConfig.DoesNotExist:
+        effective_order = list(global_order)
+        effective_hidden = list(global_hidden)
+        is_locked = False
+        has_month_override = False
+
+    effective_order, effective_hidden = _reconcile_order(
+        effective_order, effective_hidden, all_known_ids
+    )
+
+    return {
+        'month_str': month_str,
+        'card_order': effective_order,
+        'hidden_cards': effective_hidden,
+        'global_default_order': global_order,
+        'global_hidden_cards': global_hidden,
+        'is_locked': is_locked,
+        'has_month_override': has_month_override,
+    }
+
+
+def save_metricas_order(month_str, card_order, hidden_cards=None):
+    """Save card order (and optionally hidden cards) for a specific month."""
+    defaults = {'card_order': card_order}
+    if hidden_cards is not None:
+        defaults['hidden_cards'] = hidden_cards
+    cfg, created = MetricasOrderConfig.objects.update_or_create(
+        month_str=month_str,
+        defaults=defaults,
+    )
+    return {
+        'month_str': month_str,
+        'card_order': cfg.card_order,
+        'hidden_cards': cfg.hidden_cards,
+    }
+
+
+def make_default_order(card_order, hidden_cards=None):
+    """
+    Set card_order as the global default and delete all unlocked per-month
+    overrides so they inherit the new default.
+    """
+    defaults = {'card_order': card_order}
+    if hidden_cards is not None:
+        defaults['hidden_cards'] = hidden_cards
+    MetricasOrderConfig.objects.update_or_create(
+        month_str='__default__',
+        defaults=defaults,
+    )
+    deleted_count, _ = MetricasOrderConfig.objects.filter(
+        is_locked=False
+    ).exclude(
+        month_str='__default__'
+    ).delete()
+    return {'global_default': card_order, 'months_reset': deleted_count}
+
+
+def toggle_metricas_lock(month_str, locked):
+    """Lock or unlock a month's metricas order."""
+    if locked:
+        order_data = get_metricas_order(month_str)
+        cfg, _ = MetricasOrderConfig.objects.update_or_create(
+            month_str=month_str,
+            defaults={
+                'card_order': order_data['card_order'],
+                'hidden_cards': order_data['hidden_cards'],
+                'is_locked': True,
+            },
+        )
+    else:
+        try:
+            cfg = MetricasOrderConfig.objects.get(month_str=month_str)
+            cfg.is_locked = False
+            cfg.save(update_fields=['is_locked', 'updated_at'])
+        except MetricasOrderConfig.DoesNotExist:
+            pass
+    return {'month_str': month_str, 'is_locked': locked}
+
+
+def get_custom_metric_options():
+    """Return active custom metrics + available categories for the picker UI."""
+    metrics = CustomMetric.objects.filter(is_active=True).order_by('label')
+    categories = list(
+        Category.objects.filter(is_active=True)
+        .order_by('display_order', 'name')
+        .values('id', 'name', 'category_type', 'default_limit')
+    )
+    # Convert UUID to string for JSON
+    for c in categories:
+        c['id'] = str(c['id'])
+        c['default_limit'] = float(c['default_limit'])
+
+    return {
+        'metrics': [{
+            'id': str(m.id),
+            'metric_type': m.metric_type,
+            'label': m.label,
+            'config': m.config,
+            'color': m.color,
+        } for m in metrics],
+        'available_categories': categories,
+    }
+
+
+def create_custom_metric(metric_type, label, config, color='var(--color-accent)'):
+    """Create a new custom metric definition."""
+    cm = CustomMetric.objects.create(
+        metric_type=metric_type,
+        label=label,
+        config=config,
+        color=color,
+    )
+    card_id = f'custom_{str(cm.id)}'
+    # Append to all existing order configs
+    for cfg in MetricasOrderConfig.objects.all():
+        if card_id not in cfg.card_order:
+            cfg.card_order.append(card_id)
+            cfg.save(update_fields=['card_order'])
+    return {'id': str(cm.id), 'card_id': card_id, 'label': cm.label}
+
+
+def delete_custom_metric(metric_id):
+    """Delete a custom metric and remove from all order configs."""
+    cm = CustomMetric.objects.get(id=metric_id)
+    card_id = f'custom_{str(cm.id)}'
+    cm.delete()
+    for cfg in MetricasOrderConfig.objects.all():
+        if card_id in cfg.card_order:
+            cfg.card_order.remove(card_id)
+            cfg.save(update_fields=['card_order'])
+    return {'deleted': True, 'card_id': card_id}
 
 
 # ---------------------------------------------------------------------------
@@ -1130,15 +1606,19 @@ def get_installment_details(month_str):
 def get_mapping_candidates(month_str, category_id=None, mapping_id=None):
     """
     Returns candidate transactions for mapping to a recurring category.
-    Shows all transactions in the month, sorted by relevance:
-    1. Amount-similar first (within 20% of expected)
-    2. Then by date descending
-    Excludes transactions already mapped to this category.
+    Includes BOTH checking (month_str) and CC (invoice_month) transactions.
+    Shows ALL transactions (including already-linked ones), sorted by relevance.
+
+    Each candidate includes:
+    - is_linked: linked to THIS specific mapping's M2M set
+    - is_globally_linked: linked to ANY mapping this month (greyed out in UI)
+    - source: 'checking' or 'credit_card' for frontend filtering
 
     Accepts either category_id (for category-based items) or mapping_id
     (for custom items without a category).
     """
     cat = None
+    mapping = None
     expected = 0
     cat_name = ''
 
@@ -1151,19 +1631,67 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None):
         cat = Category.objects.get(id=category_id)
         expected = float(cat.default_limit)
         cat_name = cat.name
+        # Look up the mapping for this category+month (if it exists)
+        mapping = RecurringMapping.objects.filter(
+            category=cat, month_str=month_str
+        ).first()
 
-    # Get all transactions in the month
-    qs = Transaction.objects.filter(
+    # Build set of linked transaction IDs for THIS mapping
+    linked_ids = set()
+    if mapping:
+        linked_ids = set(
+            str(tid) for tid in mapping.transactions.values_list('id', flat=True)
+        )
+
+    # Build set of GLOBALLY linked transaction IDs (any mapping this month)
+    globally_linked_ids = set()
+    all_mappings = RecurringMapping.objects.filter(
         month_str=month_str,
-    ).select_related('account', 'category').order_by('-date')
+    ).prefetch_related('transactions')
+    for m in all_mappings:
+        for t in m.transactions.all():
+            globally_linked_ids.add(str(t.id))
+        if m.transaction_id:
+            globally_linked_ids.add(str(m.transaction_id))
 
-    # Separate into: amount-similar first, then the rest
-    results = []
-    for txn in qs:
+    # Compute previous month string for cross-month linking
+    y, m = int(month_str[:4]), int(month_str[5:7])
+    if m == 1:
+        prev_month_str = f'{y - 1}-12'
+    else:
+        prev_month_str = f'{y}-{m - 1:02d}'
+
+    # Three separate pools:
+    # 1. Checking transactions: month_str = target month (bank transactions in Feb)
+    # 2. CC transactions: invoice_month = target month (credit card bill for Feb)
+    # 3. Prior month: checking/manual from previous month (for cross-month linking)
+    from django.db.models import Q
+    qs = Transaction.objects.filter(
+        Q(month_str=month_str, account__account_type='checking') |
+        Q(month_str=month_str, account__account_type='manual') |
+        Q(invoice_month=month_str, account__account_type='credit_card')
+    ).select_related('account', 'category').order_by('-date').distinct()
+
+    prior_qs = Transaction.objects.filter(
+        Q(month_str=prev_month_str, account__account_type='checking') |
+        Q(month_str=prev_month_str, account__account_type='manual')
+    ).select_related('account', 'category').order_by('-date').distinct()
+
+    # Build set of transactions already cross-month-moved to ANY mapping
+    # (so they show as greyed out / "moved to X" in the prior month pool)
+    cross_month_moved_ids = set()
+    cross_month_target = {}  # txn_id -> target month_str
+    for cm in RecurringMapping.objects.filter(
+        month_str=month_str,
+    ).prefetch_related('cross_month_transactions'):
+        for t in cm.cross_month_transactions.all():
+            cross_month_moved_ids.add(str(t.id))
+            cross_month_target[str(t.id)] = month_str
+
+    def _build_candidate(txn, source_pool):
+        """Build a candidate dict from a transaction."""
+        txn_id_str = str(txn.id)
         amt = float(abs(txn.amount))
-        # Skip if already mapped to this exact category
-        if cat and txn.category_id == cat.id:
-            continue
 
         # Relevance score: closer to expected amount = higher
         if expected > 0:
@@ -1171,15 +1699,55 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None):
         else:
             diff_pct = 1.0
 
-        results.append({
-            'id': str(txn.id),
-            'date': txn.date.strftime('%Y-%m-%d'),
+        # Determine source type
+        acct_type = txn.account.account_type if txn.account else 'checking'
+        source = 'credit_card' if acct_type == 'credit_card' else 'checking'
+
+        # For CC transactions, use invoice_month for display date context
+        display_date = txn.date.strftime('%Y-%m-%d')
+        if source == 'credit_card' and txn.invoice_month:
+            display_date = f'{txn.invoice_month}-01'
+
+        # Override source for prior month pool
+        if source_pool == 'prior_month':
+            source = 'prior_month'
+
+        return {
+            'id': txn_id_str,
+            'date': display_date,
+            'purchase_date': txn.date.strftime('%Y-%m-%d') if source == 'credit_card' else None,
             'description': txn.description,
             'amount': float(txn.amount),
             'account': txn.account.name if txn.account else '',
             'category': txn.category.name if txn.category else 'Não categorizado',
+            'source': source,
+            'is_installment': txn.is_installment,
+            'installment_info': txn.installment_info or '',
+            'is_linked': txn_id_str in linked_ids,
+            'is_globally_linked': txn_id_str in globally_linked_ids and txn_id_str not in linked_ids,
+            'is_cross_month': source_pool == 'prior_month',
+            'cross_month_moved': txn_id_str in cross_month_moved_ids and txn_id_str not in linked_ids,
+            'cross_month_target': cross_month_target.get(txn_id_str, None),
             '_diff_pct': diff_pct,
-        })
+        }
+
+    # Build candidates list
+    results = []
+    seen_ids = set()
+
+    for txn in qs:
+        txn_id_str = str(txn.id)
+        if txn_id_str in seen_ids:
+            continue
+        seen_ids.add(txn_id_str)
+        results.append(_build_candidate(txn, 'current'))
+
+    for txn in prior_qs:
+        txn_id_str = str(txn.id)
+        if txn_id_str in seen_ids:
+            continue
+        seen_ids.add(txn_id_str)
+        results.append(_build_candidate(txn, 'prior_month'))
 
     # Sort: best amount matches first, then by date
     results.sort(key=lambda r: (r['_diff_pct'], r['date']))
@@ -1188,13 +1756,22 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None):
     for r in results:
         del r['_diff_pct']
 
+    # Count by source
+    checking_count = sum(1 for r in results if r['source'] == 'checking')
+    cc_count = sum(1 for r in results if r['source'] == 'credit_card')
+    prior_count = sum(1 for r in results if r['source'] == 'prior_month')
+
     return {
         'month_str': month_str,
+        'prev_month_str': prev_month_str,
         'category_id': str(cat.id) if cat else None,
         'category_name': cat_name,
         'expected': expected,
-        'candidates': results[:50],  # Limit to 50 candidates
+        'candidates': results,
         'total': len(results),
+        'checking_count': checking_count,
+        'cc_count': cc_count,
+        'prior_count': prior_count,
     }
 
 
@@ -1202,25 +1779,37 @@ def map_transaction_to_category(transaction_id, category_id=None, mapping_id=Non
     """
     Map a transaction to a recurring category or custom mapping.
     Updates the transaction's category FK and marks it as manually categorized.
-    Also updates the corresponding RecurringMapping — sets
-    transaction FK, actual_amount, and status to 'mapped'.
+    Adds the transaction to the mapping's M2M transactions set.
+    Sets match_mode to 'manual' and recomputes actual_amount from all linked txns.
 
     Accepts either category_id (for category-based items) or mapping_id
     (for custom items without a category).
     """
     txn = Transaction.objects.select_related('account').get(id=transaction_id)
 
+    def _update_mapping(mapping):
+        """Add transaction to M2M set and recompute actual.
+        If the transaction is from a different month, also track in cross_month_transactions."""
+        mapping.transactions.add(txn)
+        # Track cross-month link if transaction is from a different month
+        if txn.month_str != mapping.month_str:
+            mapping.cross_month_transactions.add(txn)
+        # Also keep legacy FK pointing to first linked txn
+        mapping.transaction = txn
+        mapping.match_mode = 'manual'
+        # Recompute actual from all linked transactions
+        total = sum(abs(t.amount) for t in mapping.transactions.all())
+        mapping.actual_amount = total
+        mapping.status = 'mapped'
+        mapping.save()
+
     if mapping_id:
-        # Direct mapping by mapping_id (custom items or any recurring item)
         mapping = RecurringMapping.objects.select_related('category').get(id=mapping_id)
         if mapping.category:
             txn.category = mapping.category
         txn.is_manually_categorized = True
         txn.save()
-        mapping.transaction = txn
-        mapping.actual_amount = abs(txn.amount)
-        mapping.status = 'mapped'
-        mapping.save()
+        _update_mapping(mapping)
         cat_name = mapping.custom_name if mapping.is_custom else (
             mapping.category.name if mapping.category else '?'
         )
@@ -1236,16 +1825,12 @@ def map_transaction_to_category(transaction_id, category_id=None, mapping_id=Non
         txn.category = cat
         txn.is_manually_categorized = True
         txn.save()
-        # Also update RecurringMapping for this category+month
         try:
             mapping = RecurringMapping.objects.get(
                 category=cat,
                 month_str=txn.month_str,
             )
-            mapping.transaction = txn
-            mapping.actual_amount = abs(txn.amount)
-            mapping.status = 'mapped'
-            mapping.save()
+            _update_mapping(mapping)
         except RecurringMapping.DoesNotExist:
             pass
         return {
@@ -1259,10 +1844,12 @@ def map_transaction_to_category(transaction_id, category_id=None, mapping_id=Non
         raise ValueError('Either category_id or mapping_id must be provided')
 
 
-def unmap_transaction(transaction_id):
+def unmap_transaction(transaction_id, mapping_id=None):
     """
-    Remove category mapping from a transaction (set back to Não categorizado).
-    Also clears the corresponding RecurringMapping link.
+    Remove a transaction from a recurring mapping's linked set.
+    If mapping_id is given, remove from that specific mapping.
+    Otherwise, find by category + month (legacy behavior).
+    Resets transaction category to 'Não categorizado'.
     """
     txn = Transaction.objects.get(id=transaction_id)
     old_category = txn.category
@@ -1274,20 +1861,43 @@ def unmap_transaction(transaction_id):
     txn.is_manually_categorized = False
     txn.save()
 
-    # Clear RecurringMapping link
-    if old_category:
+    # Find the mapping to unlink from
+    mapping = None
+    if mapping_id:
+        try:
+            mapping = RecurringMapping.objects.get(id=mapping_id)
+        except RecurringMapping.DoesNotExist:
+            pass
+    elif old_category:
         try:
             mapping = RecurringMapping.objects.get(
                 category=old_category,
                 month_str=old_month,
             )
-            if mapping.transaction_id == txn.id:
-                mapping.transaction = None
-                mapping.actual_amount = None
-                mapping.status = 'missing'
-                mapping.save()
         except RecurringMapping.DoesNotExist:
             pass
+
+    if mapping:
+        # Remove from M2M
+        mapping.transactions.remove(txn)
+        # Also remove from cross-month tracking if present
+        mapping.cross_month_transactions.remove(txn)
+        # Clear legacy FK if it was this txn
+        if mapping.transaction_id == txn.id:
+            # Set FK to another linked txn if any, else None
+            remaining = mapping.transactions.first()
+            mapping.transaction = remaining
+
+        remaining_count = mapping.transactions.count()
+        if remaining_count > 0:
+            # Recompute actual from remaining linked transactions
+            total = sum(abs(t.amount) for t in mapping.transactions.all())
+            mapping.actual_amount = total
+            mapping.status = 'mapped'
+        else:
+            mapping.actual_amount = None
+            mapping.status = 'missing'
+        mapping.save()
 
     return {
         'transaction_id': str(txn.id),
@@ -1936,6 +2546,195 @@ def smart_categorize(month_str=None, dry_run=False):
 
 
 # ---------------------------------------------------------------------------
+# Auto-link recurring items
+# ---------------------------------------------------------------------------
+
+def auto_link_recurring(month_str):
+    """
+    Try to automatically link unmatched recurring items to transactions.
+
+    Strategies (in priority order):
+    1. Previous month link: If the same recurring item was linked to a
+       transaction last month, look for a similar transaction this month
+       (same description pattern or same amount).
+    2. Name similarity: Match the recurring item name against transaction
+       descriptions using fuzzy matching.
+    3. Amount match: Find transactions with amounts close to expected
+       (within 10% tolerance).
+
+    Only processes 'manual' mode items with status 'missing' (Faltando).
+    Does NOT touch items that are already linked or in category mode.
+
+    Returns: dict with linked count and details.
+    """
+    mappings = RecurringMapping.objects.filter(
+        month_str=month_str,
+        match_mode='manual',
+    ).exclude(
+        status__in=['skipped', 'mapped'],
+    ).select_related('category', 'transaction').prefetch_related('transactions')
+
+    # Only process items with no linked transactions
+    unlinked = [m for m in mappings if m.transactions.count() == 0 and not m.transaction]
+
+    if not unlinked:
+        return {'linked': 0, 'details': [], 'message': 'No unlinked items to process'}
+
+    # Get all transactions for this month
+    all_txns = Transaction.objects.filter(
+        month_str=month_str,
+    ).select_related('account', 'category')
+
+    income_txns = list(all_txns.filter(amount__gt=0))
+    expense_txns = list(all_txns.filter(amount__lt=0))
+
+    # Build set of already-linked transaction IDs (across ALL mappings this month)
+    already_linked = set()
+    all_mappings = RecurringMapping.objects.filter(month_str=month_str).prefetch_related('transactions')
+    for m in all_mappings:
+        for t in m.transactions.all():
+            already_linked.add(t.id)
+        if m.transaction_id:
+            already_linked.add(m.transaction_id)
+
+    # Get previous month's links for pattern matching
+    prev_month = _month_str_add(month_str, -1)
+    prev_mappings = RecurringMapping.objects.filter(
+        month_str=prev_month,
+    ).select_related('category').prefetch_related('transactions')
+
+    prev_links = {}  # category_id -> list of (description_normalized, amount)
+    for pm in prev_mappings:
+        cat_id = pm.category_id
+        if not cat_id:
+            continue
+        linked = list(pm.transactions.all())
+        if linked:
+            prev_links[cat_id] = [
+                (_normalize_description(t.description), float(abs(t.amount)))
+                for t in linked
+            ]
+        elif pm.transaction:
+            prev_links[cat_id] = [
+                (_normalize_description(pm.transaction.description), float(abs(pm.transaction.amount)))
+            ]
+
+    results = []
+
+    for mapping in unlinked:
+        cat_type = mapping.custom_type if mapping.is_custom else (
+            mapping.category.category_type if mapping.category else ''
+        )
+        name = mapping.custom_name if mapping.is_custom else (
+            mapping.category.name if mapping.category else '?'
+        )
+        expected = float(mapping.expected_amount)
+        is_income = cat_type == 'Income'
+        pool = income_txns if is_income else expense_txns
+
+        # Filter out already-linked transactions
+        available = [t for t in pool if t.id not in already_linked]
+        if not available:
+            continue
+
+        matched_txns = []
+
+        # Strategy 1: Match by previous month's transaction pattern
+        cat_id = mapping.category_id
+        if cat_id and cat_id in prev_links:
+            for prev_desc, prev_amt in prev_links[cat_id]:
+                for txn in available:
+                    if txn.id in {t.id for t in matched_txns}:
+                        continue
+                    txn_desc = _normalize_description(txn.description)
+                    txn_amt = float(abs(txn.amount))
+                    # Exact description match
+                    if txn_desc and prev_desc and txn_desc == prev_desc:
+                        matched_txns.append(txn)
+                        break
+                    # Amount match (within 5%)
+                    if prev_amt > 0 and abs(txn_amt - prev_amt) / prev_amt < 0.05:
+                        # Also check at least some token overlap
+                        prev_tokens = set(_extract_tokens(prev_desc))
+                        txn_tokens = set(_extract_tokens(txn.description))
+                        if prev_tokens & txn_tokens:
+                            matched_txns.append(txn)
+                            break
+
+        # Strategy 2: Name similarity match
+        if not matched_txns:
+            name_upper = name.upper()
+            name_tokens = set(_extract_tokens(name))
+            best_match = None
+            best_score = 0
+
+            for txn in available:
+                txn_tokens = set(_extract_tokens(txn.description))
+                # Token overlap
+                if name_tokens and txn_tokens:
+                    overlap = len(name_tokens & txn_tokens)
+                    total = max(len(name_tokens), 1)
+                    score = overlap / total
+                    if score > best_score and score >= 0.5:
+                        best_score = score
+                        best_match = txn
+
+                # Direct substring match
+                if name_upper in txn.description.upper() or txn.description.upper() in name_upper:
+                    if len(name) >= 4:  # Avoid very short name matches
+                        best_match = txn
+                        best_score = 1.0
+                        break
+
+            if best_match and best_score >= 0.5:
+                matched_txns = [best_match]
+
+        # Strategy 3: Amount match (within 10%, single transaction)
+        if not matched_txns and expected > 0:
+            tol = expected * 0.10
+            for txn in available:
+                txn_amt = float(abs(txn.amount))
+                if abs(txn_amt - expected) <= tol:
+                    matched_txns = [txn]
+                    break
+
+        # Link matched transactions
+        if matched_txns:
+            for txn in matched_txns:
+                mapping.transactions.add(txn)
+                already_linked.add(txn.id)
+
+            total = sum(abs(t.amount) for t in mapping.transactions.all())
+            mapping.actual_amount = Decimal(str(total))
+            mapping.status = 'mapped'
+            mapping.transaction = matched_txns[0]  # Legacy FK
+            mapping.save()
+
+            results.append({
+                'mapping_id': str(mapping.id),
+                'name': name,
+                'expected': expected,
+                'actual': float(total),
+                'linked_count': len(matched_txns),
+                'linked': [
+                    {
+                        'id': str(t.id),
+                        'description': t.description,
+                        'amount': float(t.amount),
+                    }
+                    for t in matched_txns
+                ],
+            })
+
+    return {
+        'month_str': month_str,
+        'linked': len(results),
+        'total_unlinked': len(unlinked),
+        'details': results,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Reapply Template to Month
 # ---------------------------------------------------------------------------
 
@@ -1952,6 +2751,55 @@ def reapply_template_to_month(month_str):
 
 
 # ---------------------------------------------------------------------------
+# Month Categories (for TransactionPicker category matching)
+# ---------------------------------------------------------------------------
+
+def get_month_categories(month_str):
+    """
+    Return categories with their transaction counts for a given month.
+    Only includes expense transactions (amount < 0), excluding internal
+    transfers. Categories are sorted by total_amount descending (biggest
+    expenses first). Only categories with at least 1 transaction are included.
+    """
+    from django.db.models import Count, Sum, F
+
+    qs = (
+        Transaction.objects.filter(
+            month_str=month_str,
+            amount__lt=0,
+            is_internal_transfer=False,
+            category__isnull=False,
+        )
+        .values(
+            'category__id',
+            'category__name',
+            'category__category_type',
+        )
+        .annotate(
+            transaction_count=Count('id'),
+            total_amount=Sum('amount'),
+        )
+        .filter(transaction_count__gte=1)
+        .order_by('total_amount')  # most negative first = biggest expenses
+    )
+
+    categories = []
+    for row in qs:
+        categories.append({
+            'id': str(row['category__id']),
+            'name': row['category__name'],
+            'category_type': row['category__category_type'],
+            'transaction_count': row['transaction_count'],
+            'total_amount': float(row['total_amount']),
+        })
+
+    return {
+        'month_str': month_str,
+        'categories': categories,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Checking Account Transactions
 # ---------------------------------------------------------------------------
 
@@ -1959,11 +2807,21 @@ def get_checking_transactions(month_str):
     """
     Fetch all checking account transactions for a given month.
     Returns transactions grouped with summary totals.
+    Cross-month-moved transactions are flagged (greyed out in UI).
     """
     txns = Transaction.objects.filter(
         month_str=month_str,
         account__account_type='checking',
     ).select_related('account', 'category').order_by('date')
+
+    # Find cross-month-moved transaction IDs for this month
+    cross_month_moved = {}
+    other_month_mappings = RecurringMapping.objects.exclude(
+        month_str=month_str
+    ).prefetch_related('cross_month_transactions')
+    for om in other_month_mappings:
+        for ct in om.cross_month_transactions.filter(month_str=month_str):
+            cross_month_moved[str(ct.id)] = om.month_str
 
     items = []
     total_in = 0.0
@@ -1971,13 +2829,18 @@ def get_checking_transactions(month_str):
 
     for t in txns:
         amt = float(t.amount)
-        if amt > 0:
-            total_in += amt
-        else:
-            total_out += amt
+        tid = str(t.id)
+        moved_to = cross_month_moved.get(tid)
+
+        # Exclude moved transactions from totals
+        if not moved_to:
+            if amt > 0:
+                total_in += amt
+            else:
+                total_out += amt
 
         items.append({
-            'id': str(t.id),
+            'id': tid,
             'date': str(t.date),
             'description': t.description,
             'amount': amt,
@@ -1985,6 +2848,7 @@ def get_checking_transactions(month_str):
             'category_id': str(t.category.id) if t.category else None,
             'is_internal_transfer': t.is_internal_transfer,
             'is_recurring': t.is_recurring,
+            'moved_to_month': moved_to,
         })
 
     return {
