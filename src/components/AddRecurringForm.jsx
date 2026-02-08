@@ -28,7 +28,7 @@ function AddRecurringForm({ onClose }) {
       await api.post('/analytics/recurring/custom/', {
         month_str: selectedMonth,
         name: name.trim(),
-        category_type: type,
+        template_type: type,
         expected_amount: amount ? parseFloat(amount) : 0,
       })
       queryClient.invalidateQueries({ queryKey: ['analytics-recurring'] })

@@ -194,7 +194,7 @@ function RecurringSection() {
       },
     },
     {
-      accessorKey: 'category_type',
+      accessorKey: 'template_type',
       header: 'TIPO',
       size: 100,
       cell: ({ getValue, row }) => {
@@ -202,7 +202,7 @@ function RecurringSection() {
         return (
           <TypeSelector
             value={getValue()}
-            onChange={(newType) => handleUpdateItem(item.mapping_id, 'category_type', newType)}
+            onChange={(newType) => handleUpdateItem(item.mapping_id, 'template_type', newType)}
             disabled={item.is_skipped}
           />
         )
@@ -231,7 +231,7 @@ function RecurringSection() {
       cell: ({ getValue, row }) => {
         const val = getValue()
         if (val === 0) return <span style={{ color: 'var(--color-text-secondary)' }}>{'\u2014'}</span>
-        return <AmountCell value={val} positive={row.original.category_type === 'Income'} />
+        return <AmountCell value={val} positive={row.original.template_type === 'Income'} />
       },
     },
     {
@@ -306,7 +306,7 @@ function RecurringSection() {
 
   // --- Data queries ---
 
-  const { data: recData, isLoading: recLoading } = useQuery({
+  const { data: recData, isLoading: recLoading, error: recError } = useQuery({
     queryKey: ['analytics-recurring', selectedMonth],
     queryFn: () => api.get(`/analytics/recurring/?month_str=${selectedMonth}`),
     enabled: !!selectedMonth,
@@ -387,6 +387,10 @@ function RecurringSection() {
 
   if (recLoading) {
     return <div className={styles.loading}>Carregando controle...</div>
+  }
+
+  if (recError) {
+    return <div className={styles.loading}>Erro ao carregar controle recorrente.</div>
   }
 
   return (

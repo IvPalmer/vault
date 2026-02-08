@@ -1,8 +1,10 @@
-import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useMemo, useCallback } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMonth } from '../context/MonthContext'
 import api from '../api/client'
 import VaultTable from './VaultTable'
+import CategoryDropdown from './CategoryDropdown'
+import DescriptionEdit from './DescriptionEdit'
 import tableStyles from './VaultTable.module.css'
 import styles from './CardsSection.module.css'
 
@@ -22,110 +24,6 @@ function ParcelaCell({ value }) {
   return <span className={tableStyles.parcela}>{value}</span>
 }
 
-const cardColumns = [
-  {
-    accessorKey: 'date',
-    header: 'DATA',
-    size: 100,
-    cell: ({ getValue }) => {
-      const d = new Date(getValue() + 'T00:00:00')
-      return d.toLocaleDateString('pt-BR')
-    },
-  },
-  {
-    accessorKey: 'account',
-    header: 'CARTÃO',
-    size: 160,
-  },
-  {
-    accessorKey: 'category',
-    header: 'CATEGORIA',
-    size: 150,
-  },
-  {
-    accessorKey: 'subcategory',
-    header: 'SUBCATEGORIA',
-    size: 140,
-    cell: ({ getValue }) => {
-      const val = getValue()
-      if (!val) return <span style={{ color: 'var(--color-text-secondary)' }}>—</span>
-      return val
-    },
-  },
-  {
-    accessorKey: 'description',
-    header: 'DESCRIÇÃO',
-    minSize: 250,
-  },
-  {
-    accessorKey: 'amount',
-    header: 'VALOR',
-    size: 130,
-    cell: ({ getValue }) => <AmountCell value={getValue()} />,
-  },
-  {
-    accessorKey: 'parcela',
-    header: 'PARCELA',
-    size: 90,
-    cell: ({ getValue }) => <ParcelaCell value={getValue()} />,
-  },
-]
-
-/* For filtered tabs, hide the CARTÃO column */
-const filteredCardColumns = cardColumns.filter(c => c.accessorKey !== 'account')
-
-/* Installment breakdown columns — matches CC transactions table */
-const installmentColumns = [
-  {
-    accessorKey: 'date',
-    header: 'DATA',
-    size: 100,
-    cell: ({ getValue }) => {
-      const d = new Date(getValue() + 'T00:00:00')
-      return d.toLocaleDateString('pt-BR')
-    },
-  },
-  {
-    accessorKey: 'account',
-    header: 'CARTÃO',
-    size: 160,
-  },
-  {
-    accessorKey: 'category',
-    header: 'CATEGORIA',
-    size: 150,
-  },
-  {
-    accessorKey: 'subcategory',
-    header: 'SUBCATEGORIA',
-    size: 140,
-    cell: ({ getValue }) => {
-      const val = getValue()
-      if (!val) return <span style={{ color: 'var(--color-text-secondary)' }}>—</span>
-      return val
-    },
-  },
-  {
-    accessorKey: 'description',
-    header: 'DESCRIÇÃO',
-    minSize: 250,
-  },
-  {
-    accessorKey: 'amount',
-    header: 'VALOR',
-    size: 130,
-    cell: ({ getValue }) => (
-      <span className={tableStyles.negative}>R$ {fmt(getValue())}</span>
-    ),
-  },
-  {
-    accessorKey: 'parcela',
-    header: 'PARCELA',
-    size: 90,
-    cell: ({ getValue }) => <ParcelaCell value={getValue()} />,
-  },
-]
-
 const TABS = [
   { key: 'all', label: 'TODOS', filter: null },
   { key: 'master', label: 'MASTER', filter: 'Mastercard Black' },
@@ -137,6 +35,7 @@ function CardsSection() {
   const { selectedMonth } = useMonth()
   const [activeTab, setActiveTab] = useState('all')
   const [showInstallments, setShowInstallments] = useState(true)
+  const queryClient = useQueryClient()
 
   const { data, isLoading } = useQuery({
     queryKey: ['analytics-cards', selectedMonth],
@@ -150,6 +49,170 @@ function CardsSection() {
     queryFn: () => api.get(`/analytics/installments/?month_str=${selectedMonth}`),
     enabled: !!selectedMonth,
   })
+
+  const invalidate = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['analytics-cards', selectedMonth] })
+    queryClient.invalidateQueries({ queryKey: ['analytics-installments', selectedMonth] })
+    queryClient.invalidateQueries({ queryKey: ['analytics-metricas', selectedMonth] })
+    queryClient.invalidateQueries({ queryKey: ['analytics-variable', selectedMonth] })
+  }, [queryClient, selectedMonth])
+
+  // Build columns with inline category editing
+  const cardColumns = useMemo(() => [
+    {
+      accessorKey: 'date',
+      header: 'DATA',
+      size: 100,
+      cell: ({ getValue }) => {
+        const d = new Date(getValue() + 'T00:00:00')
+        return d.toLocaleDateString('pt-BR')
+      },
+    },
+    {
+      accessorKey: 'account',
+      header: 'CARTÃO',
+      size: 160,
+    },
+    {
+      accessorKey: 'category',
+      header: 'CATEGORIA',
+      size: 150,
+      cell: ({ row }) => (
+        <CategoryDropdown
+          transactionId={row.original.id}
+          category={row.original.category}
+          categoryId={row.original.category_id}
+          subcategory={row.original.subcategory}
+          subcategoryId={row.original.subcategory_id}
+          field="category"
+          onUpdated={invalidate}
+        />
+      ),
+    },
+    {
+      accessorKey: 'subcategory',
+      header: 'SUBCATEGORIA',
+      size: 140,
+      cell: ({ row }) => (
+        <CategoryDropdown
+          transactionId={row.original.id}
+          category={row.original.category}
+          categoryId={row.original.category_id}
+          subcategory={row.original.subcategory}
+          subcategoryId={row.original.subcategory_id}
+          field="subcategory"
+          onUpdated={invalidate}
+        />
+      ),
+    },
+    {
+      accessorKey: 'description',
+      header: 'DESCRIÇÃO',
+      minSize: 250,
+      cell: ({ getValue, row }) => (
+        <DescriptionEdit
+          transactionId={row.original.id}
+          description={getValue()}
+          onUpdated={invalidate}
+        />
+      ),
+    },
+    {
+      accessorKey: 'amount',
+      header: 'VALOR',
+      size: 130,
+      cell: ({ getValue }) => <AmountCell value={getValue()} />,
+    },
+    {
+      accessorKey: 'parcela',
+      header: 'PARCELA',
+      size: 90,
+      cell: ({ getValue }) => <ParcelaCell value={getValue()} />,
+    },
+  ], [invalidate])
+
+  /* Installment breakdown columns — with inline category/subcategory editing */
+  const installmentColumns = useMemo(() => [
+    {
+      accessorKey: 'date',
+      header: 'DATA',
+      size: 100,
+      cell: ({ getValue }) => {
+        const d = new Date(getValue() + 'T00:00:00')
+        return d.toLocaleDateString('pt-BR')
+      },
+    },
+    {
+      accessorKey: 'account',
+      header: 'CARTÃO',
+      size: 160,
+    },
+    {
+      accessorKey: 'category',
+      header: 'CATEGORIA',
+      size: 150,
+      cell: ({ row }) => {
+        if (!row.original.id) {
+          return row.original.category || 'Não categorizado'
+        }
+        return (
+          <CategoryDropdown
+            transactionId={row.original.id}
+            category={row.original.category}
+            categoryId={row.original.category_id}
+            subcategory={row.original.subcategory}
+            subcategoryId={row.original.subcategory_id}
+            field="category"
+            onUpdated={invalidate}
+            installmentMode
+          />
+        )
+      },
+    },
+    {
+      accessorKey: 'subcategory',
+      header: 'SUBCATEGORIA',
+      size: 140,
+      cell: ({ row }) => {
+        if (!row.original.id) {
+          const val = row.original.subcategory
+          if (!val) return <span style={{ color: 'var(--color-text-secondary)' }}>—</span>
+          return val
+        }
+        return (
+          <CategoryDropdown
+            transactionId={row.original.id}
+            category={row.original.category}
+            categoryId={row.original.category_id}
+            subcategory={row.original.subcategory}
+            subcategoryId={row.original.subcategory_id}
+            field="subcategory"
+            onUpdated={invalidate}
+            installmentMode
+          />
+        )
+      },
+    },
+    {
+      accessorKey: 'description',
+      header: 'DESCRIÇÃO',
+      minSize: 250,
+    },
+    {
+      accessorKey: 'amount',
+      header: 'VALOR',
+      size: 130,
+      cell: ({ getValue }) => (
+        <span className={tableStyles.negative}>R$ {fmt(getValue())}</span>
+      ),
+    },
+    {
+      accessorKey: 'parcela',
+      header: 'PARCELA',
+      size: 90,
+      cell: ({ getValue }) => <ParcelaCell value={getValue()} />,
+    },
+  ], [invalidate])
 
   // Filter transactions by active tab; compute bill total from ALL rows
   const { filteredData, billTotal } = useMemo(() => {
@@ -187,7 +250,8 @@ function CardsSection() {
     return <div className={styles.loading}>Carregando cartões...</div>
   }
 
-  const cols = activeTab === 'all' ? cardColumns : filteredCardColumns
+  /* For filtered tabs, hide the CARTÃO column */
+  const cols = activeTab === 'all' ? cardColumns : cardColumns.filter(c => c.accessorKey !== 'account')
   const instCols = activeTab === 'all'
     ? installmentColumns
     : installmentColumns.filter(c => c.accessorKey !== 'account' && c.accessorKey !== 'subcategory')

@@ -148,19 +148,41 @@ function buildCards(data) {
   return cards
 }
 
-/* ── Helper to persist order + hidden to backend (debounced) ── */
+/* ── Helper to persist order + hidden to backend (debounced, flushes on unmount) ── */
 function useDebouncedSave(selectedMonth) {
   const timer = useRef(null)
-  return useCallback((order, hidden) => {
+  const pendingSave = useRef(null)
+
+  const flush = useCallback(() => {
+    if (timer.current) {
+      clearTimeout(timer.current)
+      timer.current = null
+    }
+    if (pendingSave.current) {
+      api.post('/analytics/metricas/order/', pendingSave.current)
+      pendingSave.current = null
+    }
+  }, [])
+
+  // Flush on unmount or month change
+  useEffect(() => flush, [selectedMonth, flush])
+
+  const save = useCallback((order, hidden) => {
     clearTimeout(timer.current)
+    pendingSave.current = {
+      month_str: selectedMonth,
+      card_order: order,
+      hidden_cards: hidden,
+    }
     timer.current = setTimeout(() => {
-      api.post('/analytics/metricas/order/', {
-        month_str: selectedMonth,
-        card_order: order,
-        hidden_cards: hidden,
-      })
+      if (pendingSave.current) {
+        api.post('/analytics/metricas/order/', pendingSave.current)
+        pendingSave.current = null
+      }
     }, 400)
   }, [selectedMonth])
+
+  return save
 }
 
 function MetricasSection() {

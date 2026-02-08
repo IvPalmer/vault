@@ -14,12 +14,14 @@ export function MonthProvider({ children }) {
     queryFn: () => api.get('/transactions/months/'),
   })
 
-  // Set default to latest month when months load
+  // Set default to latest month when months load, or reset if stored month is invalid
   useEffect(() => {
-    if (months.length > 0 && !selectedMonth) {
-      setSelectedMonth(months[0]) // months are sorted descending
+    if (months.length > 0) {
+      if (!selectedMonth || !months.includes(selectedMonth)) {
+        setSelectedMonth(months[0]) // months are sorted descending
+      }
     }
-  }, [months, selectedMonth])
+  }, [months]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist selection
   useEffect(() => {

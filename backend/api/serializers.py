@@ -1,8 +1,8 @@
 from rest_framework import serializers
 from .models import (
     Account, Category, Subcategory, CategorizationRule,
-    RenameRule, Transaction, RecurringMapping, BudgetConfig,
-    BalanceOverride,
+    RenameRule, RecurringTemplate, Transaction, RecurringMapping,
+    BudgetConfig, BalanceOverride,
 )
 
 
@@ -63,9 +63,16 @@ class TransactionListSerializer(serializers.ModelSerializer):
         ]
 
 
+class RecurringTemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RecurringTemplate
+        fields = '__all__'
+
+
 class RecurringMappingSerializer(serializers.ModelSerializer):
-    category_name = serializers.CharField(source='category.name', read_only=True)
-    category_type = serializers.CharField(source='category.category_type', read_only=True)
+    template_name = serializers.CharField(source='template.name', read_only=True, default=None)
+    template_type = serializers.CharField(source='template.template_type', read_only=True, default=None)
+    category_name = serializers.CharField(source='category.name', read_only=True, default=None)
     transaction_description = serializers.CharField(
         source='transaction.description', read_only=True, default=None
     )

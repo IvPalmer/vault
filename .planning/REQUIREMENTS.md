@@ -61,7 +61,7 @@ Deferred to future release.
 
 ### Financial Control
 
-- **CTRL-01**: Salary normalization — mark salary entries with "effective month" vs "bank month"
+- [x] **CTRL-01**: Salary normalization — implemented via cross-month transaction linking on RecurringMapping (e.g., December salary linked to January)
 - **CTRL-02**: Investment macro tracking (40/40/20 allocation)
 
 ## Out of Scope

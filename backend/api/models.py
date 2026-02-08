@@ -9,6 +9,12 @@ CATEGORY_TYPE_CHOICES = (
     ('Investimento', 'Investimento'),
 )
 
+TEMPLATE_TYPE_CHOICES = (
+    ('Fixo', 'Fixo'),
+    ('Income', 'Income'),
+    ('Investimento', 'Investimento'),
+)
+
 
 class Account(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -97,6 +103,29 @@ class RenameRule(models.Model):
         return f"{self.keyword} -> {self.display_name}"
 
 
+class RecurringTemplate(models.Model):
+    """
+    Master template for recurring budget items (Aluguel, Salario, etc.).
+    Separate from Category which is purely for transaction taxonomy.
+    Each month, initialize_month() creates RecurringMapping rows from active templates.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, unique=True)
+    template_type = models.CharField(max_length=20, choices=TEMPLATE_TYPE_CHOICES)
+    default_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    due_day = models.IntegerField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    display_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['display_order', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.template_type})"
+
+
 class Transaction(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     date = models.DateField(db_index=True)
@@ -148,8 +177,14 @@ class RecurringMapping(models.Model):
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    template = models.ForeignKey(
+        RecurringTemplate, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='recurring_mappings',
+    )
+    # Taxonomy category for match_mode='category' auto-matching only
     category = models.ForeignKey(
-        Category, on_delete=models.CASCADE, null=True, blank=True, related_name='recurring_mappings'
+        Category, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='category_matched_mappings',
     )
     # Legacy single-transaction FK (kept for backward compat during migration)
     transaction = models.ForeignKey(
@@ -186,32 +221,37 @@ class RecurringMapping(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=['category', 'month_str'],
-                condition=models.Q(category__isnull=False),
-                name='unique_category_month_non_null',
+                fields=['template', 'month_str'],
+                condition=models.Q(template__isnull=False),
+                name='unique_template_month_non_null',
             ),
         ]
-        ordering = ['month_str', 'display_order', 'category__display_order']
+        ordering = ['month_str', 'display_order', 'template__display_order']
 
     def __str__(self):
-        name = self.custom_name if self.is_custom else (self.category.name if self.category else '?')
+        name = self.custom_name if self.is_custom else (self.template.name if self.template else '?')
         return f"{self.month_str} | {name} -> {self.status}"
 
 
 class BudgetConfig(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='budget_configs')
+    category = models.ForeignKey(
+        Category, on_delete=models.CASCADE, null=True, blank=True, related_name='budget_configs'
+    )
+    template = models.ForeignKey(
+        RecurringTemplate, on_delete=models.CASCADE, null=True, blank=True, related_name='budget_configs'
+    )
     month_str = models.CharField(max_length=7)
     limit_override = models.DecimalField(max_digits=12, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ('category', 'month_str')
         ordering = ['month_str']
 
     def __str__(self):
-        return f"{self.month_str} | {self.category.name} = R$ {self.limit_override}"
+        name = self.category.name if self.category else (self.template.name if self.template else '?')
+        return f"{self.month_str} | {name} = R$ {self.limit_override}"
 
 
 class BalanceOverride(models.Model):

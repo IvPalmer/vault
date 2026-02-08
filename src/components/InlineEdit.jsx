@@ -74,7 +74,11 @@ function InlineEdit({
     } else {
       newVal = trimmed
     }
-    if (newVal !== value) {
+    // Use tolerance for numeric comparison to avoid floating-point issues
+    const changed = typeof newVal === 'number' && typeof value === 'number'
+      ? Math.abs(newVal - value) > 0.001
+      : newVal !== value
+    if (changed) {
       onSave(newVal)
     }
   }

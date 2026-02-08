@@ -11,7 +11,7 @@ from django.db.models import Sum, Q, F, Case, When, Value, CharField, Count, Max
 from dateutil.relativedelta import relativedelta
 from .models import (
     Transaction, Category, Account, BalanceOverride,
-    RecurringMapping, BudgetConfig, CategorizationRule,
+    RecurringMapping, RecurringTemplate, BudgetConfig, CategorizationRule,
     MetricasOrderConfig, CustomMetric,
 )
 
@@ -20,16 +20,16 @@ from .models import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _get_expected_amount(category, month_str):
+def _get_expected_amount(template, month_str):
     """
-    Return the expected amount for a category in a month.
-    Uses BudgetConfig override if it exists, otherwise Category.default_limit.
+    Return the expected amount for a recurring template in a month.
+    Uses BudgetConfig override if it exists, otherwise template.default_limit.
     """
     try:
-        bc = BudgetConfig.objects.get(category=category, month_str=month_str)
+        bc = BudgetConfig.objects.get(template=template, month_str=month_str)
         return bc.limit_override
     except BudgetConfig.DoesNotExist:
-        return category.default_limit
+        return template.default_limit
 
 
 # ---------------------------------------------------------------------------
@@ -38,20 +38,19 @@ def _get_expected_amount(category, month_str):
 
 def initialize_month(month_str):
     """
-    Create RecurringMapping rows for a month from Category template.
-    Idempotent — skips categories that already have a mapping for the month.
+    Create RecurringMapping rows for a month from RecurringTemplate.
+    Idempotent — skips templates that already have a mapping for the month.
     Returns dict with created count and total count.
     """
-    categories = Category.objects.filter(
-        category_type__in=['Fixo', 'Income', 'Investimento'],
+    templates = RecurringTemplate.objects.filter(
         is_active=True,
         default_limit__gt=0,
     )
     created = 0
-    for cat in categories:
-        expected = _get_expected_amount(cat, month_str)
+    for tpl in templates:
+        expected = _get_expected_amount(tpl, month_str)
         _, was_created = RecurringMapping.objects.get_or_create(
-            category=cat,
+            template=tpl,
             month_str=month_str,
             defaults={
                 'expected_amount': expected,
@@ -79,7 +78,7 @@ def get_recurring_data(month_str):
     """
     RECORRENTES — recurring items sourced from RecurringMapping table.
 
-    Auto-initializes the month from Category template if no mappings exist.
+    Auto-initializes the month from RecurringTemplate if no mappings exist.
     Each item carries a mapping_id for editing.
     Status is computed from the linked transaction or category-matched transactions.
     Suggestion logic is preserved for 'Faltando' items.
@@ -97,10 +96,10 @@ def get_recurring_data(month_str):
     # Fetch all mappings for this month
     mappings = RecurringMapping.objects.filter(
         month_str=month_str,
-    ).select_related('category', 'transaction', 'transaction__account').prefetch_related(
+    ).select_related('template', 'category', 'transaction', 'transaction__account').prefetch_related(
         'transactions', 'transactions__account'
     ).order_by(
-        'display_order', 'category__display_order', 'custom_name'
+        'display_order', 'template__display_order', 'custom_name'
     )
 
     # Transaction pools for suggestion matching
@@ -114,16 +113,16 @@ def get_recurring_data(month_str):
     all_income_descs = list(income_pool.values_list('description', flat=True).distinct())
 
     def _get_type(mapping):
-        """Get the category type for a mapping (handles custom items)."""
+        """Get the template type for a mapping (handles custom items)."""
         if mapping.is_custom:
             return mapping.custom_type
-        return mapping.category.category_type if mapping.category else ''
+        return mapping.template.template_type if mapping.template else ''
 
     def _get_name(mapping):
         """Get the display name for a mapping."""
         if mapping.is_custom:
             return mapping.custom_name
-        return mapping.category.name if mapping.category else '?'
+        return mapping.template.name if mapping.template else '?'
 
     def _compute_status_and_actual(mapping, cat_type):
         """
@@ -323,10 +322,10 @@ def get_recurring_data(month_str):
         suggestion = _find_suggestion(mapping, cat_type, status, pool, all_descs)
 
         item = {
-            'id': str(mapping.category.id) if mapping.category else None,
+            'id': str(mapping.template.id) if mapping.template else None,
             'mapping_id': str(mapping.id),
             'name': name,
-            'due_day': mapping.category.due_day if mapping.category else None,
+            'due_day': mapping.template.due_day if mapping.template else None,
             'expected': float(mapping.expected_amount),
             'actual': actual,
             'status': status,
@@ -338,7 +337,7 @@ def get_recurring_data(month_str):
             'match_count': matched_info['match_count'],
             'match_mode': mapping.match_mode,
             'suggested': suggestion,
-            'category_type': cat_type,
+            'template_type': cat_type,
             'is_custom': mapping.is_custom,
             'is_skipped': mapping.status == 'skipped',
             'has_cross_month': mapping.cross_month_transactions.exists(),
@@ -372,12 +371,12 @@ def update_recurring_expected(mapping_id, expected_amount):
     Update the expected amount for a RecurringMapping.
     Returns the updated mapping summary.
     """
-    mapping = RecurringMapping.objects.select_related('category').get(id=mapping_id)
+    mapping = RecurringMapping.objects.select_related('template').get(id=mapping_id)
     mapping.expected_amount = Decimal(str(expected_amount))
     mapping.save()
 
     name = mapping.custom_name if mapping.is_custom else (
-        mapping.category.name if mapping.category else '?'
+        mapping.template.name if mapping.template else '?'
     )
 
     return {
@@ -393,13 +392,13 @@ def update_recurring_expected(mapping_id, expected_amount):
 
 def update_recurring_item(mapping_id, **kwargs):
     """
-    Update editable fields on a RecurringMapping: name, category_type,
+    Update editable fields on a RecurringMapping: name, template_type,
     expected_amount, due_day.
 
-    For category-based items, name/type changes convert them to custom items
+    For template-based items, name/type changes convert them to custom items
     (is_custom=True) to preserve the override without affecting the template.
     """
-    mapping = RecurringMapping.objects.select_related('category').get(id=mapping_id)
+    mapping = RecurringMapping.objects.select_related('template').get(id=mapping_id)
 
     if 'expected_amount' in kwargs and kwargs['expected_amount'] is not None:
         mapping.expected_amount = Decimal(str(kwargs['expected_amount']))
@@ -412,38 +411,40 @@ def update_recurring_item(mapping_id, **kwargs):
             # Convert to custom to preserve override
             mapping.is_custom = True
             mapping.custom_name = new_name
-            mapping.custom_type = mapping.category.category_type if mapping.category else ''
+            mapping.custom_type = mapping.template.template_type if mapping.template else ''
 
-    if 'category_type' in kwargs and kwargs['category_type'] is not None:
-        new_type = kwargs['category_type']
+    # Accept both template_type and category_type (backward compat)
+    type_key = 'template_type' if 'template_type' in kwargs else ('category_type' if 'category_type' in kwargs else None)
+    if type_key and kwargs[type_key] is not None:
+        new_type = kwargs[type_key]
         if mapping.is_custom:
             mapping.custom_type = new_type
         else:
             # Convert to custom to preserve override
             mapping.is_custom = True
-            mapping.custom_name = mapping.category.name if mapping.category else '?'
+            mapping.custom_name = mapping.template.name if mapping.template else '?'
             mapping.custom_type = new_type
 
     if 'due_day' in kwargs:
         due_day = int(kwargs['due_day']) if kwargs['due_day'] else None
-        if mapping.category and not mapping.is_custom:
-            mapping.category.due_day = due_day
-            mapping.category.save()
+        if mapping.template and not mapping.is_custom:
+            mapping.template.due_day = due_day
+            mapping.template.save()
 
     mapping.save()
 
     name = mapping.custom_name if mapping.is_custom else (
-        mapping.category.name if mapping.category else '?'
+        mapping.template.name if mapping.template else '?'
     )
     cat_type = mapping.custom_type if mapping.is_custom else (
-        mapping.category.category_type if mapping.category else ''
+        mapping.template.template_type if mapping.template else ''
     )
-    due_day_val = mapping.category.due_day if mapping.category else None
+    due_day_val = mapping.template.due_day if mapping.template else None
 
     return {
         'mapping_id': str(mapping.id),
         'name': name,
-        'category_type': cat_type,
+        'template_type': cat_type,
         'expected_amount': float(mapping.expected_amount),
         'due_day': due_day_val,
         'is_custom': mapping.is_custom,
@@ -457,7 +458,7 @@ def update_recurring_item(mapping_id, **kwargs):
 def add_custom_recurring(month_str, name, category_type, expected_amount):
     """
     Add a custom one-off recurring item for a specific month.
-    Custom items have is_custom=True and no category FK.
+    Custom items have is_custom=True and no template/category FK.
     """
     mapping = RecurringMapping.objects.create(
         month_str=month_str,
@@ -466,13 +467,14 @@ def add_custom_recurring(month_str, name, category_type, expected_amount):
         custom_type=category_type,
         expected_amount=Decimal(str(expected_amount)),
         status='missing',
+        template=None,
         category=None,
     )
 
     return {
         'mapping_id': str(mapping.id),
         'name': name,
-        'category_type': category_type,
+        'template_type': category_type,
         'expected_amount': float(mapping.expected_amount),
         'month_str': month_str,
     }
@@ -507,12 +509,12 @@ def delete_custom_recurring(mapping_id):
 
 def skip_recurring(mapping_id):
     """Mark a recurring item as skipped for this month."""
-    mapping = RecurringMapping.objects.select_related('category').get(id=mapping_id)
+    mapping = RecurringMapping.objects.select_related('template').get(id=mapping_id)
     mapping.status = 'skipped'
     mapping.save()
 
     name = mapping.custom_name if mapping.is_custom else (
-        mapping.category.name if mapping.category else '?'
+        mapping.template.name if mapping.template else '?'
     )
     return {
         'mapping_id': str(mapping.id),
@@ -523,12 +525,12 @@ def skip_recurring(mapping_id):
 
 def unskip_recurring(mapping_id):
     """Restore a skipped recurring item back to missing status."""
-    mapping = RecurringMapping.objects.select_related('category').get(id=mapping_id)
+    mapping = RecurringMapping.objects.select_related('template').get(id=mapping_id)
     mapping.status = 'missing'
     mapping.save()
 
     name = mapping.custom_name if mapping.is_custom else (
-        mapping.category.name if mapping.category else '?'
+        mapping.template.name if mapping.template else '?'
     )
     return {
         'mapping_id': str(mapping.id),
@@ -562,70 +564,68 @@ def save_balance_override(month_str, balance):
 
 def get_recurring_templates():
     """
-    Return all Category items that serve as recurring templates.
-    These are categories with default_limit > 0 and types used for recurring items.
+    Return all RecurringTemplate items used for recurring budget tracking.
     """
-    categories = Category.objects.filter(
-        category_type__in=['Fixo', 'Income', 'Investimento', 'Variavel'],
+    templates = RecurringTemplate.objects.filter(
         is_active=True,
     ).order_by('display_order', 'name')
 
     items = []
-    for cat in categories:
+    for tpl in templates:
         items.append({
-            'id': str(cat.id),
-            'name': cat.name,
-            'category_type': cat.category_type,
-            'default_limit': float(cat.default_limit),
-            'due_day': cat.due_day,
-            'display_order': cat.display_order,
+            'id': str(tpl.id),
+            'name': tpl.name,
+            'template_type': tpl.template_type,
+            'default_limit': float(tpl.default_limit),
+            'due_day': tpl.due_day,
+            'display_order': tpl.display_order,
         })
 
     return {'templates': items, 'count': len(items)}
 
 
-def update_recurring_template(category_id, **kwargs):
+def update_recurring_template(template_id, **kwargs):
     """
-    Update a Category template used for recurring items.
-    Supported fields: name, category_type, default_limit, due_day, display_order
+    Update a RecurringTemplate used for recurring items.
+    Supported fields: name, template_type, default_limit, due_day, display_order
     """
-    cat = Category.objects.get(id=category_id)
+    tpl = RecurringTemplate.objects.get(id=template_id)
 
     if 'name' in kwargs and kwargs['name'] is not None:
-        cat.name = kwargs['name'].strip()
-    if 'category_type' in kwargs and kwargs['category_type'] is not None:
-        cat.category_type = kwargs['category_type']
+        tpl.name = kwargs['name'].strip()
+    if 'template_type' in kwargs and kwargs['template_type'] is not None:
+        tpl.template_type = kwargs['template_type']
     if 'default_limit' in kwargs and kwargs['default_limit'] is not None:
-        cat.default_limit = Decimal(str(kwargs['default_limit']))
+        tpl.default_limit = Decimal(str(kwargs['default_limit']))
     if 'due_day' in kwargs:
-        cat.due_day = int(kwargs['due_day']) if kwargs['due_day'] else None
+        tpl.due_day = int(kwargs['due_day']) if kwargs['due_day'] else None
     if 'display_order' in kwargs and kwargs['display_order'] is not None:
-        cat.display_order = int(kwargs['display_order'])
+        tpl.display_order = int(kwargs['display_order'])
 
-    cat.save()
+    tpl.save()
 
     return {
-        'id': str(cat.id),
-        'name': cat.name,
-        'category_type': cat.category_type,
-        'default_limit': float(cat.default_limit),
-        'due_day': cat.due_day,
-        'display_order': cat.display_order,
+        'id': str(tpl.id),
+        'name': tpl.name,
+        'template_type': tpl.template_type,
+        'default_limit': float(tpl.default_limit),
+        'due_day': tpl.due_day,
+        'display_order': tpl.display_order,
     }
 
 
-def create_recurring_template(name, category_type, default_limit, due_day=None):
+def create_recurring_template(name, template_type, default_limit, due_day=None):
     """
-    Create a new Category to serve as a recurring template.
+    Create a new RecurringTemplate for recurring budget tracking.
     """
     # Find max display_order for this type
-    max_order = Category.objects.filter(
-        category_type=category_type
+    max_order = RecurringTemplate.objects.filter(
+        template_type=template_type
     ).aggregate(m=Max('display_order'))['m'] or 0
 
-    cat = Category.objects.create(
+    tpl = RecurringTemplate.objects.create(
         name=name.strip(),
-        category_type=category_type,
+        template_type=template_type,
         default_limit=Decimal(str(default_limit)),
         due_day=due_day,
         is_active=True,
@@ -633,28 +633,28 @@ def create_recurring_template(name, category_type, default_limit, due_day=None):
     )
 
     return {
-        'id': str(cat.id),
-        'name': cat.name,
-        'category_type': cat.category_type,
-        'default_limit': float(cat.default_limit),
-        'due_day': cat.due_day,
-        'display_order': cat.display_order,
+        'id': str(tpl.id),
+        'name': tpl.name,
+        'template_type': tpl.template_type,
+        'default_limit': float(tpl.default_limit),
+        'due_day': tpl.due_day,
+        'display_order': tpl.display_order,
     }
 
 
-def delete_recurring_template(category_id):
+def delete_recurring_template(template_id):
     """
-    Deactivate a Category template (soft delete).
+    Deactivate a RecurringTemplate (soft delete).
     Sets is_active=False and default_limit=0 so it won't appear in future months.
     """
-    cat = Category.objects.get(id=category_id)
-    cat.is_active = False
-    cat.default_limit = Decimal('0.00')
-    cat.save()
+    tpl = RecurringTemplate.objects.get(id=template_id)
+    tpl.is_active = False
+    tpl.default_limit = Decimal('0.00')
+    tpl.save()
 
     return {
-        'id': str(cat.id),
-        'name': cat.name,
+        'id': str(tpl.id),
+        'name': tpl.name,
         'deleted': True,
     }
 
@@ -769,8 +769,8 @@ def get_metricas(month_str, _cascade=True):
     income_mappings = RecurringMapping.objects.filter(
         month_str=month_str,
     ).filter(
-        Q(category__category_type='Income') | Q(is_custom=True, custom_type='Income')
-    ).exclude(status='skipped').select_related('category', 'transaction').prefetch_related('transactions')
+        Q(template__template_type='Income') | Q(is_custom=True, custom_type='Income')
+    ).exclude(status='skipped').select_related('template', 'category', 'transaction').prefetch_related('transactions')
 
     entradas_projetadas = Decimal('0.00')
     for m in income_mappings:
@@ -791,8 +791,8 @@ def get_metricas(month_str, _cascade=True):
     fixo_mappings_all = RecurringMapping.objects.filter(
         month_str=month_str,
     ).filter(
-        Q(category__category_type='Fixo') | Q(is_custom=True, custom_type='Fixo')
-    ).exclude(status='skipped').select_related('category', 'transaction').prefetch_related('transactions')
+        Q(template__template_type='Fixo') | Q(is_custom=True, custom_type='Fixo')
+    ).exclude(status='skipped').select_related('template', 'category', 'transaction').prefetch_related('transactions')
 
     fixo_expected_total = Decimal('0.00')
     for m in fixo_mappings_all:
@@ -1380,7 +1380,9 @@ def get_card_transactions(month_str, account_filter=None):
             'amount': float(txn.amount),
             'account': txn.account.name,
             'category': txn.category.name if txn.category else 'Não categorizado',
+            'category_id': str(txn.category.id) if txn.category else None,
             'subcategory': txn.subcategory.name if txn.subcategory else '',
+            'subcategory_id': str(txn.subcategory.id) if txn.subcategory else None,
             'parcela': parcela,
             'is_installment': txn.is_installment,
         })
@@ -1450,12 +1452,15 @@ def get_installment_details(month_str):
             else:
                 # Flagged as installment but no parseable N/M — include as-is
                 non_parseable_items.append({
+                    'id': str(txn.id),
                     'date': txn.date.strftime('%Y-%m-%d'),
                     'description': txn.description,
                     'amount': float(abs(txn.amount)),
                     'account': txn.account.name if txn.account else '',
                     'category': txn.category.name if txn.category else 'Não categorizado',
+                    'category_id': str(txn.category.id) if txn.category else None,
                     'subcategory': txn.subcategory.name if txn.subcategory else '',
+                    'subcategory_id': str(txn.subcategory.id) if txn.subcategory else None,
                     'parcela': txn.installment_info or '',
                     'source_month': month_str,
                 })
@@ -1465,12 +1470,15 @@ def get_installment_details(month_str):
         for (base_desc, acct, amt, total_inst), (current, _, txn) in purchase_groups.items():
             parcela_str = f'{current}/{total_inst}'
             items.append({
+                'id': str(txn.id),
                 'date': txn.date.strftime('%Y-%m-%d'),
                 'description': f'{base_desc} {parcela_str}',
                 'amount': amt,
                 'account': acct,
                 'category': txn.category.name if txn.category else 'Não categorizado',
+                'category_id': str(txn.category.id) if txn.category else None,
                 'subcategory': txn.subcategory.name if txn.subcategory else '',
+                'subcategory_id': str(txn.subcategory.id) if txn.subcategory else None,
                 'parcela': parcela_str,
                 'source_month': month_str,
             })
@@ -1577,12 +1585,15 @@ def get_installment_details(month_str):
             projected_desc = f'{base_desc} {parcela_str}'
 
             items.append({
+                'id': str(txn.id),
                 'date': projected_date.strftime('%Y-%m-%d'),
                 'description': projected_desc,
                 'amount': amt,
                 'account': acct,
                 'category': txn.category.name if txn.category else 'Não categorizado',
+                'category_id': str(txn.category.id) if txn.category else None,
                 'subcategory': txn.subcategory.name if txn.subcategory else '',
+                'subcategory_id': str(txn.subcategory.id) if txn.subcategory else None,
                 'parcela': parcela_str,
                 'source_month': source_month,
             })
@@ -1596,6 +1607,82 @@ def get_installment_details(month_str):
         'items': items,
         'count': len(items),
         'total': round(total, 2),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Installment sibling categorization
+# ---------------------------------------------------------------------------
+
+def categorize_installment_siblings(transaction_id, category_id, subcategory_id=None):
+    """
+    Categorize an installment transaction AND all its siblings (same purchase,
+    different months).
+
+    Siblings are identified by matching:
+    (base_description, account, |amount|, total_installments)
+
+    Returns: dict with count of updated transactions and their IDs.
+    """
+    txn = Transaction.objects.select_related('account', 'category', 'subcategory').get(id=transaction_id)
+
+    # Parse installment info
+    m_match = re.search(r'(\d{1,2})/(\d{1,2})', txn.description)
+    if not m_match and txn.installment_info:
+        m_match = re.match(r'(\d+)/(\d+)', txn.installment_info)
+
+    if not m_match:
+        # Not a parseable installment — just update this one transaction
+        update_fields = {'category_id': category_id, 'is_manually_categorized': True}
+        if subcategory_id:
+            update_fields['subcategory_id'] = subcategory_id
+        else:
+            update_fields['subcategory_id'] = None
+        Transaction.objects.filter(id=transaction_id).update(**update_fields)
+        return {'updated': 1, 'sibling_ids': [str(transaction_id)]}
+
+    total_installments = int(m_match.group(2))
+    base_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', txn.description).strip()
+    acct_id = txn.account_id
+    amt = round(float(abs(txn.amount)), 2)
+
+    # Find all siblings: same base description, same account, same |amount|,
+    # is_installment=True, and installment count matches total
+    candidates = Transaction.objects.filter(
+        account_id=acct_id,
+        is_installment=True,
+    )
+
+    sibling_ids = []
+    for candidate in candidates:
+        # Check amount matches (exact match after rounding)
+        if round(float(abs(candidate.amount)), 2) != amt:
+            continue
+        # Check base description matches
+        cand_base = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', candidate.description).strip()
+        if cand_base != base_desc:
+            continue
+        # Check total installments match
+        cm = re.search(r'(\d{1,2})/(\d{1,2})', candidate.description)
+        if not cm and candidate.installment_info:
+            cm = re.match(r'(\d+)/(\d+)', candidate.installment_info)
+        if cm and int(cm.group(2)) == total_installments:
+            sibling_ids.append(candidate.id)
+
+    if not sibling_ids:
+        sibling_ids = [txn.id]
+
+    # Update all siblings
+    update_fields = {'category_id': category_id, 'is_manually_categorized': True}
+    if subcategory_id:
+        update_fields['subcategory_id'] = subcategory_id
+    else:
+        update_fields['subcategory_id'] = None
+    updated = Transaction.objects.filter(id__in=sibling_ids).update(**update_fields)
+
+    return {
+        'updated': updated,
+        'sibling_ids': [str(sid) for sid in sibling_ids],
     }
 
 
@@ -1623,10 +1710,12 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None):
     cat_name = ''
 
     if mapping_id:
-        mapping = RecurringMapping.objects.select_related('category').get(id=mapping_id)
+        mapping = RecurringMapping.objects.select_related('template', 'category').get(id=mapping_id)
         cat = mapping.category
         expected = float(mapping.expected_amount)
-        cat_name = mapping.custom_name if mapping.is_custom else (cat.name if cat else '?')
+        cat_name = mapping.custom_name if mapping.is_custom else (
+            mapping.template.name if mapping.template else '?'
+        )
     elif category_id:
         cat = Category.objects.get(id=category_id)
         expected = float(cat.default_limit)
@@ -1797,21 +1886,27 @@ def map_transaction_to_category(transaction_id, category_id=None, mapping_id=Non
         # Also keep legacy FK pointing to first linked txn
         mapping.transaction = txn
         mapping.match_mode = 'manual'
-        # Recompute actual from all linked transactions
-        total = sum(abs(t.amount) for t in mapping.transactions.all())
+        # Recompute actual from all linked transactions (abs for expenses, raw for income)
+        cat_type = mapping.custom_type if mapping.is_custom else (
+            mapping.template.template_type if mapping.template else ''
+        )
+        if cat_type == 'Income':
+            total = sum(t.amount for t in mapping.transactions.all())
+        else:
+            total = sum(abs(t.amount) for t in mapping.transactions.all())
         mapping.actual_amount = total
         mapping.status = 'mapped'
         mapping.save()
 
     if mapping_id:
-        mapping = RecurringMapping.objects.select_related('category').get(id=mapping_id)
+        mapping = RecurringMapping.objects.select_related('template', 'category').get(id=mapping_id)
         if mapping.category:
             txn.category = mapping.category
         txn.is_manually_categorized = True
         txn.save()
         _update_mapping(mapping)
         cat_name = mapping.custom_name if mapping.is_custom else (
-            mapping.category.name if mapping.category else '?'
+            mapping.template.name if mapping.template else '?'
         )
         return {
             'transaction_id': str(txn.id),
@@ -1890,8 +1985,14 @@ def unmap_transaction(transaction_id, mapping_id=None):
 
         remaining_count = mapping.transactions.count()
         if remaining_count > 0:
-            # Recompute actual from remaining linked transactions
-            total = sum(abs(t.amount) for t in mapping.transactions.all())
+            # Recompute actual from remaining linked transactions (abs for expenses, raw for income)
+            cat_type = mapping.custom_type if mapping.is_custom else (
+                mapping.template.template_type if mapping.template else ''
+            )
+            if cat_type == 'Income':
+                total = sum(t.amount for t in mapping.transactions.all())
+            else:
+                total = sum(abs(t.amount) for t in mapping.transactions.all())
             mapping.actual_amount = total
             mapping.status = 'mapped'
         else:
@@ -2155,7 +2256,7 @@ def get_projection(start_month_str, num_months=6):
     each of the next num_months months.
 
     For the current month: uses actual RecurringMapping expected amounts.
-    For future months: uses Category defaults / BudgetConfig overrides.
+    For future months: uses RecurringTemplate defaults / BudgetConfig overrides.
     Installments: parses "N/M" info to calculate remaining months.
 
     Returns per-month: income, fixo, installments, variable_budget,
@@ -2170,21 +2271,24 @@ def get_projection(start_month_str, num_months=6):
     except BalanceOverride.DoesNotExist:
         starting_balance = 0.0
 
-    # Category defaults
-    cats = Category.objects.filter(is_active=True)
-    income_cats = cats.filter(category_type='Income')
-    fixo_cats = cats.filter(category_type='Fixo')
-    invest_cats = cats.filter(category_type='Investimento')
-    variable_cats = cats.filter(category_type='Variavel', default_limit__gt=0)
+    # Template defaults for recurring items
+    tpls = RecurringTemplate.objects.filter(is_active=True)
+    income_tpls = tpls.filter(template_type='Income')
+    fixo_tpls = tpls.filter(template_type='Fixo')
+    invest_tpls = tpls.filter(template_type='Investimento')
 
     total_income_default = float(
-        income_cats.aggregate(t=Sum('default_limit'))['t'] or 0
+        income_tpls.aggregate(t=Sum('default_limit'))['t'] or 0
     )
     total_fixo_default = float(
-        fixo_cats.aggregate(t=Sum('default_limit'))['t'] or 0
+        fixo_tpls.aggregate(t=Sum('default_limit'))['t'] or 0
     )
     total_invest_default = float(
-        invest_cats.aggregate(t=Sum('default_limit'))['t'] or 0
+        invest_tpls.aggregate(t=Sum('default_limit'))['t'] or 0
+    )
+    # Variable budget comes from taxonomy Category (not templates)
+    variable_cats = Category.objects.filter(
+        category_type='Variavel', is_active=True, default_limit__gt=0,
     )
     total_variable_default = float(
         variable_cats.aggregate(t=Sum('default_limit'))['t'] or 0
@@ -2207,14 +2311,14 @@ def get_projection(start_month_str, num_months=6):
             # Current month: use actual RecurringMapping data
             mappings = RecurringMapping.objects.filter(
                 month_str=month,
-            ).exclude(status='skipped').select_related('category')
+            ).exclude(status='skipped').select_related('template')
 
             income = 0.0
             fixo = 0.0
             invest = 0.0
             for mp in mappings:
                 cat_type = mp.custom_type if mp.is_custom else (
-                    mp.category.category_type if mp.category else ''
+                    mp.template.template_type if mp.template else ''
                 )
                 expected = float(mp.expected_amount)
                 if cat_type == 'Income':
@@ -2278,47 +2382,70 @@ def get_orcamento(month_str):
         default_limit__gt=0,
     ).order_by('display_order', 'name')
 
+    cat_ids = [c.id for c in variable_cats]
+
     # 6-month lookback for averages
     lookback_months = []
     for i in range(1, 7):
         lookback_months.append(_month_str_add(month_str, -i))
+
+    # Batch: BudgetConfig overrides for this month (1 query)
+    budget_overrides = {
+        bc.category_id: float(bc.limit_override)
+        for bc in BudgetConfig.objects.filter(
+            category_id__in=cat_ids, month_str=month_str
+        )
+    }
+
+    # Batch: current month spending per category (1 query)
+    current_spending = dict(
+        Transaction.objects.filter(
+            month_str=month_str,
+            category_id__in=cat_ids,
+            amount__lt=0,
+            is_internal_transfer=False,
+        ).values('category_id').annotate(
+            total=Sum('amount')
+        ).values_list('category_id', 'total')
+    )
+
+    # Batch: 6-month lookback spending per category (1 query)
+    lookback_spending = dict(
+        Transaction.objects.filter(
+            month_str__in=lookback_months,
+            category_id__in=cat_ids,
+            amount__lt=0,
+            is_internal_transfer=False,
+        ).values('category_id').annotate(
+            total=Sum('amount')
+        ).values_list('category_id', 'total')
+    )
+
+    # Batch: months with data per category in lookback (1 query)
+    from django.db.models import Count
+    lookback_month_counts = dict(
+        Transaction.objects.filter(
+            month_str__in=lookback_months,
+            category_id__in=cat_ids,
+            amount__lt=0,
+            is_internal_transfer=False,
+        ).values('category_id').annotate(
+            month_count=Count('month_str', distinct=True)
+        ).values_list('category_id', 'month_count')
+    )
 
     categories = []
     total_limit = 0.0
     total_spent = 0.0
 
     for cat in variable_cats:
-        # BudgetConfig override for this month
-        try:
-            bc = BudgetConfig.objects.get(category=cat, month_str=month_str)
-            limit = float(bc.limit_override)
-        except BudgetConfig.DoesNotExist:
-            limit = float(cat.default_limit)
+        limit = budget_overrides.get(cat.id, float(cat.default_limit))
 
-        # Current month spending (exclude internal transfers)
-        spent_agg = Transaction.objects.filter(
-            month_str=month_str,
-            category=cat,
-            amount__lt=0,
-            is_internal_transfer=False,
-        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+        spent_agg = current_spending.get(cat.id, Decimal('0.00'))
         spent = float(abs(spent_agg))
 
-        # 6-month average (exclude internal transfers)
-        avg_agg = Transaction.objects.filter(
-            month_str__in=lookback_months,
-            category=cat,
-            amount__lt=0,
-            is_internal_transfer=False,
-        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-        avg_total = float(abs(avg_agg))
-        # Count how many of the lookback months actually have data
-        months_with_data = Transaction.objects.filter(
-            month_str__in=lookback_months,
-            category=cat,
-            amount__lt=0,
-            is_internal_transfer=False,
-        ).values('month_str').distinct().count()
+        avg_total = float(abs(lookback_spending.get(cat.id, Decimal('0.00'))))
+        months_with_data = lookback_month_counts.get(cat.id, 0)
         avg_6m = avg_total / max(months_with_data, 1)
 
         remaining = max(0, limit - spent)
@@ -2395,114 +2522,248 @@ def _extract_tokens(desc):
 
 def smart_categorize(month_str=None, dry_run=False):
     """
-    Apply smart categorization to uncategorized transactions.
+    Self-improving categorization engine with 5-strategy priority chain.
 
-    Strategy (in priority order):
-    1. Rule-based: Apply existing CategorizationRule patterns
-    2. Exact-match learning: If a description has been manually categorized
-       in the past, apply the same category
-    3. Token-similarity learning: If the normalized tokens of a description
-       are similar to a past manually-categorized transaction, suggest that category
-    4. Amount-pattern learning: For checking account recurring payments,
-       match by similar amounts to past categorized transactions
+    Every categorized transaction (manual OR rule-based) is training data.
+    Each strategy has a confidence score. Confidence tiers:
+    - ≥0.85: auto-categorize silently
+    - 0.70–0.84: auto-categorize but flag as "auto" for review
+    - <0.70: leave uncategorized
+
+    Strategy chain (priority order):
+    1. Keyword Rules (1.0) — CategorizationRule table
+    2. Exact Description Match (0.95) — normalized description → most common category
+    3. Amount + Account Pattern (0.85) — recurring subscription detection
+    4. Token Similarity (0.70) — weighted token scoring
+    5. Leave uncategorized
+
+    Also runs inconsistency detection in parallel.
 
     Args:
         month_str: Optional month to limit scope. If None, processes all months.
         dry_run: If True, returns what would be changed without saving.
 
     Returns:
-        dict with categorized count and details.
+        dict with categorized count, strategy breakdown, inconsistencies, and details.
     """
     nao_cat = Category.objects.filter(name='Não categorizado').first()
     if not nao_cat:
         return {'categorized': 0, 'details': [], 'error': 'No uncategorized category found'}
 
-    # Get uncategorized transactions
+    # ── Get uncategorized transactions ──
+    # When filtering by month, include both month_str matches AND
+    # credit card transactions whose invoice_month matches (they appear
+    # in that month's card view even though month_str is the billing cycle).
     qs = Transaction.objects.filter(
         category=nao_cat,
         is_internal_transfer=False,
     ).select_related('account', 'category')
     if month_str:
-        qs = qs.filter(month_str=month_str)
+        from django.db.models import Q
+        qs = qs.filter(
+            Q(month_str=month_str) | Q(invoice_month=month_str)
+        )
 
     uncategorized = list(qs)
     if not uncategorized:
-        return {'categorized': 0, 'details': [], 'message': 'No uncategorized transactions'}
+        return {
+            'categorized': 0, 'total_uncategorized': 0,
+            'by_strategy': {}, 'inconsistencies': [],
+            'details': [], 'dry_run': dry_run,
+            'message': 'No uncategorized transactions',
+        }
 
-    # Build learning corpus from manually categorized transactions
-    manual_txns = Transaction.objects.filter(
-        is_manually_categorized=True,
-    ).exclude(
-        category=nao_cat,
-    ).select_related('category')
+    # ── Category type guard ──
+    # Learning strategies (2-4) must NEVER assign Fixo/Income/Investimento categories.
+    # Those are managed exclusively by RecurringMapping. Only Variavel + Contas are
+    # valid targets for auto-categorization via learning.
+    variable_cat_ids = set(
+        Category.objects.filter(
+            category_type='Variavel', is_active=True,
+        ).values_list('id', flat=True)
+    )
+    # Also include "Contas" (special catch-all for bank fees/charges)
+    contas_cat = Category.objects.filter(name='Contas', is_active=True).first()
+    if contas_cat:
+        variable_cat_ids.add(contas_cat.id)
 
-    # Also use rule-categorized transactions (high confidence)
-    rule_txns = Transaction.objects.filter(
-        is_manually_categorized=False,
+    # ── Build learning corpus from categorized transactions (Variavel only) ──
+    # We only learn from Variavel categories to prevent Fixo/Income pollution.
+    all_categorized = Transaction.objects.filter(
         is_internal_transfer=False,
-    ).exclude(
-        category=nao_cat,
-    ).exclude(
-        category__isnull=True,
-    ).select_related('category')
+        category_id__in=variable_cat_ids,
+    ).select_related('category', 'subcategory', 'account')
 
-    # Build description -> category mapping from manual categorizations
-    desc_to_category = {}  # normalized_desc -> {category_id: count}
-    for txn in manual_txns:
+    # Manual categorizations get 3x weight (higher trust)
+    MANUAL_WEIGHT = 3
+
+    # Description → category frequency map (normalized)
+    desc_to_category = {}  # normalized_desc → Counter({category_id: weighted_count})
+    # Description → subcategory frequency map
+    desc_to_subcategory = {}  # normalized_desc → Counter({subcategory_id: weighted_count})
+    for txn in all_categorized.iterator():
         norm = _normalize_description(txn.description)
+        if not norm:
+            continue
         if norm not in desc_to_category:
             desc_to_category[norm] = Counter()
-        desc_to_category[norm][txn.category_id] += 1
+        weight = MANUAL_WEIGHT if txn.is_manually_categorized else 1
+        desc_to_category[norm][txn.category_id] += weight
+        # Track subcategory if present
+        if txn.subcategory_id:
+            if norm not in desc_to_subcategory:
+                desc_to_subcategory[norm] = Counter()
+            desc_to_subcategory[norm][txn.subcategory_id] += weight
 
-    # Build token -> category mapping for fuzzy matching
-    token_to_category = {}  # token -> {category_id: count}
-    for txn in list(manual_txns) + list(rule_txns[:2000]):  # Limit rule-based corpus
-        if txn.category_id == nao_cat.id:
-            continue
+    # Token → category frequency map
+    token_to_category = {}  # token → Counter({category_id: count})
+    for txn in all_categorized.iterator():
         tokens = _extract_tokens(txn.description)
+        weight = MANUAL_WEIGHT if txn.is_manually_categorized else 1
         for token in tokens:
             if token not in token_to_category:
                 token_to_category[token] = Counter()
-            token_to_category[token][txn.category_id] += 1
+            token_to_category[token][txn.category_id] += weight
 
-    # Load active categorization rules
-    rules = CategorizationRule.objects.filter(
+    # Amount + account pattern map for subscription detection
+    # Key: (account_id, rounded_amount) → Counter({category_id: count})
+    amt_account_map = {}
+    # Amount → subcategory map
+    amt_account_sub_map = {}
+    for txn in all_categorized.iterator():
+        key = (txn.account_id, round(float(txn.amount), 0))
+        if key not in amt_account_map:
+            amt_account_map[key] = Counter()
+        amt_account_map[key][txn.category_id] += 1
+        if txn.subcategory_id:
+            if key not in amt_account_sub_map:
+                amt_account_sub_map[key] = Counter()
+            amt_account_sub_map[key][txn.subcategory_id] += 1
+
+    # ── Load active categorization rules (ordered by priority) ──
+    rules = list(CategorizationRule.objects.filter(
         is_active=True,
-    ).select_related('category').order_by('-priority')
+    ).select_related('category', 'subcategory').order_by('-priority'))
 
-    # Category lookup
+    # Category lookup — includes ALL active categories (rules can still assign Fixo)
     cat_lookup = {c.id: c for c in Category.objects.filter(is_active=True)}
+    # Subcategory lookup — also track which subcategory belongs to which category
+    from api.models import Subcategory
+    sub_lookup = {s.id: s for s in Subcategory.objects.select_related('category')}
+    # Valid subcategory IDs per category: sub must belong to the same category
+    sub_to_cat = {s.id: s.category_id for s in sub_lookup.values()}
 
+    # ── Process each uncategorized transaction ──
     results = []
+    by_strategy = Counter()
+
+    # PIX / personal transfer pattern: short descriptions like "Rafaell04 02",
+    # "Guilher20 01", "Renato 28 01" — person name + date digits on checking accounts.
+    # These should only be categorized via explicit keyword rules, never by learning.
+    import re
+    _pix_pattern = re.compile(r'^[A-Za-z]{3,}\d{2}\s*\d{2}$')  # e.g. "Rafaell04 02"
+    _pix_pattern2 = re.compile(r'^[A-Za-z]+\s+[A-Za-z]?\d{2}\s+\d{2}$')  # e.g. "Renato 28 01"
+
+    def _is_pix_transfer(txn_obj):
+        """Detect PIX/personal transfers that should not be auto-categorized by learning."""
+        if txn_obj.account and txn_obj.account.account_type != 'checking':
+            return False
+        desc = txn_obj.description.strip()
+        if _pix_pattern.match(desc) or _pix_pattern2.match(desc):
+            return True
+        # Also match "Pix Qrs ..." descriptions that aren't already rule-matched
+        if desc.upper().startswith('PIX QRS') or desc.upper().startswith('PIX '):
+            return True
+        return False
 
     for txn in uncategorized:
         desc_upper = txn.description.upper()
         matched_category = None
+        matched_subcategory = None
         match_method = None
         confidence = 0.0
 
-        # Strategy 1: Rule-based matching
+        # Check if this is a PIX/personal transfer (skip learning strategies)
+        is_pix = _is_pix_transfer(txn)
+
+        # ── Strategy 1: Keyword Rules (confidence: 1.0) ──
+        # Rules always apply, even for PIX transfers (user creates explicit rules)
         for rule in rules:
             if rule.keyword.upper() in desc_upper:
                 matched_category = rule.category
+                matched_subcategory = rule.subcategory
                 match_method = 'rule'
                 confidence = 1.0
                 break
 
-        # Strategy 2: Exact description match from manual categorizations
-        if not matched_category:
+        # ── Strategy 2: Exact Description Match (confidence: 0.95) ──
+        # NOTE: Learning corpus only contains Variavel categories, so
+        # Fixo/Income/Investimento can never be assigned here.
+        # Skip for PIX transfers — they need manual categorization.
+        if not matched_category and not is_pix:
             norm = _normalize_description(txn.description)
-            if norm in desc_to_category:
+            if norm and norm in desc_to_category:
                 cat_counts = desc_to_category[norm]
                 if cat_counts:
-                    best_cat_id = cat_counts.most_common(1)[0][0]
-                    if best_cat_id in cat_lookup:
+                    best_cat_id, best_count = cat_counts.most_common(1)[0]
+                    total_count = sum(cat_counts.values())
+                    # Require majority agreement (>50% of weighted votes)
+                    if best_cat_id in cat_lookup and best_count > total_count * 0.5:
                         matched_category = cat_lookup[best_cat_id]
-                        match_method = 'exact_learning'
+                        match_method = 'exact_match'
                         confidence = 0.95
+                        # Propagate subcategory — only if it belongs to the matched category
+                        if norm in desc_to_subcategory:
+                            sub_counts = desc_to_subcategory[norm]
+                            best_sub_id = sub_counts.most_common(1)[0][0]
+                            if best_sub_id in sub_lookup and sub_to_cat.get(best_sub_id) == best_cat_id:
+                                matched_subcategory = sub_lookup[best_sub_id]
 
-        # Strategy 3: Token similarity matching
-        if not matched_category:
+        # ── Strategy 3: Amount + Account Pattern (confidence: 0.85) ──
+        # Skip for PIX transfers
+        if not matched_category and not is_pix:
+            rounded_amt = round(float(txn.amount), 0)
+            # Check exact amount match on same account
+            key = (txn.account_id, rounded_amt)
+            if key in amt_account_map:
+                cat_counts = amt_account_map[key]
+                if cat_counts:
+                    best_cat_id, best_count = cat_counts.most_common(1)[0]
+                    # Require at least 3 historical matches for this pattern
+                    if best_count >= 3 and best_cat_id in cat_lookup:
+                        matched_category = cat_lookup[best_cat_id]
+                        match_method = 'amount_pattern'
+                        confidence = 0.85
+                        # Propagate subcategory — validate category ownership
+                        if key in amt_account_sub_map:
+                            sub_counts = amt_account_sub_map[key]
+                            best_sub_id = sub_counts.most_common(1)[0][0]
+                            if best_sub_id in sub_lookup and sub_to_cat.get(best_sub_id) == best_cat_id:
+                                matched_subcategory = sub_lookup[best_sub_id]
+
+            # Also check ±5% amount tolerance on same account
+            if not matched_category:
+                for delta in range(-2, 3):  # Check nearby rounded amounts
+                    check_key = (txn.account_id, rounded_amt + delta)
+                    if check_key in amt_account_map:
+                        cat_counts = amt_account_map[check_key]
+                        if cat_counts:
+                            best_cat_id, best_count = cat_counts.most_common(1)[0]
+                            if best_count >= 3 and best_cat_id in cat_lookup:
+                                matched_category = cat_lookup[best_cat_id]
+                                match_method = 'amount_pattern'
+                                confidence = 0.80
+                                # Propagate subcategory — validate category ownership
+                                if check_key in amt_account_sub_map:
+                                    sub_counts = amt_account_sub_map[check_key]
+                                    best_sub_id = sub_counts.most_common(1)[0][0]
+                                    if best_sub_id in sub_lookup and sub_to_cat.get(best_sub_id) == best_cat_id:
+                                        matched_subcategory = sub_lookup[best_sub_id]
+                                break
+
+        # ── Strategy 4: Token Similarity (confidence: 0.70) ──
+        # Skip for PIX transfers
+        if not matched_category and not is_pix:
             tokens = _extract_tokens(txn.description)
             if tokens:
                 cat_scores = Counter()
@@ -2514,34 +2775,225 @@ def smart_categorize(month_str=None, dry_run=False):
 
                 if cat_scores:
                     best_cat_id, best_score = cat_scores.most_common(1)[0]
-                    # Require at least 2 matching tokens or a strong single token
                     matching_tokens = sum(1 for t in tokens if t in token_to_category)
+                    total_tokens = len(tokens)
+                    # Require at least 2 matching tokens or strong single token
                     if matching_tokens >= 2 or best_score >= 5:
-                        matched_category = cat_lookup[best_cat_id]
-                        match_method = 'token_learning'
-                        confidence = min(0.9, 0.5 + matching_tokens * 0.1)
+                        # Check that best score is dominant (>60% of total)
+                        total_score = sum(cat_scores.values())
+                        if best_score > total_score * 0.6:
+                            matched_category = cat_lookup[best_cat_id]
+                            match_method = 'token_similarity'
+                            confidence = min(0.75, 0.5 + matching_tokens * 0.05)
 
-        if matched_category:
+        # ── Record result ──
+        if matched_category and confidence >= 0.70:
             results.append({
                 'transaction_id': str(txn.id),
                 'description': txn.description,
                 'amount': float(txn.amount),
                 'account': txn.account.name if txn.account else '',
+                'month_str': txn.month_str,
                 'new_category': matched_category.name,
                 'new_category_id': str(matched_category.id),
+                'new_subcategory': matched_subcategory.name if matched_subcategory else None,
                 'method': match_method,
-                'confidence': confidence,
+                'confidence': round(confidence, 2),
             })
+            by_strategy[match_method] += 1
 
             if not dry_run:
                 txn.category = matched_category
-                txn.save(update_fields=['category', 'updated_at'])
+                if matched_subcategory:
+                    txn.subcategory = matched_subcategory
+                txn.save(update_fields=['category', 'subcategory', 'updated_at'])
+
+    # ── Inconsistency Detection ──
+    inconsistencies = _detect_inconsistencies(nao_cat)
 
     return {
         'categorized': len(results),
         'total_uncategorized': len(uncategorized),
-        'details': results[:100],  # Limit response size
+        'by_strategy': dict(by_strategy),
+        'inconsistencies': inconsistencies,
+        'details': results[:100],
         'dry_run': dry_run,
+    }
+
+
+def _detect_inconsistencies(nao_cat):
+    """
+    Find descriptions that appear in multiple different categories.
+    These indicate categorization conflicts that need manual resolution.
+    """
+    from django.db.models import Count
+
+    # Get all non-uncategorized, non-transfer transactions
+    txns = Transaction.objects.filter(
+        is_internal_transfer=False,
+    ).exclude(
+        category=nao_cat,
+    ).exclude(
+        category__isnull=True,
+    )
+
+    # Group by normalized description and find those with multiple categories
+    # We'll do this in Python for flexibility with normalization
+    desc_categories = {}  # normalized_desc → {category_name: count}
+    for txn in txns.select_related('category').iterator():
+        norm = _normalize_description(txn.description)
+        if not norm or len(norm) < 3:
+            continue
+        if norm not in desc_categories:
+            desc_categories[norm] = Counter()
+        desc_categories[norm][txn.category.name] += 1
+
+    inconsistencies = []
+    for desc, cat_counts in desc_categories.items():
+        if len(cat_counts) > 1:
+            total = sum(cat_counts.values())
+            # Only report if significant (at least 5 transactions total)
+            if total >= 5:
+                inconsistencies.append({
+                    'description': desc,
+                    'categories': dict(cat_counts),
+                    'total': total,
+                })
+
+    # Sort by total count descending
+    inconsistencies.sort(key=lambda x: x['total'], reverse=True)
+    return inconsistencies[:20]
+
+
+def find_similar_transactions(transaction_id):
+    """
+    Find transactions similar to the given one that are uncategorized.
+    Used for learning feedback — when user categorizes one transaction,
+    suggest applying the same category to similar ones.
+
+    Returns similar uncategorized transactions + rule suggestion.
+    """
+    txn = Transaction.objects.select_related('account', 'category').get(id=transaction_id)
+    nao_cat = Category.objects.filter(name='Não categorizado').first()
+    if not nao_cat or not txn.category or txn.category == nao_cat:
+        return {'similar_uncategorized': [], 'suggest_rule': None}
+
+    norm = _normalize_description(txn.description)
+
+    # Find uncategorized transactions with the same normalized description
+    similar_qs = Transaction.objects.filter(
+        category=nao_cat,
+        is_internal_transfer=False,
+    ).select_related('account')
+
+    similar = []
+    for candidate in similar_qs.iterator():
+        if _normalize_description(candidate.description) == norm:
+            similar.append({
+                'id': str(candidate.id),
+                'description': candidate.description,
+                'amount': float(candidate.amount),
+                'month_str': candidate.month_str,
+                'account': candidate.account.name if candidate.account else '',
+            })
+
+    # Generate rule suggestion
+    suggest_rule = None
+    tokens = _extract_tokens(txn.description)
+    if tokens:
+        # Use the longest token as the keyword candidate
+        keyword = max(tokens, key=len)
+        # Count how many transactions this keyword would match
+        would_match = Transaction.objects.filter(
+            description__icontains=keyword,
+            is_internal_transfer=False,
+        ).exclude(category=txn.category).count()
+        already_correct = Transaction.objects.filter(
+            description__icontains=keyword,
+            category=txn.category,
+        ).count()
+
+        if would_match > 0 or already_correct > 1:
+            suggest_rule = {
+                'keyword': keyword,
+                'category_id': str(txn.category.id),
+                'category_name': txn.category.name,
+                'would_match': would_match,
+                'already_correct': already_correct,
+            }
+
+    return {
+        'similar_uncategorized': similar[:50],
+        'suggest_rule': suggest_rule,
+    }
+
+
+def rename_transaction(transaction_id, new_description, propagate_ids=None):
+    """
+    Rename a transaction's description and optionally propagate to similar ones.
+
+    If propagate_ids is None: preview mode — returns similar transactions.
+    If propagate_ids is a list: apply mode — renames those + creates RenameRule.
+
+    Similarity: same raw_description/description_original, same account, amount ±15%.
+    """
+    txn = Transaction.objects.select_related('account').get(id=transaction_id)
+    old_description = txn.description
+    original_desc = txn.description_original or txn.raw_description or old_description
+
+    # Always rename the target transaction
+    txn.description = new_description
+    txn.save(update_fields=['description', 'updated_at'])
+
+    if propagate_ids is not None:
+        # Apply mode: rename selected transactions + create RenameRule
+        if propagate_ids:
+            Transaction.objects.filter(
+                id__in=propagate_ids,
+            ).update(description=new_description)
+
+        # Auto-create RenameRule for future imports
+        norm_original = _normalize_description(original_desc)
+        if norm_original and norm_original != _normalize_description(new_description):
+            RenameRule.objects.get_or_create(
+                keyword=norm_original,
+                defaults={'display_name': new_description, 'is_active': True},
+            )
+
+        return {
+            'renamed': 1 + len(propagate_ids),
+            'rename_rule_created': True,
+        }
+
+    # Preview mode: find similar transactions
+    amt = float(txn.amount)
+    amt_low = amt * 1.15 if amt < 0 else amt * 0.85
+    amt_high = amt * 0.85 if amt < 0 else amt * 1.15
+
+    similar_qs = Transaction.objects.filter(
+        account=txn.account,
+        amount__gte=min(amt_low, amt_high),
+        amount__lte=max(amt_low, amt_high),
+    ).exclude(id=txn.id).select_related('account')
+
+    # Filter by original description similarity
+    norm_original = _normalize_description(original_desc)
+    similar = []
+    for candidate in similar_qs.iterator():
+        cand_orig = candidate.description_original or candidate.raw_description or candidate.description
+        if _normalize_description(cand_orig) == norm_original:
+            similar.append({
+                'id': str(candidate.id),
+                'description': candidate.description,
+                'amount': float(candidate.amount),
+                'date': str(candidate.date),
+                'month_str': candidate.month_str,
+                'account': candidate.account.name if candidate.account else '',
+            })
+
+    return {
+        'renamed': 1,
+        'similar': similar[:100],
     }
 
 
@@ -2572,7 +3024,7 @@ def auto_link_recurring(month_str):
         match_mode='manual',
     ).exclude(
         status__in=['skipped', 'mapped'],
-    ).select_related('category', 'transaction').prefetch_related('transactions')
+    ).select_related('template', 'category', 'transaction').prefetch_related('transactions')
 
     # Only process items with no linked transactions
     unlinked = [m for m in mappings if m.transactions.count() == 0 and not m.transaction]
@@ -2601,21 +3053,21 @@ def auto_link_recurring(month_str):
     prev_month = _month_str_add(month_str, -1)
     prev_mappings = RecurringMapping.objects.filter(
         month_str=prev_month,
-    ).select_related('category').prefetch_related('transactions')
+    ).select_related('template').prefetch_related('transactions')
 
-    prev_links = {}  # category_id -> list of (description_normalized, amount)
+    prev_links = {}  # template_id -> list of (description_normalized, amount)
     for pm in prev_mappings:
-        cat_id = pm.category_id
-        if not cat_id:
+        tpl_id = pm.template_id
+        if not tpl_id:
             continue
         linked = list(pm.transactions.all())
         if linked:
-            prev_links[cat_id] = [
+            prev_links[tpl_id] = [
                 (_normalize_description(t.description), float(abs(t.amount)))
                 for t in linked
             ]
         elif pm.transaction:
-            prev_links[cat_id] = [
+            prev_links[tpl_id] = [
                 (_normalize_description(pm.transaction.description), float(abs(pm.transaction.amount)))
             ]
 
@@ -2623,10 +3075,10 @@ def auto_link_recurring(month_str):
 
     for mapping in unlinked:
         cat_type = mapping.custom_type if mapping.is_custom else (
-            mapping.category.category_type if mapping.category else ''
+            mapping.template.template_type if mapping.template else ''
         )
         name = mapping.custom_name if mapping.is_custom else (
-            mapping.category.name if mapping.category else '?'
+            mapping.template.name if mapping.template else '?'
         )
         expected = float(mapping.expected_amount)
         is_income = cat_type == 'Income'
@@ -2640,9 +3092,9 @@ def auto_link_recurring(month_str):
         matched_txns = []
 
         # Strategy 1: Match by previous month's transaction pattern
-        cat_id = mapping.category_id
-        if cat_id and cat_id in prev_links:
-            for prev_desc, prev_amt in prev_links[cat_id]:
+        tpl_id = mapping.template_id
+        if tpl_id and tpl_id in prev_links:
+            for prev_desc, prev_amt in prev_links[tpl_id]:
                 for txn in available:
                     if txn.id in {t.id for t in matched_txns}:
                         continue
@@ -2741,7 +3193,7 @@ def auto_link_recurring(month_str):
 def reapply_template_to_month(month_str):
     """
     Delete all existing RecurringMapping rows for the month and re-initialize
-    from the current Category template. This lets the user reset a month's
+    from the current RecurringTemplate. This lets the user reset a month's
     recurring items after editing the template.
     """
     deleted_count = RecurringMapping.objects.filter(month_str=month_str).delete()[0]
@@ -2812,7 +3264,7 @@ def get_checking_transactions(month_str):
     txns = Transaction.objects.filter(
         month_str=month_str,
         account__account_type='checking',
-    ).select_related('account', 'category').order_by('date')
+    ).select_related('account', 'category', 'subcategory').order_by('date')
 
     # Find cross-month-moved transaction IDs for this month
     cross_month_moved = {}
@@ -2846,6 +3298,8 @@ def get_checking_transactions(month_str):
             'amount': amt,
             'category': t.category.name if t.category else 'Não categorizado',
             'category_id': str(t.category.id) if t.category else None,
+            'subcategory': t.subcategory.name if t.subcategory else '',
+            'subcategory_id': str(t.subcategory.id) if t.subcategory else None,
             'is_internal_transfer': t.is_internal_transfer,
             'is_recurring': t.is_recurring,
             'moved_to_month': moved_to,

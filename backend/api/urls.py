@@ -20,6 +20,9 @@ from .views import (
     RecurringReorderView,
     MetricasOrderView, MetricasMakeDefaultView, MetricasLockView,
     CustomMetricsView,
+    TransactionRenameView,
+    TransactionSimilarView,
+    CategorizeInstallmentView,
 )
 
 router = DefaultRouter()
@@ -34,6 +37,11 @@ router.register(r'budget-configs', BudgetConfigViewSet)
 router.register(r'balance-overrides', BalanceOverrideViewSet)
 
 urlpatterns = [
+    # Transaction rename + similar must be BEFORE router include
+    # (router's transactions/<pk>/ would capture "rename" and "similar" as pk values)
+    path('transactions/rename/', TransactionRenameView.as_view(), name='transaction-rename'),
+    path('transactions/similar/', TransactionSimilarView.as_view(), name='transaction-similar'),
+    path('transactions/categorize-installment/', CategorizeInstallmentView.as_view(), name='categorize-installment'),
     path('', include(router.urls)),
     path('analytics/metricas/order/', MetricasOrderView.as_view(), name='metricas-order'),
     path('analytics/metricas/make-default/', MetricasMakeDefaultView.as_view(), name='metricas-make-default'),

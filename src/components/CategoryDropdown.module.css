@@ -1,0 +1,237 @@
+/* ===== Trigger button — inline in table cell ===== */
+.trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  width: 100%;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  min-height: 28px;
+}
+
+.trigger:hover {
+  border-color: var(--color-accent);
+  background: var(--color-surface-hover);
+}
+
+.triggerActive {
+  border-color: var(--color-accent);
+  background: var(--color-surface-hover);
+}
+
+.trigger.empty {
+  color: var(--color-text-secondary);
+}
+
+.trigger:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.triggerText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.placeholder {
+  font-style: italic;
+  opacity: 0.6;
+  font-size: 0.8rem;
+}
+
+.chevron {
+  font-size: 0.6rem;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+/* ===== Portal dropdown ===== */
+.dropdown {
+  background: var(--color-surface);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 340px;
+}
+
+/* ===== Search row ===== */
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.searchInput {
+  flex: 1;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  color: var(--color-text);
+  font-size: 0.8rem;
+  outline: none;
+  min-width: 0;
+  font-family: var(--font-sans);
+}
+
+.searchInput:focus {
+  border-color: var(--color-accent);
+}
+
+.searchInput::placeholder {
+  color: var(--color-text-secondary);
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 1.2rem;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.closeBtn:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+
+/* ===== Options list ===== */
+.list {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 260px;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+  color: inherit;
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+}
+
+.option:hover {
+  background: var(--color-surface-hover);
+}
+
+.option:last-child {
+  border-bottom: none;
+}
+
+.option:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+/* Selected option */
+.optionSelected {
+  background: rgba(79, 143, 247, 0.06);
+  border-left: 3px solid var(--color-accent);
+}
+
+.optionSelected:hover {
+  background: rgba(79, 143, 247, 0.12);
+}
+
+/* Radio-style indicator */
+.optionCheck {
+  flex-shrink: 0;
+  width: 16px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.optionCheckOn {
+  color: var(--color-accent);
+  font-weight: 700;
+}
+
+.optionName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Subcategory count badge */
+.subCount {
+  font-size: 0.62rem;
+  font-weight: 500;
+  opacity: 0.7;
+  padding: 1px 6px;
+  background: var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+/* Clear option */
+.clearOption {
+  color: var(--color-red);
+  font-size: 0.78rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.clearOption:hover {
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.clearIcon {
+  flex-shrink: 0;
+  width: 16px;
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+/* Empty state */
+.emptyRow {
+  padding: 16px;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+/* ===== Footer ===== */
+.footer {
+  display: flex;
+  align-items: center;
+  padding: 4px 12px;
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+}

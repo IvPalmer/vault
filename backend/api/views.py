@@ -1,4 +1,6 @@
+import logging
 import os
+import re
 
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -8,17 +10,33 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
 
+logger = logging.getLogger(__name__)
+
+MONTH_STR_RE = re.compile(r'^\d{4}-(?:0[1-9]|1[0-2])$')
+
+
+def _validate_month_str(month_str):
+    """Validate month_str format (YYYY-MM). Returns error Response or None."""
+    if not month_str:
+        return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
+    if not MONTH_STR_RE.match(month_str):
+        return Response(
+            {'error': f'Invalid month_str format: {month_str}. Expected YYYY-MM.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return None
+
 from .models import (
     Account, Category, Subcategory, CategorizationRule,
-    RenameRule, Transaction, RecurringMapping, BudgetConfig,
-    BalanceOverride,
+    RenameRule, Transaction, RecurringMapping, RecurringTemplate,
+    BudgetConfig, BalanceOverride,
 )
 from .serializers import (
     AccountSerializer, CategorySerializer, SubcategorySerializer,
     CategorizationRuleSerializer, RenameRuleSerializer,
     TransactionSerializer, TransactionListSerializer,
-    RecurringMappingSerializer, BudgetConfigSerializer,
-    BalanceOverrideSerializer,
+    RecurringMappingSerializer, RecurringTemplateSerializer,
+    BudgetConfigSerializer, BalanceOverrideSerializer,
 )
 from .services import (
     get_metricas,
@@ -39,6 +57,8 @@ from .services import (
     get_metricas_order, save_metricas_order, make_default_order,
     toggle_metricas_lock, get_custom_metric_options,
     create_custom_metric, delete_custom_metric,
+    find_similar_transactions, rename_transaction,
+    categorize_installment_siblings,
 )
 from .models import CustomMetric
 
@@ -53,12 +73,14 @@ class CategoryViewSet(viewsets.ModelViewSet):
     serializer_class = CategorySerializer
     filterset_fields = ['category_type', 'is_active']
     search_fields = ['name']
+    pagination_class = None  # Always return full list (used as dropdown data)
 
 
 class SubcategoryViewSet(viewsets.ModelViewSet):
     queryset = Subcategory.objects.all()
     serializer_class = SubcategorySerializer
     filterset_fields = ['category']
+    pagination_class = None
 
 
 class CategorizationRuleViewSet(viewsets.ModelViewSet):
@@ -66,12 +88,14 @@ class CategorizationRuleViewSet(viewsets.ModelViewSet):
     serializer_class = CategorizationRuleSerializer
     filterset_fields = ['category', 'is_active']
     search_fields = ['keyword']
+    pagination_class = None  # Rules list needs to be complete for settings UI
 
 
 class RenameRuleViewSet(viewsets.ModelViewSet):
     queryset = RenameRule.objects.all()
     serializer_class = RenameRuleSerializer
     search_fields = ['keyword', 'display_name']
+    pagination_class = None
 
 
 class TransactionViewSet(viewsets.ModelViewSet):
@@ -119,46 +143,53 @@ class TransactionViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='bulk-categorize')
     def bulk_categorize(self, request):
-        """Bulk re-categorize selected transactions."""
+        """Bulk re-categorize selected transactions with learning feedback."""
         transaction_ids = request.data.get('transaction_ids', [])
         category_id = request.data.get('category_id')
+        subcategory_id = request.data.get('subcategory_id')
         if not transaction_ids or not category_id:
             return Response(
                 {'error': 'transaction_ids and category_id required'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        updated = Transaction.objects.filter(id__in=transaction_ids).update(
-            category_id=category_id, is_manually_categorized=True
-        )
-        return Response({'updated': updated})
+        update_fields = {'category_id': category_id, 'is_manually_categorized': True}
+        if subcategory_id:
+            update_fields['subcategory_id'] = subcategory_id
+        updated = Transaction.objects.filter(id__in=transaction_ids).update(**update_fields)
+
+        # Learning feedback: find similar uncategorized + suggest rule
+        feedback = {}
+        if len(transaction_ids) == 1:
+            try:
+                feedback = find_similar_transactions(transaction_ids[0])
+            except Transaction.DoesNotExist:
+                pass
+
+        return Response({'updated': updated, **feedback})
 
 
 class RecurringMappingViewSet(viewsets.ModelViewSet):
-    queryset = RecurringMapping.objects.select_related('category', 'transaction').all()
+    queryset = RecurringMapping.objects.select_related('template', 'category', 'transaction').all()
     serializer_class = RecurringMappingSerializer
     filterset_fields = ['month_str', 'status']
 
     @action(detail=False, methods=['post'])
     def generate(self, request):
-        """Generate recurring mappings for a given month."""
+        """Generate recurring mappings for a given month from RecurringTemplate."""
         month_str = request.data.get('month_str')
         if not month_str:
             return Response(
                 {'error': 'month_str required'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Get categories that should have recurring mappings (Fixo, Income, Investimento)
-        categories = Category.objects.filter(
-            category_type__in=['Fixo', 'Income', 'Investimento'],
-            is_active=True,
-        )
+        templates = RecurringTemplate.objects.filter(is_active=True)
         created = 0
-        for cat in categories:
+        for tpl in templates:
             _, was_created = RecurringMapping.objects.get_or_create(
-                category=cat,
+                template=tpl,
                 month_str=month_str,
                 defaults={
-                    'expected_amount': cat.default_limit,
+                    'expected_amount': tpl.default_limit,
                     'status': 'missing',
                 },
             )
@@ -178,22 +209,23 @@ class RecurringMappingViewSet(viewsets.ModelViewSet):
         # Get unmapped entries
         mappings = RecurringMapping.objects.filter(
             month_str=month_str, status='missing'
-        ).select_related('category')
+        ).select_related('template', 'category')
 
         matched = 0
         for mapping in mappings:
-            # Try to find a transaction matching this category in this month
-            txn = Transaction.objects.filter(
-                month_str=month_str,
-                category=mapping.category,
-                is_internal_transfer=False,
-            ).first()
-            if txn:
-                mapping.transaction = txn
-                mapping.actual_amount = txn.amount
-                mapping.status = 'suggested'
-                mapping.save()
-                matched += 1
+            # For category-match mode, try by taxonomy category
+            if mapping.match_mode == 'category' and mapping.category:
+                txn = Transaction.objects.filter(
+                    month_str=month_str,
+                    category=mapping.category,
+                    is_internal_transfer=False,
+                ).first()
+                if txn:
+                    mapping.transaction = txn
+                    mapping.actual_amount = txn.amount
+                    mapping.status = 'suggested'
+                    mapping.save()
+                    matched += 1
 
         return Response({'matched': matched, 'month_str': month_str})
 
@@ -202,8 +234,9 @@ class AnalyticsMetricasView(APIView):
     """GET /api/analytics/metricas/?month_str=2026-01"""
     def get(self, request):
         month_str = request.query_params.get('month_str')
-        if not month_str:
-            return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
+        err = _validate_month_str(month_str)
+        if err:
+            return err
         return Response(get_metricas(month_str))
 
 
@@ -211,8 +244,9 @@ class RecurringDataView(APIView):
     """GET /api/analytics/recurring/?month_str=2026-01"""
     def get(self, request):
         month_str = request.query_params.get('month_str')
-        if not month_str:
-            return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
+        err = _validate_month_str(month_str)
+        if err:
+            return err
         return Response(get_recurring_data(month_str))
 
 
@@ -220,8 +254,9 @@ class CardTransactionsView(APIView):
     """GET /api/analytics/cards/?month_str=2026-01&account=Master"""
     def get(self, request):
         month_str = request.query_params.get('month_str')
-        if not month_str:
-            return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
+        err = _validate_month_str(month_str)
+        if err:
+            return err
         account_filter = request.query_params.get('account', None)
         return Response(get_card_transactions(month_str, account_filter))
 
@@ -230,8 +265,9 @@ class VariableTransactionsView(APIView):
     """GET /api/analytics/variable/?month_str=2026-01"""
     def get(self, request):
         month_str = request.query_params.get('month_str')
-        if not month_str:
-            return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
+        err = _validate_month_str(month_str)
+        if err:
+            return err
         return Response(get_variable_transactions(month_str))
 
 
@@ -239,16 +275,22 @@ class MappingCandidatesView(APIView):
     """GET /api/analytics/recurring/candidates/?month_str=2026-01&category_id=uuid&mapping_id=uuid"""
     def get(self, request):
         month_str = request.query_params.get('month_str')
+        err = _validate_month_str(month_str)
+        if err:
+            return err
         category_id = request.query_params.get('category_id')
         mapping_id = request.query_params.get('mapping_id')
-        if not month_str or (not category_id and not mapping_id):
+        if not category_id and not mapping_id:
             return Response(
-                {'error': 'month_str and (category_id or mapping_id) required'},
+                {'error': 'category_id or mapping_id required'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
             return Response(get_mapping_candidates(month_str, category_id=category_id, mapping_id=mapping_id))
+        except (RecurringMapping.DoesNotExist, Category.DoesNotExist) as e:
+            return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            logger.exception('MappingCandidatesView error')
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -271,7 +313,10 @@ class MapTransactionView(APIView):
                 transaction_id, category_id=category_id, mapping_id=mapping_id
             )
             return Response(result)
+        except (Transaction.DoesNotExist, RecurringMapping.DoesNotExist, Category.DoesNotExist) as e:
+            return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            logger.exception('MapTransactionView.post error')
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request):
@@ -285,7 +330,10 @@ class MapTransactionView(APIView):
         try:
             result = unmap_transaction(transaction_id, mapping_id=mapping_id)
             return Response(result)
+        except (Transaction.DoesNotExist, RecurringMapping.DoesNotExist) as e:
+            return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            logger.exception('MapTransactionView.delete error')
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -540,9 +588,12 @@ class RecurringUpdateView(APIView):
             )
         # Extract optional fields
         kwargs = {}
-        for field in ('name', 'category_type', 'expected_amount', 'due_day'):
+        for field in ('name', 'template_type', 'expected_amount', 'due_day'):
             if field in request.data:
                 kwargs[field] = request.data[field]
+        # Accept category_type as alias for template_type (backward compat)
+        if 'category_type' in request.data and 'template_type' not in kwargs:
+            kwargs['template_type'] = request.data['category_type']
         if not kwargs:
             return Response(
                 {'error': 'At least one field to update is required'},
@@ -565,7 +616,8 @@ class RecurringCustomView(APIView):
     def post(self, request):
         month_str = request.data.get('month_str')
         name = request.data.get('name')
-        category_type = request.data.get('category_type', 'Fixo')
+        # Accept both template_type and category_type for backward compat
+        template_type = request.data.get('template_type') or request.data.get('category_type', 'Fixo')
         expected_amount = request.data.get('expected_amount', 0)
         if not month_str or not name:
             return Response(
@@ -573,7 +625,7 @@ class RecurringCustomView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            result = add_custom_recurring(month_str, name, category_type, expected_amount)
+            result = add_custom_recurring(month_str, name, template_type, expected_amount)
             return Response(result, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -635,7 +687,7 @@ class BalanceSaveView(APIView):
 
 
 class BudgetConfigViewSet(viewsets.ModelViewSet):
-    queryset = BudgetConfig.objects.select_related('category').all()
+    queryset = BudgetConfig.objects.select_related('category', 'template').all()
     serializer_class = BudgetConfigSerializer
     filterset_fields = ['month_str', 'category']
 
@@ -650,12 +702,17 @@ class ProjectionView(APIView):
     """GET /api/analytics/projection/?month_str=2025-12&months=6"""
     def get(self, request):
         month_str = request.query_params.get('month_str')
-        if not month_str:
-            return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
-        num_months = int(request.query_params.get('months', 6))
+        err = _validate_month_str(month_str)
+        if err:
+            return err
+        try:
+            num_months = int(request.query_params.get('months', 6))
+        except (ValueError, TypeError):
+            return Response({'error': 'months must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             return Response(get_projection(month_str, num_months))
         except Exception as e:
+            logger.exception('ProjectionView error')
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -663,11 +720,13 @@ class OrcamentoView(APIView):
     """GET /api/analytics/orcamento/?month_str=2025-12"""
     def get(self, request):
         month_str = request.query_params.get('month_str')
-        if not month_str:
-            return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
+        err = _validate_month_str(month_str)
+        if err:
+            return err
         try:
             return Response(get_orcamento(month_str))
         except Exception as e:
+            logger.exception('OrcamentoView error')
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -675,11 +734,43 @@ class InstallmentDetailsView(APIView):
     """GET /api/analytics/installments/?month_str=2026-02"""
     def get(self, request):
         month_str = request.query_params.get('month_str')
-        if not month_str:
-            return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
+        err = _validate_month_str(month_str)
+        if err:
+            return err
         try:
             return Response(get_installment_details(month_str))
         except Exception as e:
+            logger.exception('InstallmentDetailsView error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CategorizeInstallmentView(APIView):
+    """
+    POST /api/transactions/categorize-installment/
+    Categorize an installment and propagate to all sibling installments.
+    Body: { transaction_id, category_id, subcategory_id (optional) }
+    """
+    def post(self, request):
+        transaction_id = request.data.get('transaction_id')
+        category_id = request.data.get('category_id')
+        subcategory_id = request.data.get('subcategory_id')
+        if not transaction_id or not category_id:
+            return Response(
+                {'error': 'transaction_id and category_id required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            result = categorize_installment_siblings(
+                transaction_id, category_id, subcategory_id
+            )
+            return Response(result)
+        except Transaction.DoesNotExist:
+            return Response(
+                {'error': 'Transaction not found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception as e:
+            logger.exception('CategorizeInstallmentView error')
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -715,43 +806,47 @@ class RecurringTemplatesView(APIView):
 
     def post(self, request):
         name = request.data.get('name')
-        category_type = request.data.get('category_type', 'Fixo')
+        # Accept both template_type and category_type for backward compat
+        template_type = request.data.get('template_type') or request.data.get('category_type', 'Fixo')
         default_limit = request.data.get('default_limit', 0)
         due_day = request.data.get('due_day')
         if not name:
             return Response({'error': 'name required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = create_recurring_template(name, category_type, default_limit, due_day)
+            result = create_recurring_template(name, template_type, default_limit, due_day)
             return Response(result, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def patch(self, request):
-        category_id = request.data.get('id')
-        if not category_id:
+        template_id = request.data.get('id')
+        if not template_id:
             return Response({'error': 'id required'}, status=status.HTTP_400_BAD_REQUEST)
         kwargs = {}
-        for field in ('name', 'category_type', 'default_limit', 'due_day', 'display_order'):
+        for field in ('name', 'template_type', 'default_limit', 'due_day', 'display_order'):
             if field in request.data:
                 kwargs[field] = request.data[field]
+        # Accept category_type as alias for template_type (backward compat)
+        if 'category_type' in request.data and 'template_type' not in kwargs:
+            kwargs['template_type'] = request.data['category_type']
         if not kwargs:
             return Response({'error': 'At least one field required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = update_recurring_template(category_id, **kwargs)
+            result = update_recurring_template(template_id, **kwargs)
             return Response(result)
-        except Category.DoesNotExist:
+        except RecurringTemplate.DoesNotExist:
             return Response({'error': 'Template not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request):
-        category_id = request.data.get('id')
-        if not category_id:
+        template_id = request.data.get('id')
+        if not template_id:
             return Response({'error': 'id required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = delete_recurring_template(category_id)
+            result = delete_recurring_template(template_id)
             return Response(result)
-        except Category.DoesNotExist:
+        except RecurringTemplate.DoesNotExist:
             return Response({'error': 'Template not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -774,8 +869,9 @@ class CheckingTransactionsView(APIView):
     """GET /api/analytics/checking/ — Checking account transactions for a month"""
     def get(self, request):
         month_str = request.query_params.get('month_str')
-        if not month_str:
-            return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
+        err = _validate_month_str(month_str)
+        if err:
+            return err
         data = get_checking_transactions(month_str)
         return Response(data)
 
@@ -816,7 +912,7 @@ class RecurringReorderView(APIView):
             )
         mappings = list(
             RecurringMapping.objects.filter(month_str=month_str)
-            .order_by('display_order', 'category__display_order')
+            .order_by('display_order', 'template__display_order')
         )
         id_to_mapping = {str(m.id): m for m in mappings}
         ordered_set = set(ordered_ids)
@@ -852,12 +948,14 @@ class MonthCategoriesView(APIView):
     """GET /api/analytics/month-categories/?month_str=2026-01"""
     def get(self, request):
         month_str = request.query_params.get('month_str')
-        if not month_str:
-            return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
+        err = _validate_month_str(month_str)
+        if err:
+            return err
         try:
             data = get_month_categories(month_str)
             return Response(data)
         except Exception as e:
+            logger.exception('MonthCategoriesView error')
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -868,8 +966,9 @@ class MetricasOrderView(APIView):
     """
     def get(self, request):
         month_str = request.query_params.get('month_str')
-        if not month_str:
-            return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
+        err = _validate_month_str(month_str)
+        if err:
+            return err
         return Response(get_metricas_order(month_str))
 
     def post(self, request):
@@ -927,3 +1026,59 @@ class CustomMetricsView(APIView):
             return Response(delete_custom_metric(metric_id))
         except CustomMetric.DoesNotExist:
             return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class TransactionRenameView(APIView):
+    """
+    POST /api/transactions/rename/
+    Rename a transaction description with optional propagation to similar ones.
+
+    Preview mode:  { transaction_id, new_description }
+    → Returns renamed count + list of similar transactions for user confirmation.
+
+    Apply mode:    { transaction_ids: [...], new_description, propagate: true }
+    → Renames all selected + creates RenameRule for future imports.
+    """
+    def post(self, request):
+        new_description = request.data.get('new_description')
+        if not new_description:
+            return Response({'error': 'new_description required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        propagate = request.data.get('propagate', False)
+
+        if propagate:
+            # Apply mode
+            transaction_ids = request.data.get('transaction_ids', [])
+            transaction_id = request.data.get('transaction_id')
+            if not transaction_id:
+                return Response({'error': 'transaction_id required'}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                result = rename_transaction(transaction_id, new_description, propagate_ids=transaction_ids)
+                return Response(result)
+            except Transaction.DoesNotExist:
+                return Response({'error': 'Transaction not found'}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            # Preview mode
+            transaction_id = request.data.get('transaction_id')
+            if not transaction_id:
+                return Response({'error': 'transaction_id required'}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                result = rename_transaction(transaction_id, new_description)
+                return Response(result)
+            except Transaction.DoesNotExist:
+                return Response({'error': 'Transaction not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class TransactionSimilarView(APIView):
+    """
+    GET /api/transactions/similar/?transaction_id=uuid
+    Find similar uncategorized transactions + rule suggestion for learning feedback.
+    """
+    def get(self, request):
+        transaction_id = request.query_params.get('transaction_id')
+        if not transaction_id:
+            return Response({'error': 'transaction_id required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            return Response(find_similar_transactions(transaction_id))
+        except Transaction.DoesNotExist:
+            return Response({'error': 'Transaction not found'}, status=status.HTTP_404_NOT_FOUND)

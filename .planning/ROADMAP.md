@@ -48,7 +48,8 @@ Phases 2-5 were never started — the project pivoted to a full rewrite instead.
 
 | Item | Priority | Status |
 |------|----------|--------|
-| Salary normalization (effective month) | P1 | Not started |
+| Salary normalization (effective month) | P1 | Done — via cross-month transaction linking |
+| Improve categorization logic (rules UI, smart-categorize UX, bulk actions) | P1 | Not started |
 | Analytics tab (charts/trends) | P2 | Placeholder only |
 | AI budget suggestions (BUDG-03) | P2 | Not started |
 | Multiple budget profiles (BUDG-04) | P2 | Not started |
