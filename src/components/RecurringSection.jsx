@@ -249,7 +249,6 @@ function RecurringSection() {
         if (item.is_skipped) return <span style={{ color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>Pulado</span>
         return (
           <TransactionPicker
-            categoryId={item.id}
             mappingId={item.mapping_id}
             categoryName={item.name}
             currentMatch={getValue()}
