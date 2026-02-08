@@ -33,7 +33,9 @@ Phases 2-5 were never started — the project pivoted to a full rewrite instead.
 | Credit Card Control | Done | Per-card invoice view (Master/Visa/Rafa tabs) |
 | Checking Account | Done | Checking transactions with category filtering |
 | Data Import | Done | CSV/OFX upload + reimport pipeline |
-| Settings | Done | Recurring templates + import management |
+| Settings | Done | Recurring templates + import management + categorization rules |
+| Inline Category Editing | Done | CategoryDropdown (portal-based), installment sibling propagation |
+| Custom Metric Cards | Done | 7 metric types: category, recurring control, builtin clones |
 
 ### Completed Bug Fixes
 
@@ -49,7 +51,7 @@ Phases 2-5 were never started — the project pivoted to a full rewrite instead.
 | Item | Priority | Status |
 |------|----------|--------|
 | Salary normalization (effective month) | P1 | Done — via cross-month transaction linking |
-| Improve categorization logic (rules UI, smart-categorize UX, bulk actions) | P1 | Not started |
+| Improve categorization logic (rules UI, smart-categorize UX, bulk actions) | P1 | Done — CategoryDropdown, SmartCategorizeBar, Settings rules tab |
 | Analytics tab (charts/trends) | P2 | Placeholder only |
 | AI budget suggestions (BUDG-03) | P2 | Not started |
 | Multiple budget profiles (BUDG-04) | P2 | Not started |
@@ -65,10 +67,10 @@ rewrite architecture.
 
 | Area | Requirements | Completed | Remaining |
 |------|-------------|-----------|-----------|
-| UI/UX (UIUX) | 4 | 4 | 0 |
-| Metrics (METR) | 5 | 5 | 0 |
-| Recurrents (RECR) | 4 | 4 | 0 |
+| UI/UX (UIUX) | 6 | 6 | 0 |
+| Metrics (METR) | 6 | 6 | 0 |
+| Recurrents (RECR) | 5 | 5 | 0 |
 | Reconciliation (RECO) | 4 | 4 | 0 |
 | Projections (PROJ) | 3 | 3 | 0 |
 | Budgeting (BUDG) | 5 | 2 | 3 |
-| **Total** | **25** | **22** | **3** |
+| **Total** | **29** | **26** | **3** |

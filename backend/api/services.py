@@ -1129,6 +1129,122 @@ def _compute_custom_metrics(month_str, metricas_data):
                 else:
                     color = 'var(--color-green)'
 
+        elif cm.metric_type == 'fixo_total':
+            # Sum actual amounts for all Fixo recurring mappings this month
+            fixo_mappings = RecurringMapping.objects.filter(
+                month_str=month_str, template__template_type='Fixo',
+            ).select_related('template', 'category').prefetch_related(
+                'transactions', 'cross_month_transactions'
+            )
+            total = Decimal('0.00')
+            paid = 0
+            for mapping in fixo_mappings:
+                linked = list(mapping.transactions.all()) + list(mapping.cross_month_transactions.all())
+                if linked:
+                    total += abs(sum(t.amount for t in linked))
+                    paid += 1
+                elif mapping.match_mode == 'category' and mapping.category:
+                    agg = Transaction.objects.filter(
+                        month_str=month_str, category=mapping.category, amount__lt=0,
+                    ).aggregate(t=Sum('amount'))['t'] or Decimal('0.00')
+                    if agg:
+                        total += abs(agg)
+                        paid += 1
+            value = f'R$ {int(total):,}'.replace(',', '.')
+            subtitle = f'{paid} de {fixo_mappings.count()} pagos'
+
+        elif cm.metric_type == 'investimento_total':
+            # Sum actual amounts for all Investimento recurring mappings this month
+            inv_mappings = RecurringMapping.objects.filter(
+                month_str=month_str, template__template_type='Investimento',
+            ).select_related('template', 'category').prefetch_related(
+                'transactions', 'cross_month_transactions'
+            )
+            total = Decimal('0.00')
+            paid = 0
+            for mapping in inv_mappings:
+                linked = list(mapping.transactions.all()) + list(mapping.cross_month_transactions.all())
+                if linked:
+                    total += abs(sum(t.amount for t in linked))
+                    paid += 1
+                elif mapping.match_mode == 'category' and mapping.category:
+                    agg = Transaction.objects.filter(
+                        month_str=month_str, category=mapping.category, amount__lt=0,
+                    ).aggregate(t=Sum('amount'))['t'] or Decimal('0.00')
+                    if agg:
+                        total += abs(agg)
+                        paid += 1
+            value = f'R$ {int(total):,}'.replace(',', '.')
+            subtitle = f'{paid} de {inv_mappings.count()} investidos'
+
+        elif cm.metric_type == 'income_total':
+            # Sum actual amounts for all Income recurring mappings this month
+            inc_mappings = RecurringMapping.objects.filter(
+                month_str=month_str, template__template_type='Income',
+            ).select_related('template', 'category').prefetch_related(
+                'transactions', 'cross_month_transactions'
+            )
+            total = Decimal('0.00')
+            received = 0
+            for mapping in inc_mappings:
+                linked = list(mapping.transactions.all()) + list(mapping.cross_month_transactions.all())
+                if linked:
+                    total += sum(t.amount for t in linked)
+                    received += 1
+                elif mapping.match_mode == 'category' and mapping.category:
+                    agg = Transaction.objects.filter(
+                        month_str=month_str, category=mapping.category, amount__gt=0,
+                    ).aggregate(t=Sum('amount'))['t'] or Decimal('0.00')
+                    if agg:
+                        total += agg
+                        received += 1
+            value = f'R$ {int(abs(total)):,}'.replace(',', '.')
+            subtitle = f'{received} de {inc_mappings.count()} recebidos'
+
+        elif cm.metric_type == 'recurring_item':
+            # Track a specific recurring template's actual vs expected
+            template_id = cm.config.get('template_id')
+            if template_id:
+                mapping = RecurringMapping.objects.filter(
+                    month_str=month_str, template_id=template_id,
+                ).select_related('template', 'category').prefetch_related(
+                    'transactions', 'cross_month_transactions'
+                ).first()
+                if mapping:
+                    linked = list(mapping.transactions.all()) + list(mapping.cross_month_transactions.all())
+                    actual = Decimal('0.00')
+                    if linked:
+                        actual = abs(sum(t.amount for t in linked))
+                    elif mapping.match_mode == 'category' and mapping.category:
+                        is_income = mapping.template and mapping.template.template_type == 'Income'
+                        agg = Transaction.objects.filter(
+                            month_str=month_str, category=mapping.category,
+                            **(dict(amount__gt=0) if is_income else dict(amount__lt=0)),
+                        ).aggregate(t=Sum('amount'))['t'] or Decimal('0.00')
+                        actual = abs(agg)
+                    expected = float(mapping.expected_amount)
+                    value = f'R$ {int(actual):,}'.replace(',', '.')
+                    if expected > 0:
+                        subtitle = f'de R$ {int(expected):,} esperado'.replace(',', '.')
+                    else:
+                        subtitle = mapping.template.name if mapping.template else ''
+                else:
+                    value = 'R$ 0'
+                    subtitle = 'sem mapeamento'
+
+        elif cm.metric_type == 'builtin_clone':
+            # Clone a builtin card — just read the precomputed value
+            builtin_key = cm.config.get('builtin_key')
+            if builtin_key and builtin_key in metricas_data:
+                raw = metricas_data[builtin_key]
+                if isinstance(raw, (int, float, Decimal)):
+                    value = f'R$ {int(abs(float(raw))):,}'.replace(',', '.')
+                elif isinstance(raw, str):
+                    value = raw
+                else:
+                    value = str(raw)
+                subtitle = cm.config.get('subtitle', '')
+
         results.append({
             'id': str(cm.id),
             'card_id': card_id,
@@ -1279,7 +1395,7 @@ def toggle_metricas_lock(month_str, locked):
 
 
 def get_custom_metric_options():
-    """Return active custom metrics + available categories for the picker UI."""
+    """Return active custom metrics + available categories + templates + builtin keys for the picker UI."""
     metrics = CustomMetric.objects.filter(is_active=True).order_by('label')
     categories = list(
         Category.objects.filter(is_active=True)
@@ -1291,6 +1407,33 @@ def get_custom_metric_options():
         c['id'] = str(c['id'])
         c['default_limit'] = float(c['default_limit'])
 
+    # Recurring templates for the "recurring_item" picker
+    templates = list(
+        RecurringTemplate.objects.filter(is_active=True)
+        .order_by('template_type', 'name')
+        .values('id', 'name', 'template_type', 'default_limit')
+    )
+    for t in templates:
+        t['id'] = str(t['id'])
+        t['default_limit'] = float(t['default_limit'])
+
+    # Builtin card keys available for cloning
+    builtin_cards = [
+        {'key': 'entradas_atuais', 'label': 'ENTRADAS ATUAIS', 'subtitle': 'recebido no mes'},
+        {'key': 'entradas_projetadas', 'label': 'ENTRADAS PROJETADAS', 'subtitle': 'receita esperada'},
+        {'key': 'gastos_atuais', 'label': 'GASTOS ATUAIS', 'subtitle': 'gasto total no mes'},
+        {'key': 'gastos_projetados', 'label': 'GASTOS PROJETADOS', 'subtitle': 'despesa esperada'},
+        {'key': 'gastos_fixos', 'label': 'GASTOS FIXOS', 'subtitle': 'fixos pagos'},
+        {'key': 'gastos_variaveis', 'label': 'GASTOS VARIAVEIS', 'subtitle': 'variaveis gastos'},
+        {'key': 'fatura_master', 'label': 'FATURA MASTER', 'subtitle': 'mastercard total'},
+        {'key': 'fatura_visa', 'label': 'FATURA VISA', 'subtitle': 'visa total'},
+        {'key': 'parcelas', 'label': 'PARCELAS', 'subtitle': 'parcelamentos'},
+        {'key': 'a_entrar', 'label': 'A ENTRAR', 'subtitle': 'receita pendente'},
+        {'key': 'a_pagar', 'label': 'A PAGAR', 'subtitle': 'despesa pendente'},
+        {'key': 'saldo_projetado', 'label': 'SALDO PROJETADO', 'subtitle': 'calculado'},
+        {'key': 'diario_recomendado', 'label': 'GASTO DIARIO MAX', 'subtitle': 'recomendado por dia'},
+    ]
+
     return {
         'metrics': [{
             'id': str(m.id),
@@ -1300,6 +1443,8 @@ def get_custom_metric_options():
             'color': m.color,
         } for m in metrics],
         'available_categories': categories,
+        'available_templates': templates,
+        'available_builtins': builtin_cards,
     }
 
 
@@ -1766,16 +1911,26 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None):
         Q(month_str=prev_month_str, account__account_type='manual')
     ).select_related('account', 'category').order_by('-date').distinct()
 
-    # Build set of transactions already cross-month-moved to ANY mapping
-    # (so they show as greyed out / "moved to X" in the prior month pool)
+    # Build set of transactions already cross-month-moved to ANY mapping.
+    # We need to check mappings from OTHER months that pulled transactions
+    # from the current month (e.g., January's mapping pulling a December txn).
+    # Also check if the current month's mappings pulled from the prior month.
     cross_month_moved_ids = set()
     cross_month_target = {}  # txn_id -> target month_str
+
+    # Compute next month for forward cross-month detection
+    if m == 12:
+        next_month_str = f'{y + 1}-01'
+    else:
+        next_month_str = f'{y}-{m + 1:02d}'
+
+    # Check all mappings that have cross-month transactions (current, next, and prev months)
     for cm in RecurringMapping.objects.filter(
-        month_str=month_str,
+        month_str__in=[month_str, next_month_str, prev_month_str],
     ).prefetch_related('cross_month_transactions'):
         for t in cm.cross_month_transactions.all():
             cross_month_moved_ids.add(str(t.id))
-            cross_month_target[str(t.id)] = month_str
+            cross_month_target[str(t.id)] = cm.month_str
 
     def _build_candidate(txn, source_pool):
         """Build a candidate dict from a transaction."""

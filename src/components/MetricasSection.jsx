@@ -355,13 +355,13 @@ function MetricasSection() {
     invalidateMetricasOrder()
   }, [selectedMonth, orderConfig, invalidateMetricasOrder])
 
-  const handleAddCustomMetric = useCallback(async (metricType, categoryId, categoryName, label, color) => {
+  const handleAddCustomMetric = useCallback(async (metricType, config, label, color) => {
     setAddingCard(true)
     try {
       await api.post('/analytics/metricas/custom/', {
         metric_type: metricType,
-        label: label || `${metricType === 'category_total' ? 'GASTO' : 'RESTANTE'} ${categoryName}`.toUpperCase(),
-        config: { category_id: categoryId },
+        label,
+        config,
         color: color || 'var(--color-accent)',
       })
       invalidateMetricas()
@@ -488,6 +488,8 @@ function MetricasSection() {
       {showAddCard && (
         <AddCardForm
           categories={customOptions?.available_categories || []}
+          templates={customOptions?.available_templates || []}
+          builtins={customOptions?.available_builtins || []}
           onAdd={handleAddCustomMetric}
           onClose={() => setShowAddCard(false)}
           saving={addingCard}
@@ -572,19 +574,61 @@ function MetricasSection() {
 }
 
 /* ── Inline Add Card Form ── */
-function AddCardForm({ categories, onAdd, onClose, saving }) {
+function AddCardForm({ categories, templates, builtins, onAdd, onClose, saving }) {
   const [metricType, setMetricType] = useState('category_total')
   const [categoryId, setCategoryId] = useState('')
+  const [templateId, setTemplateId] = useState('')
+  const [builtinKey, setBuiltinKey] = useState('')
   const [label, setLabel] = useState('')
 
+  // Determine which selector to show
+  const needsCategory = metricType === 'category_total' || metricType === 'category_remaining'
+  const needsTemplate = metricType === 'recurring_item'
+  const needsBuiltin = metricType === 'builtin_clone'
+  const noSelector = metricType === 'fixo_total' || metricType === 'investimento_total' || metricType === 'income_total'
+
   const selectedCat = categories.find((c) => c.id === categoryId)
+  const selectedTpl = templates.find((t) => t.id === templateId)
+  const selectedBuiltin = builtins.find((b) => b.key === builtinKey)
+
+  // Determine if form is valid
+  const isValid = noSelector ||
+    (needsCategory && categoryId) ||
+    (needsTemplate && templateId) ||
+    (needsBuiltin && builtinKey)
 
   function handleSubmit(e) {
     e.preventDefault()
-    if (!categoryId) return
-    const autoLabel = `${metricType === 'category_total' ? 'GASTO' : 'RESTANTE'} ${selectedCat?.name || ''}`.toUpperCase()
-    const color = metricType === 'category_remaining' ? 'var(--color-green)' : 'var(--color-accent)'
-    onAdd(metricType, categoryId, selectedCat?.name || '', label || autoLabel, color)
+    if (!isValid) return
+
+    let config = {}
+    let autoLabel = ''
+    let color = 'var(--color-accent)'
+
+    if (needsCategory) {
+      config = { category_id: categoryId }
+      autoLabel = `${metricType === 'category_total' ? 'GASTO' : 'RESTANTE'} ${selectedCat?.name || ''}`.toUpperCase()
+      color = metricType === 'category_remaining' ? 'var(--color-green)' : 'var(--color-accent)'
+    } else if (needsTemplate) {
+      config = { template_id: templateId }
+      autoLabel = (selectedTpl?.name || 'ITEM').toUpperCase()
+      color = 'var(--color-accent)'
+    } else if (needsBuiltin) {
+      config = { builtin_key: builtinKey, subtitle: selectedBuiltin?.subtitle || '' }
+      autoLabel = selectedBuiltin?.label || builtinKey.toUpperCase()
+      color = 'var(--color-accent)'
+    } else if (metricType === 'fixo_total') {
+      autoLabel = 'FIXOS PAGOS'
+      color = 'var(--color-red)'
+    } else if (metricType === 'investimento_total') {
+      autoLabel = 'INVESTIMENTOS'
+      color = '#6366f1'
+    } else if (metricType === 'income_total') {
+      autoLabel = 'ENTRADAS CONTROLE'
+      color = 'var(--color-green)'
+    }
+
+    onAdd(metricType, config, label || autoLabel, color)
   }
 
   return (
@@ -592,21 +636,70 @@ function AddCardForm({ categories, onAdd, onClose, saving }) {
       <select
         className={styles.addCardSelect}
         value={metricType}
-        onChange={(e) => setMetricType(e.target.value)}
+        onChange={(e) => {
+          setMetricType(e.target.value)
+          setCategoryId('')
+          setTemplateId('')
+          setBuiltinKey('')
+        }}
       >
-        <option value="category_total">Gasto por Categoria</option>
-        <option value="category_remaining">Orçamento Restante</option>
+        <optgroup label="Categorias">
+          <option value="category_total">Gasto por Categoria</option>
+          <option value="category_remaining">Orçamento Restante</option>
+        </optgroup>
+        <optgroup label="Controle (Recorrentes)">
+          <option value="fixo_total">Total Gastos Fixos</option>
+          <option value="investimento_total">Total Investimentos</option>
+          <option value="income_total">Total Entradas</option>
+          <option value="recurring_item">Item Recorrente Específico</option>
+        </optgroup>
+        <optgroup label="Cards Padrão">
+          <option value="builtin_clone">Clonar Card Existente</option>
+        </optgroup>
       </select>
-      <select
-        className={styles.addCardSelect}
-        value={categoryId}
-        onChange={(e) => setCategoryId(e.target.value)}
-      >
-        <option value="">Selecionar categoria...</option>
-        {categories.map((c) => (
-          <option key={c.id} value={c.id}>{c.name} ({c.category_type})</option>
-        ))}
-      </select>
+
+      {/* Category selector */}
+      {needsCategory && (
+        <select
+          className={styles.addCardSelect}
+          value={categoryId}
+          onChange={(e) => setCategoryId(e.target.value)}
+        >
+          <option value="">Selecionar categoria...</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>{c.name} ({c.category_type})</option>
+          ))}
+        </select>
+      )}
+
+      {/* Template selector */}
+      {needsTemplate && (
+        <select
+          className={styles.addCardSelect}
+          value={templateId}
+          onChange={(e) => setTemplateId(e.target.value)}
+        >
+          <option value="">Selecionar item...</option>
+          {templates.map((t) => (
+            <option key={t.id} value={t.id}>{t.name} ({t.template_type})</option>
+          ))}
+        </select>
+      )}
+
+      {/* Builtin card selector */}
+      {needsBuiltin && (
+        <select
+          className={styles.addCardSelect}
+          value={builtinKey}
+          onChange={(e) => setBuiltinKey(e.target.value)}
+        >
+          <option value="">Selecionar card...</option>
+          {builtins.map((b) => (
+            <option key={b.key} value={b.key}>{b.label}</option>
+          ))}
+        </select>
+      )}
+
       <input
         className={styles.addCardInput}
         type="text"
@@ -617,7 +710,7 @@ function AddCardForm({ categories, onAdd, onClose, saving }) {
       <button
         className={styles.addCardSaveBtn}
         type="submit"
-        disabled={saving || !categoryId}
+        disabled={saving || !isValid}
       >
         {saving ? '...' : 'Salvar'}
       </button>

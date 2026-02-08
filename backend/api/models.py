@@ -298,6 +298,11 @@ class CustomMetric(models.Model):
     METRIC_TYPE_CHOICES = (
         ('category_total', 'Category Total Spending'),
         ('category_remaining', 'Category Budget Remaining'),
+        ('fixo_total', 'Fixed Expenses Total'),
+        ('investimento_total', 'Investment Total'),
+        ('income_total', 'Income Total'),
+        ('recurring_item', 'Specific Recurring Item'),
+        ('builtin_clone', 'Clone of Built-in Card'),
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

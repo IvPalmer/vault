@@ -1,7 +1,7 @@
 # Requirements: Vault - Personal Finance Tracker
 
 **Defined:** 2026-01-22
-**Updated:** 2026-02-07 (unified MÉTRICAS section)
+**Updated:** 2026-02-08 (expanded metrics, installment editing, RecurringTemplate separation)
 **Core Value:** Always know you can cover this month's bills without going negative before your next salary arrives.
 
 ## v1 Requirements
@@ -12,6 +12,7 @@
 - [x] **RECR-02**: User can edit recurrent values, delete, or add items for specific months
 - [x] **RECR-03**: User can distinguish fixed recurrents (rent, therapy) from variable (credit card payment)
 - [x] **RECR-04**: System supports both positive (income) and negative (expense/investment) recurrents
+- [x] **RECR-05**: RecurringTemplate model separated from Category for clean data architecture
 
 ### Transaction Reconciliation
 
@@ -41,6 +42,7 @@
 - [x] **METR-03**: Real-time health indicator (SAUDÁVEL / ATENÇÃO / CRÍTICO)
 - [x] **METR-04**: Pending income (A ENTRAR) and pending expenses (A PAGAR) from RecurringMapping
 - [x] **METR-05**: Combined Mastercard totals (Black + Rafa) and separate Visa total
+- [x] **METR-06**: Custom metric cards with 7 types: category total, category remaining, fixo total, investimento total, income total, specific recurring item, builtin clone
 
 ### UI/UX Overhaul
 
@@ -48,6 +50,8 @@
 - [x] **UIUX-02**: Interactions happen inline (dropdowns in cells, no floating panels)
 - [x] **UIUX-03**: Table/grid components are standardized OOP and behave consistently
 - [x] **UIUX-04**: Navigation uses tab-based structure (Monthly Overview, Analytics, Settings)
+- [x] **UIUX-05**: Inline category editing via portal-based CategoryDropdown in all transaction tables
+- [x] **UIUX-06**: Installment category editing with automatic sibling propagation
 
 ## v2 Requirements
 
@@ -101,15 +105,19 @@ Deferred to future release.
 | METR-03 | Done | SAÚDE DO MÊS with 3-level color coding |
 | METR-04 | Done | RecurringMapping status → A ENTRAR / A PAGAR |
 | METR-05 | Done | invoice_month + icontains filter per card brand |
+| METR-06 | Done | CustomMetric model + _compute_custom_metrics() — 7 metric types |
+| UIUX-05 | Done | CategoryDropdown.jsx (portal, search, clear) |
+| UIUX-06 | Done | categorize_installment_siblings() + installmentMode prop |
+| RECR-05 | Done | RecurringTemplate model + data migration |
 | BUDG-03 | Pending | No AI analysis yet |
 | BUDG-04 | Pending | Single profile only |
 | BUDG-05 | Pending | No savings target feature |
 
 **Coverage:**
-- v1 requirements: 25 total
-- Completed: 22
+- v1 requirements: 29 total
+- Completed: 26
 - Pending: 3 (BUDG-03, BUDG-04, BUDG-05)
 
 ---
 *Requirements defined: 2026-01-22*
-*Last updated: 2026-02-07 unified MÉTRICAS section*
+*Last updated: 2026-02-08 expanded metrics, installment editing, RecurringTemplate separation*

@@ -3,7 +3,8 @@
 ## Features
 
 - [x] **Improve categorization engine** — 5-strategy smart_categorize with confidence scoring, inconsistency detection, learning feedback, rename propagation
-- [ ] **Categorization UI** — Inline category editor in tables, smart-categorize button, rules management tab, description rename + propagation
+- [x] **Categorization UI** — Inline CategoryDropdown in tables, SmartCategorizeBar, rules management in Settings, description rename + propagation
+- [x] **Installment category editing** — Inline category/subcategory editing in PARCELAS table with sibling propagation (all installments of same purchase)
 - [ ] **BUDG-03**: AI-powered spending analysis & budget suggestions (P2)
 - [ ] **BUDG-04**: Multiple budget profiles (P2)
 - [ ] **BUDG-05**: Savings target percentage based on income (P2)
@@ -18,3 +19,5 @@
 - [x] **N+1 queries in get_orcamento** — Fixed: batched into 4 aggregate queries
 - [x] **Missing error states in frontend** — Fixed: added error state to RecurringSection
 - [x] **Drag-and-drop save race** — Fixed: flush pending save on unmount/month change
+- [x] **Transaction picker empty after RecurringTemplate migration** — Fixed: removed stale categoryId prop (was passing template UUID as category UUID)
+- [x] **Cross-month transactions not greyed out** — Fixed: candidates endpoint now scans next/prev month mappings for cross-month links
