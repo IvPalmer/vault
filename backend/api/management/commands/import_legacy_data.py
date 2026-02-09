@@ -22,6 +22,7 @@ from django.db import transaction as db_transaction
 from api.models import (
     Account, Category, Subcategory, CategorizationRule,
     RenameRule, Transaction, BalanceOverride,
+    RecurringTemplate, RecurringMapping,
 )
 
 
@@ -43,6 +44,8 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         if options['clear']:
             self.stdout.write('Clearing existing data...')
+            RecurringMapping.objects.all().delete()
+            RecurringTemplate.objects.all().delete()
             Transaction.objects.all().delete()
             CategorizationRule.objects.all().delete()
             RenameRule.objects.all().delete()
@@ -54,11 +57,13 @@ class Command(BaseCommand):
 
         self._import_accounts()
         self._import_categories()
+        self._import_recurring_templates()
         self._import_rules()
         self._import_rename_rules()
         self._import_subcategory_rules()
         self._import_transactions()
         self._import_balance_overrides()
+        self._restore_from_backup()
         self._print_verification()
 
     def _import_accounts(self):
@@ -94,6 +99,10 @@ class Command(BaseCommand):
             'Investimento': 'Investimento',
         }
 
+        # ALL budget items go to Category (transaction taxonomy).
+        # Template types ALSO go to RecurringTemplate (budget tracking).
+        # These serve different purposes: Category = classify transactions,
+        # RecurringTemplate = track monthly recurring budget items.
         order = 0
         for name, config in budget.items():
             cat_type = type_map.get(config['type'], 'Variavel')
@@ -109,6 +118,53 @@ class Command(BaseCommand):
             status = 'created' if created else 'exists'
             self.stdout.write(f'  {obj.name} ({cat_type}): {status}')
             order += 1
+
+    def _import_recurring_templates(self):
+        self.stdout.write('\n=== Importing Recurring Templates (budget.json) ===')
+        budget_path = os.path.join(LEGACY_DIR, 'budget.json')
+        with open(budget_path) as f:
+            budget = json.load(f)
+
+        # Normalize type names
+        type_map = {
+            'Fixo': 'Fixo',
+            'Income': 'Income',
+            'Investimento': 'Investimento',
+        }
+
+        template_types = {'Fixo', 'Income', 'Investimento'}
+        order = 0
+        imported = 0
+
+        for name, config in budget.items():
+            raw_type = config['type']
+            # Normalize: "Variável" -> skip
+            if raw_type in ('Variável', 'Variavel', 'Variable'):
+                order += 1
+                continue
+
+            tpl_type = type_map.get(raw_type)
+            if not tpl_type or tpl_type not in template_types:
+                order += 1
+                continue
+
+            obj, created = RecurringTemplate.objects.get_or_create(
+                name=name,
+                defaults={
+                    'template_type': tpl_type,
+                    'default_limit': Decimal(str(config.get('limit', 0))),
+                    'due_day': config.get('day'),
+                    'is_active': True,
+                    'display_order': order,
+                },
+            )
+            status = 'created' if created else 'exists'
+            self.stdout.write(f'  {obj.name} ({tpl_type}): {status}')
+            if created:
+                imported += 1
+            order += 1
+
+        self.stdout.write(f'  Imported {imported} recurring templates')
 
     def _import_rules(self):
         self.stdout.write('\n=== Importing Categorization Rules (rules.json) ===')
@@ -324,6 +380,21 @@ class Command(BaseCommand):
 
         self.stdout.write(f'  Imported {imported} balance overrides')
 
+    def _restore_from_backup(self):
+        """Restore RecurringMapping and BudgetConfig from backup if it exists."""
+        self.stdout.write('\n=== Restoring from backup (custom items + mappings) ===')
+        backup_dir = os.path.join('/app', 'backups')
+        if not os.path.exists('/app'):
+            backup_dir = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'backups')
+        backup_path = os.path.abspath(os.path.join(backup_dir, 'vault_backup.json'))
+
+        if not os.path.exists(backup_path):
+            self.stdout.write('  No backup file found, skipping')
+            return
+
+        from django.core.management import call_command
+        call_command('db_restore', input=backup_path)
+
     def _print_verification(self):
         self.stdout.write('\n' + '=' * 60)
         self.stdout.write('VERIFICATION SUMMARY')
@@ -331,6 +402,8 @@ class Command(BaseCommand):
 
         self.stdout.write(f'  Accounts:            {Account.objects.count()}')
         self.stdout.write(f'  Categories:          {Category.objects.count()}')
+        self.stdout.write(f'  Recurring Templates: {RecurringTemplate.objects.count()}')
+        self.stdout.write(f'  Recurring Mappings:  {RecurringMapping.objects.count()}')
         self.stdout.write(f'  Subcategories:       {Subcategory.objects.count()}')
         self.stdout.write(f'  Categorization Rules:{CategorizationRule.objects.count()}')
         self.stdout.write(f'  Rename Rules:        {RenameRule.objects.count()}')

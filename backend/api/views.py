@@ -59,6 +59,7 @@ from .services import (
     create_custom_metric, delete_custom_metric,
     find_similar_transactions, rename_transaction,
     categorize_installment_siblings,
+    get_analytics_trends,
 )
 from .models import CustomMetric
 
@@ -713,6 +714,32 @@ class ProjectionView(APIView):
             return Response(get_projection(month_str, num_months))
         except Exception as e:
             logger.exception('ProjectionView error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AnalyticsTrendsView(APIView):
+    """GET /api/analytics/trends/?start_month=2025-12&end_month=2026-06&categories=id1,id2&accounts=mastercard"""
+    def get(self, request):
+        start_month = request.query_params.get('start_month') or None
+        end_month = request.query_params.get('end_month') or None
+        # Validate months if provided
+        if start_month:
+            err = _validate_month_str(start_month)
+            if err:
+                return err
+        if end_month:
+            err = _validate_month_str(end_month)
+            if err:
+                return err
+        # Parse category IDs (comma-separated UUIDs)
+        categories_raw = request.query_params.get('categories', '')
+        category_ids = [c.strip() for c in categories_raw.split(',') if c.strip()] or None
+        # Account filter
+        account_filter = request.query_params.get('accounts', '') or None
+        try:
+            return Response(get_analytics_trends(start_month, end_month, category_ids, account_filter))
+        except Exception as e:
+            logger.exception('AnalyticsTrendsView error')
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 

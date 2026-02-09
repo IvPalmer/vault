@@ -11,7 +11,7 @@ from .views import (
     ImportStatementsView,
     RecurringInitializeView, RecurringExpectedView, RecurringUpdateView,
     RecurringCustomView, RecurringSkipView, BalanceSaveView,
-    ProjectionView, OrcamentoView,
+    ProjectionView, OrcamentoView, AnalyticsTrendsView,
     SmartCategorizeView, InstallmentDetailsView,
     RecurringTemplatesView, ReapplyTemplateView,
     CheckingTransactionsView,
@@ -61,6 +61,8 @@ urlpatterns = [
     path('analytics/recurring/custom/', RecurringCustomView.as_view(), name='recurring-custom'),
     path('analytics/recurring/skip/', RecurringSkipView.as_view(), name='recurring-skip'),
     path('analytics/balance/', BalanceSaveView.as_view(), name='balance-save'),
+    # Phase 7: analytics trends
+    path('analytics/trends/', AnalyticsTrendsView.as_view(), name='analytics-trends'),
     # Phase B: projection + orçamento
     path('analytics/projection/', ProjectionView.as_view(), name='analytics-projection'),
     path('analytics/orcamento/', OrcamentoView.as_view(), name='analytics-orcamento'),

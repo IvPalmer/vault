@@ -1011,19 +1011,23 @@ def get_metricas(month_str, _cascade=True):
         saude = 'SAUDÁVEL'
         saude_level = 'good'
 
-    # Build cross-month moved info for UI
+    # Build cross-month moved info for UI (batch fetch)
     cross_month_info = []
-    for txn_id, target in cross_month_targets.items():
-        try:
-            t = Transaction.objects.get(id=txn_id)
-            cross_month_info.append({
-                'id': str(txn_id),
-                'description': t.description,
-                'amount': float(t.amount),
-                'moved_to': target,
-            })
-        except Transaction.DoesNotExist:
-            pass
+    if cross_month_targets:
+        cross_txns = {
+            t.id: t for t in Transaction.objects.filter(
+                id__in=list(cross_month_targets.keys())
+            )
+        }
+        for txn_id, target in cross_month_targets.items():
+            t = cross_txns.get(txn_id)
+            if t:
+                cross_month_info.append({
+                    'id': str(txn_id),
+                    'description': t.description,
+                    'amount': float(t.amount),
+                    'moved_to': target,
+                })
 
     result_dict = {
         'month_str': month_str,
@@ -1071,10 +1075,141 @@ def _compute_custom_metrics(month_str, metricas_data):
     Compute values for all active CustomMetrics for the given month.
     Takes already-computed metricas_data to avoid circular calls.
     """
-    custom_metrics = CustomMetric.objects.filter(is_active=True).order_by('label')
-    if not custom_metrics.exists():
+    custom_metrics = list(CustomMetric.objects.filter(is_active=True).order_by('label'))
+    if not custom_metrics:
         return []
 
+    # --- Pre-compute shared data to avoid N+1 queries ---
+
+    # Collect all category IDs referenced by custom metrics
+    cat_ids_needed = set()
+    template_ids_needed = set()
+    needs_fixo = False
+    needs_invest = False
+    needs_income = False
+    for cm in custom_metrics:
+        if cm.metric_type in ('category_total', 'category_remaining'):
+            cid = cm.config.get('category_id')
+            if cid:
+                cat_ids_needed.add(cid)
+        elif cm.metric_type == 'fixo_total':
+            needs_fixo = True
+        elif cm.metric_type == 'investimento_total':
+            needs_invest = True
+        elif cm.metric_type == 'income_total':
+            needs_income = True
+        elif cm.metric_type == 'recurring_item':
+            tid = cm.config.get('template_id')
+            if tid:
+                template_ids_needed.add(tid)
+
+    # Batch: categories lookup (1 query)
+    cats_by_id = {}
+    if cat_ids_needed:
+        cats_by_id = {str(c.id): c for c in Category.objects.filter(id__in=cat_ids_needed)}
+
+    # Batch: BudgetConfig overrides for referenced categories (1 query)
+    budget_overrides = {}
+    if cat_ids_needed:
+        budget_overrides = {
+            str(bc.category_id): float(bc.limit_override)
+            for bc in BudgetConfig.objects.filter(
+                category_id__in=cat_ids_needed, month_str=month_str
+            )
+        }
+
+    # Batch: category spending for referenced categories (1 query)
+    cat_spending = {}
+    if cat_ids_needed:
+        cat_spending = dict(
+            Transaction.objects.filter(
+                month_str=month_str,
+                category_id__in=cat_ids_needed,
+                amount__lt=0,
+                is_internal_transfer=False,
+            ).values('category_id').annotate(
+                total=Sum('amount')
+            ).values_list('category_id', 'total')
+        )
+
+    # Pre-compute mapping totals by template type (batch queries)
+    def _compute_mapping_totals(mappings_qs, is_income=False):
+        """Compute total and count from prefetched mappings."""
+        mappings = list(mappings_qs)
+        # Pre-compute category totals for category-match mappings
+        cat_match_ids = set()
+        for m in mappings:
+            if m.match_mode == 'category' and m.category_id:
+                cat_match_ids.add(m.category_id)
+        cat_totals = {}
+        if cat_match_ids:
+            amount_filter = dict(amount__gt=0) if is_income else dict(amount__lt=0)
+            cat_totals = dict(
+                Transaction.objects.filter(
+                    month_str=month_str,
+                    category_id__in=cat_match_ids,
+                    **amount_filter,
+                ).values('category_id').annotate(
+                    t=Sum('amount')
+                ).values_list('category_id', 't')
+            )
+
+        total = Decimal('0.00')
+        count = 0
+        for mapping in mappings:
+            linked = list(mapping.transactions.all()) + list(mapping.cross_month_transactions.all())
+            if linked:
+                amt = sum(t.amount for t in linked)
+                total += abs(amt) if not is_income else amt
+                count += 1
+            elif mapping.match_mode == 'category' and mapping.category_id:
+                agg = cat_totals.get(mapping.category_id, Decimal('0.00'))
+                if agg:
+                    total += abs(agg) if not is_income else agg
+                    count += 1
+        return total, count, len(mappings)
+
+    # Pre-compute fixo/investimento/income totals (1 query each, only if needed)
+    _fixo_cache = None
+    _invest_cache = None
+    _income_cache = None
+
+    if needs_fixo:
+        qs = RecurringMapping.objects.filter(
+            month_str=month_str, template__template_type='Fixo',
+        ).select_related('template', 'category').prefetch_related(
+            'transactions', 'cross_month_transactions'
+        )
+        _fixo_cache = _compute_mapping_totals(qs)
+
+    if needs_invest:
+        qs = RecurringMapping.objects.filter(
+            month_str=month_str, template__template_type='Investimento',
+        ).select_related('template', 'category').prefetch_related(
+            'transactions', 'cross_month_transactions'
+        )
+        _invest_cache = _compute_mapping_totals(qs)
+
+    if needs_income:
+        qs = RecurringMapping.objects.filter(
+            month_str=month_str, template__template_type='Income',
+        ).select_related('template', 'category').prefetch_related(
+            'transactions', 'cross_month_transactions'
+        )
+        _income_cache = _compute_mapping_totals(qs, is_income=True)
+
+    # Pre-fetch recurring_item mappings (1 query for all template_ids)
+    item_mappings_by_template = {}
+    if template_ids_needed:
+        item_mappings = RecurringMapping.objects.filter(
+            month_str=month_str, template_id__in=template_ids_needed,
+        ).select_related('template', 'category').prefetch_related(
+            'transactions', 'cross_month_transactions'
+        )
+        for m in item_mappings:
+            item_mappings_by_template[str(m.template_id)] = m
+
+    # --- Main loop: no database queries inside ---
     results = []
 
     for cm in custom_metrics:
@@ -1086,12 +1221,7 @@ def _compute_custom_metrics(month_str, metricas_data):
         if cm.metric_type == 'category_total':
             cat_id = cm.config.get('category_id')
             if cat_id:
-                spent_agg = Transaction.objects.filter(
-                    month_str=month_str,
-                    category_id=cat_id,
-                    amount__lt=0,
-                    is_internal_transfer=False,
-                ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                spent_agg = cat_spending.get(cat_id, Decimal('0.00'))
                 spent = abs(spent_agg)
                 value = f'R$ {int(spent):,}'.replace(',', '.')
                 subtitle = 'gasto na categoria'
@@ -1099,23 +1229,13 @@ def _compute_custom_metrics(month_str, metricas_data):
         elif cm.metric_type == 'category_remaining':
             cat_id = cm.config.get('category_id')
             if cat_id:
-                try:
-                    cat = Category.objects.get(id=cat_id)
-                except Category.DoesNotExist:
+                cat = cats_by_id.get(str(cat_id))
+                if not cat:
                     continue
                 # Get budget (override or default)
-                try:
-                    bc = BudgetConfig.objects.get(category_id=cat_id, month_str=month_str)
-                    limit = float(bc.limit_override)
-                except BudgetConfig.DoesNotExist:
-                    limit = float(cat.default_limit)
+                limit = budget_overrides.get(str(cat_id), float(cat.default_limit))
 
-                spent_agg = Transaction.objects.filter(
-                    month_str=month_str,
-                    category_id=cat_id,
-                    amount__lt=0,
-                    is_internal_transfer=False,
-                ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                spent_agg = cat_spending.get(cat_id, Decimal('0.00'))
                 spent = float(abs(spent_agg))
                 remaining = max(0, limit - spent)
                 pct = (spent / limit * 100) if limit > 0 else 0
@@ -1130,86 +1250,27 @@ def _compute_custom_metrics(month_str, metricas_data):
                     color = 'var(--color-green)'
 
         elif cm.metric_type == 'fixo_total':
-            # Sum actual amounts for all Fixo recurring mappings this month
-            fixo_mappings = RecurringMapping.objects.filter(
-                month_str=month_str, template__template_type='Fixo',
-            ).select_related('template', 'category').prefetch_related(
-                'transactions', 'cross_month_transactions'
-            )
-            total = Decimal('0.00')
-            paid = 0
-            for mapping in fixo_mappings:
-                linked = list(mapping.transactions.all()) + list(mapping.cross_month_transactions.all())
-                if linked:
-                    total += abs(sum(t.amount for t in linked))
-                    paid += 1
-                elif mapping.match_mode == 'category' and mapping.category:
-                    agg = Transaction.objects.filter(
-                        month_str=month_str, category=mapping.category, amount__lt=0,
-                    ).aggregate(t=Sum('amount'))['t'] or Decimal('0.00')
-                    if agg:
-                        total += abs(agg)
-                        paid += 1
-            value = f'R$ {int(total):,}'.replace(',', '.')
-            subtitle = f'{paid} de {fixo_mappings.count()} pagos'
+            if _fixo_cache:
+                total, paid, total_count = _fixo_cache
+                value = f'R$ {int(total):,}'.replace(',', '.')
+                subtitle = f'{paid} de {total_count} pagos'
 
         elif cm.metric_type == 'investimento_total':
-            # Sum actual amounts for all Investimento recurring mappings this month
-            inv_mappings = RecurringMapping.objects.filter(
-                month_str=month_str, template__template_type='Investimento',
-            ).select_related('template', 'category').prefetch_related(
-                'transactions', 'cross_month_transactions'
-            )
-            total = Decimal('0.00')
-            paid = 0
-            for mapping in inv_mappings:
-                linked = list(mapping.transactions.all()) + list(mapping.cross_month_transactions.all())
-                if linked:
-                    total += abs(sum(t.amount for t in linked))
-                    paid += 1
-                elif mapping.match_mode == 'category' and mapping.category:
-                    agg = Transaction.objects.filter(
-                        month_str=month_str, category=mapping.category, amount__lt=0,
-                    ).aggregate(t=Sum('amount'))['t'] or Decimal('0.00')
-                    if agg:
-                        total += abs(agg)
-                        paid += 1
-            value = f'R$ {int(total):,}'.replace(',', '.')
-            subtitle = f'{paid} de {inv_mappings.count()} investidos'
+            if _invest_cache:
+                total, paid, total_count = _invest_cache
+                value = f'R$ {int(total):,}'.replace(',', '.')
+                subtitle = f'{paid} de {total_count} investidos'
 
         elif cm.metric_type == 'income_total':
-            # Sum actual amounts for all Income recurring mappings this month
-            inc_mappings = RecurringMapping.objects.filter(
-                month_str=month_str, template__template_type='Income',
-            ).select_related('template', 'category').prefetch_related(
-                'transactions', 'cross_month_transactions'
-            )
-            total = Decimal('0.00')
-            received = 0
-            for mapping in inc_mappings:
-                linked = list(mapping.transactions.all()) + list(mapping.cross_month_transactions.all())
-                if linked:
-                    total += sum(t.amount for t in linked)
-                    received += 1
-                elif mapping.match_mode == 'category' and mapping.category:
-                    agg = Transaction.objects.filter(
-                        month_str=month_str, category=mapping.category, amount__gt=0,
-                    ).aggregate(t=Sum('amount'))['t'] or Decimal('0.00')
-                    if agg:
-                        total += agg
-                        received += 1
-            value = f'R$ {int(abs(total)):,}'.replace(',', '.')
-            subtitle = f'{received} de {inc_mappings.count()} recebidos'
+            if _income_cache:
+                total, received, total_count = _income_cache
+                value = f'R$ {int(abs(total)):,}'.replace(',', '.')
+                subtitle = f'{received} de {total_count} recebidos'
 
         elif cm.metric_type == 'recurring_item':
-            # Track a specific recurring template's actual vs expected
             template_id = cm.config.get('template_id')
             if template_id:
-                mapping = RecurringMapping.objects.filter(
-                    month_str=month_str, template_id=template_id,
-                ).select_related('template', 'category').prefetch_related(
-                    'transactions', 'cross_month_transactions'
-                ).first()
+                mapping = item_mappings_by_template.get(str(template_id))
                 if mapping:
                     linked = list(mapping.transactions.all()) + list(mapping.cross_month_transactions.all())
                     actual = Decimal('0.00')
@@ -1217,10 +1278,15 @@ def _compute_custom_metrics(month_str, metricas_data):
                         actual = abs(sum(t.amount for t in linked))
                     elif mapping.match_mode == 'category' and mapping.category:
                         is_income = mapping.template and mapping.template.template_type == 'Income'
-                        agg = Transaction.objects.filter(
-                            month_str=month_str, category=mapping.category,
-                            **(dict(amount__gt=0) if is_income else dict(amount__lt=0)),
-                        ).aggregate(t=Sum('amount'))['t'] or Decimal('0.00')
+                        cat_key = mapping.category_id
+                        if is_income:
+                            # For income items, need positive amounts
+                            agg = Transaction.objects.filter(
+                                month_str=month_str, category=mapping.category,
+                                amount__gt=0,
+                            ).aggregate(t=Sum('amount'))['t'] or Decimal('0.00')
+                        else:
+                            agg = cat_spending.get(cat_key, Decimal('0.00'))
                         actual = abs(agg)
                     expected = float(mapping.expected_amount)
                     value = f'R$ {int(actual):,}'.replace(',', '.')
@@ -1662,22 +1728,34 @@ def get_installment_details(month_str):
     items = []
     seen = set()  # (base_desc, account, amount, total_inst) — one entry per purchase
 
-    for lookback in range(1, 13):
-        source_month = _month_str_add(month_str, -lookback)
-        # Prefer invoice_month; fall back to month_str for older imports
-        inst_txns = Transaction.objects.filter(
-            invoice_month=source_month,
+    # Batch fetch all lookback months' installment transactions (2 queries)
+    lookback_months_list = [_month_str_add(month_str, -i) for i in range(1, 13)]
+    _lb_invoice_txns = list(Transaction.objects.filter(
+        invoice_month__in=lookback_months_list,
+        is_installment=True,
+        amount__lt=0,
+    ).select_related('account', 'category', 'subcategory'))
+    _lb_by_invoice = {}
+    for txn in _lb_invoice_txns:
+        _lb_by_invoice.setdefault(txn.invoice_month, []).append(txn)
+
+    _lb_months_with_invoice = set(_lb_by_invoice.keys())
+    _lb_months_needing_fallback = set(lookback_months_list) - _lb_months_with_invoice
+    _lb_by_fallback = {}
+    if _lb_months_needing_fallback:
+        _lb_fallback_txns = list(Transaction.objects.filter(
+            month_str__in=_lb_months_needing_fallback,
+            invoice_month='',
             is_installment=True,
             amount__lt=0,
-        ).select_related('account', 'category', 'subcategory')
-        if not inst_txns.exists():
-            inst_txns = Transaction.objects.filter(
-                month_str=source_month,
-                invoice_month='',
-                is_installment=True,
-                amount__lt=0,
-            ).select_related('account', 'category', 'subcategory')
-        if not inst_txns.exists():
+        ).select_related('account', 'category', 'subcategory'))
+        for txn in _lb_fallback_txns:
+            _lb_by_fallback.setdefault(txn.month_str, []).append(txn)
+
+    for lookback in range(1, 13):
+        source_month = lookback_months_list[lookback - 1]
+        inst_txns = _lb_by_invoice.get(source_month) or _lb_by_fallback.get(source_month) or []
+        if not inst_txns:
             continue
 
         # Step 1: Group by purchase, keep only the lowest position per group
@@ -2232,36 +2310,65 @@ def _compute_installment_schedule(target_month_str, num_future_months=6):
     """
     schedule = {}  # month_str -> total amount
 
-    # Step 1: Check which target months have real CC statement data
-    months_with_real_data = set()
-    for offset in range(num_future_months + 1):
-        check_month = _month_str_add(target_month_str, offset)
-        # Prefer invoice_month; fall back to month_str for older imports
-        inst_txns = Transaction.objects.filter(
-            invoice_month=check_month,
+    # Pre-compute all month strings we'll need
+    target_months = [_month_str_add(target_month_str, i) for i in range(num_future_months + 1)]
+    lookback_months = [_month_str_add(target_month_str, -i) for i in range(1, 13)]
+    all_months = set(target_months + lookback_months)
+
+    # Batch fetch ALL installment transactions across all relevant months (2 queries total)
+    # Query 1: invoice_month-based
+    invoice_txns = list(Transaction.objects.filter(
+        invoice_month__in=all_months,
+        is_installment=True,
+        amount__lt=0,
+    ).select_related('account'))
+
+    # Group by invoice_month
+    txns_by_invoice_month = {}
+    for txn in invoice_txns:
+        txns_by_invoice_month.setdefault(txn.invoice_month, []).append(txn)
+
+    # Query 2: month_str fallback for months without invoice_month data
+    months_with_invoice = set(txns_by_invoice_month.keys())
+    months_needing_fallback = all_months - months_with_invoice
+    if months_needing_fallback:
+        fallback_txns = list(Transaction.objects.filter(
+            month_str__in=months_needing_fallback,
+            invoice_month='',
             is_installment=True,
             amount__lt=0,
-        ).select_related('account')
-        if not inst_txns.exists():
-            inst_txns = Transaction.objects.filter(
-                month_str=check_month,
-                invoice_month='',
-                is_installment=True,
-                amount__lt=0,
-            ).select_related('account')
-        if not inst_txns.exists():
+        ).select_related('account'))
+        txns_by_fallback_month = {}
+        for txn in fallback_txns:
+            txns_by_fallback_month.setdefault(txn.month_str, []).append(txn)
+    else:
+        txns_by_fallback_month = {}
+
+    def _get_txns_for_month(month):
+        """Get installment transactions for a month (invoice_month preferred)."""
+        return txns_by_invoice_month.get(month) or txns_by_fallback_month.get(month) or []
+
+    def _parse_installment(txn):
+        """Parse installment info from a transaction."""
+        info = txn.installment_info or ''
+        m_match = re.match(r'(\d+)/(\d+)', info)
+        if not m_match:
+            dm = re.search(r'(\d{1,2})/(\d{1,2})', txn.description)
+            if dm:
+                m_match = dm
+        return m_match
+
+    # Step 1: Check which target months have real CC statement data
+    months_with_real_data = set()
+    for check_month in target_months:
+        inst_txns = _get_txns_for_month(check_month)
+        if not inst_txns:
             continue
 
-        # Group by purchase, keep only the lowest position per group
         purchase_groups = {}
         non_parseable_total = 0.0
         for txn in inst_txns:
-            info = txn.installment_info or ''
-            m_match = re.match(r'(\d+)/(\d+)', info)
-            if not m_match:
-                dm = re.search(r'(\d{1,2})/(\d{1,2})', txn.description)
-                if dm:
-                    m_match = dm
+            m_match = _parse_installment(txn)
             if not m_match:
                 non_parseable_total += float(abs(txn.amount))
                 continue
@@ -2276,7 +2383,6 @@ def _compute_installment_schedule(target_month_str, num_future_months=6):
             if group_key not in purchase_groups or current < purchase_groups[group_key]:
                 purchase_groups[group_key] = current
 
-        # Sum only the deduplicated amounts (one per purchase)
         deduped_total = sum(amt for (_, _, amt, _) in purchase_groups.keys())
         real_total = deduped_total + non_parseable_total
         if real_total > 0:
@@ -2284,37 +2390,17 @@ def _compute_installment_schedule(target_month_str, num_future_months=6):
             months_with_real_data.add(check_month)
 
     # Step 2: Project for months WITHOUT real data from older statements.
-    # Scan invoice_month-based statements, group by purchase, keep lowest
-    # position, and project forward.
-    seen_per_month = {}  # check_month -> set of purchase_id
+    seen_per_month = {}
 
     for lookback in range(1, 13):
-        source_month = _month_str_add(target_month_str, -lookback)
-        # Check invoice_month first; fall back to month_str for older imports
-        inst_txns = Transaction.objects.filter(
-            invoice_month=source_month,
-            is_installment=True,
-            amount__lt=0,
-        ).select_related('account')
-        if not inst_txns.exists():
-            inst_txns = Transaction.objects.filter(
-                month_str=source_month,
-                invoice_month='',
-                is_installment=True,
-                amount__lt=0,
-            ).select_related('account')
-        if not inst_txns.exists():
+        source_month = lookback_months[lookback - 1]
+        inst_txns = _get_txns_for_month(source_month)
+        if not inst_txns:
             continue
 
-        # Group by purchase, keep lowest position per source statement
         purchase_groups = {}
         for txn in inst_txns:
-            info = txn.installment_info or ''
-            m_match = re.match(r'(\d+)/(\d+)', info)
-            if not m_match:
-                dm = re.search(r'(\d{1,2})/(\d{1,2})', txn.description)
-                if dm:
-                    m_match = dm
+            m_match = _parse_installment(txn)
             if not m_match:
                 continue
 
@@ -2328,12 +2414,11 @@ def _compute_installment_schedule(target_month_str, num_future_months=6):
             if group_key not in purchase_groups or current < purchase_groups[group_key]:
                 purchase_groups[group_key] = current
 
-        # Project each unique purchase forward
         for (base_desc, acct, amt, total_inst), current in purchase_groups.items():
             purchase_id = (base_desc, acct, amt, total_inst)
 
             for target_offset in range(num_future_months + 1):
-                check_month = _month_str_add(target_month_str, target_offset)
+                check_month = target_months[target_offset]
                 if check_month in months_with_real_data:
                     continue
                 delta = lookback + target_offset
@@ -3467,4 +3552,521 @@ def get_checking_transactions(month_str):
         'total_in': round(total_in, 2),
         'total_out': round(total_out, 2),
         'net': round(total_in + total_out, 2),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 7: Analytics Trends
+# ---------------------------------------------------------------------------
+
+def get_analytics_trends(start_month=None, end_month=None, category_ids=None, account_filter=None):
+    """
+    Aggregate data for the Analytics page charts.
+    All queries are batched (no N+1).
+
+    Params:
+        start_month: 'YYYY-MM' or None (earliest available)
+        end_month:   'YYYY-MM' or None (latest available)
+        category_ids: list of UUID strings, or None/empty (all categories)
+        account_filter: 'mastercard' | 'visa' | 'checking' | '' (all)
+
+    Returns dict with: months, available_months, available_categories,
+    spending_trends, category_breakdown, budget_adherence, card_analysis.
+    """
+    # -- 1. Determine month range -------------------------------------------
+    all_months = list(
+        Transaction.objects
+        .values_list('month_str', flat=True)
+        .distinct()
+        .order_by('month_str')
+    )
+    if not all_months:
+        return {
+            'months': [],
+            'available_months': {'min': None, 'max': None},
+            'default_start': None,
+            'available_categories': [],
+            'spending_trends': [],
+            'savings_rate': [],
+            'category_breakdown': [],
+            'category_trends': {'categories': [], 'data': []},
+            'expense_composition': [],
+            'budget_adherence': [],
+            'card_analysis': [],
+            'top_expenses': [],
+            'summary_kpis': {},
+        }
+
+    data_min = all_months[0]
+    data_max = all_months[-1]
+
+    default_start = max(data_min, '2025-12')
+    eff_start = start_month if start_month and start_month >= data_min else default_start
+    eff_end = end_month if end_month and end_month <= data_max else data_max
+
+    month_list = [m for m in all_months if eff_start <= m <= eff_end]
+
+    # -- 2. Base querysets ---------------------------------------------------
+    base_qs = Transaction.objects.filter(
+        month_str__in=month_list,
+        is_internal_transfer=False,
+    )
+    if category_ids:
+        base_qs = base_qs.filter(category_id__in=category_ids)
+
+    # -- 3. Spending trends (income vs expenses per month) ------------------
+    income_by_month = dict(
+        base_qs.filter(amount__gt=0)
+        .values('month_str')
+        .annotate(total=Sum('amount'))
+        .values_list('month_str', 'total')
+    )
+    expenses_by_month = dict(
+        base_qs.filter(amount__lt=0)
+        .values('month_str')
+        .annotate(total=Sum('amount'))
+        .values_list('month_str', 'total')
+    )
+
+    spending_trends = []
+    for m in month_list:
+        inc = float(income_by_month.get(m, 0) or 0)
+        exp = float(expenses_by_month.get(m, 0) or 0)
+        spending_trends.append({
+            'month': m,
+            'income': round(inc, 2),
+            'expenses': round(abs(exp), 2),
+            'net': round(inc + exp, 2),
+        })
+
+    # -- 4. Category breakdown (total expenses per category, full range) ----
+    cat_totals = (
+        base_qs.filter(amount__lt=0, category__isnull=False)
+        .values('category__id', 'category__name', 'category__category_type')
+        .annotate(total=Sum('amount'))
+        .order_by('total')  # most negative (biggest expense) first
+    )
+    category_breakdown = []
+    for row in cat_totals:
+        category_breakdown.append({
+            'category_id': str(row['category__id']),
+            'category': row['category__name'],
+            'type': row['category__category_type'],
+            'total': round(abs(float(row['total'])), 2),
+        })
+
+    # -- 5. Budget adherence (budget vs actual for end month) ---------------
+    # Use the effective end month to show current budget status
+    budget_month = eff_end
+
+    # Get all budget configs for the target month (category-based)
+    budget_configs = list(
+        BudgetConfig.objects
+        .filter(month_str=budget_month, category__isnull=False)
+        .select_related('category')
+    )
+
+    # Also check Category.default_limit for categories without BudgetConfig
+    budget_cat_ids = {bc.category_id for bc in budget_configs}
+    cats_with_defaults = list(
+        Category.objects
+        .filter(is_active=True, default_limit__gt=0)
+        .exclude(id__in=budget_cat_ids)
+    )
+
+    # Build budget map: category_id -> budget amount
+    budget_map = {}
+    for bc in budget_configs:
+        budget_map[bc.category_id] = float(bc.limit_override)
+    for cat in cats_with_defaults:
+        budget_map[cat.id] = float(cat.default_limit)
+
+    if budget_map:
+        # Actual spending for the budget month by category
+        actual_qs = (
+            Transaction.objects.filter(
+                month_str=budget_month,
+                is_internal_transfer=False,
+                amount__lt=0,
+                category_id__in=budget_map.keys(),
+            )
+            .values('category__id', 'category__name')
+            .annotate(total=Sum('amount'))
+        )
+        actual_map = {
+            row['category__id']: {
+                'name': row['category__name'],
+                'actual': round(abs(float(row['total'])), 2),
+            }
+            for row in actual_qs
+        }
+    else:
+        actual_map = {}
+
+    budget_adherence = []
+    for cat_id, budgeted in budget_map.items():
+        info = actual_map.get(cat_id)
+        cat_name = info['name'] if info else (
+            next((bc.category.name for bc in budget_configs if bc.category_id == cat_id), None)
+            or next((c.name for c in cats_with_defaults if c.id == cat_id), '?')
+        )
+        actual = info['actual'] if info else 0.0
+        budget_adherence.append({
+            'category_id': str(cat_id),
+            'category': cat_name,
+            'budgeted': round(budgeted, 2),
+            'actual': actual,
+            'pct': round((actual / budgeted * 100) if budgeted else 0, 1),
+        })
+    budget_adherence.sort(key=lambda x: x['pct'], reverse=True)
+
+    # -- 6. Card analysis (spending by card/account per month) ---------------
+    # Credit cards: use invoice_month for accurate billing alignment
+    cc_qs = Transaction.objects.filter(
+        invoice_month__in=month_list,
+        account__account_type='credit_card',
+        is_internal_transfer=False,
+        amount__lt=0,
+    )
+    if category_ids:
+        cc_qs = cc_qs.filter(category_id__in=category_ids)
+
+    # Mastercard totals by month
+    master_by_month = dict(
+        cc_qs.filter(account__name__icontains='Mastercard')
+        .values('invoice_month')
+        .annotate(total=Sum('amount'))
+        .values_list('invoice_month', 'total')
+    )
+    # Visa totals by month
+    visa_by_month = dict(
+        cc_qs.filter(account__name__icontains='Visa')
+        .values('invoice_month')
+        .annotate(total=Sum('amount'))
+        .values_list('invoice_month', 'total')
+    )
+    # Checking totals by month (uses month_str)
+    checking_qs = Transaction.objects.filter(
+        month_str__in=month_list,
+        account__account_type='checking',
+        is_internal_transfer=False,
+        amount__lt=0,
+    )
+    if category_ids:
+        checking_qs = checking_qs.filter(category_id__in=category_ids)
+    checking_by_month = dict(
+        checking_qs
+        .values('month_str')
+        .annotate(total=Sum('amount'))
+        .values_list('month_str', 'total')
+    )
+
+    card_analysis = []
+    for m in month_list:
+        card_analysis.append({
+            'month': m,
+            'mastercard': round(abs(float(master_by_month.get(m, 0) or 0)), 2),
+            'visa': round(abs(float(visa_by_month.get(m, 0) or 0)), 2),
+            'checking': round(abs(float(checking_by_month.get(m, 0) or 0)), 2),
+        })
+
+    # -- 7. Available categories (for filter dropdown) ----------------------
+    available_categories = list(
+        Transaction.objects.filter(
+            month_str__in=month_list,
+            is_internal_transfer=False,
+            amount__lt=0,
+            category__isnull=False,
+        )
+        .values('category__id', 'category__name', 'category__category_type')
+        .annotate(cnt=Count('id'))
+        .filter(cnt__gte=1)
+        .order_by('category__name')
+    )
+    available_cats = [
+        {
+            'id': str(row['category__id']),
+            'name': row['category__name'],
+            'type': row['category__category_type'],
+        }
+        for row in available_categories
+    ]
+
+    # -- 8. Savings rate (computed from spending_trends, no extra query) ----
+    savings_rate = []
+    for st in spending_trends:
+        inc = st['income']
+        exp = st['expenses']
+        rate = ((inc - exp) / inc * 100) if inc > 0 else 0
+        savings_rate.append({
+            'month': st['month'],
+            'income': inc,
+            'expenses': exp,
+            'net': st['net'],
+            'rate': round(rate, 1),
+        })
+
+    # -- 9. Category trends (per-category per-month, top 6 + Outros) ------
+    cat_month_qs = (
+        base_qs.filter(amount__lt=0, category__isnull=False)
+        .values('month_str', 'category__name')
+        .annotate(total=Sum('amount'))
+        .order_by('month_str', 'category__name')
+    )
+    # Find top 6 categories by total spend
+    cat_grand_totals = {}
+    for row in cat_month_qs:
+        name = row['category__name']
+        cat_grand_totals[name] = cat_grand_totals.get(name, 0) + abs(float(row['total']))
+    top_6_cats = sorted(cat_grand_totals, key=cat_grand_totals.get, reverse=True)[:6]
+    top_6_set = set(top_6_cats)
+
+    # Build per-month data with top 6 + Outros
+    cat_trends_by_month = {m: {c: 0.0 for c in top_6_cats + ['Outros']} for m in month_list}
+    for row in cat_month_qs:
+        m = row['month_str']
+        name = row['category__name']
+        val = round(abs(float(row['total'])), 2)
+        if m in cat_trends_by_month:
+            if name in top_6_set:
+                cat_trends_by_month[m][name] = val
+            else:
+                cat_trends_by_month[m]['Outros'] += val
+
+    category_trends = {
+        'categories': top_6_cats + (['Outros'] if any(cat_trends_by_month[m]['Outros'] > 0 for m in month_list) else []),
+        'data': [
+            {'month': m, **{k: round(v, 2) for k, v in cat_trends_by_month[m].items() if k in top_6_set or (k == 'Outros' and v > 0)}}
+            for m in month_list
+        ],
+    }
+
+    # -- 10. Expense composition (fixo/variavel/parcelas/investimento) -----
+    type_month_qs = (
+        base_qs.filter(amount__lt=0, category__isnull=False)
+        .values('month_str', 'category__category_type')
+        .annotate(total=Sum('amount'))
+    )
+    installment_month_qs = dict(
+        base_qs.filter(amount__lt=0, is_installment=True)
+        .values('month_str')
+        .annotate(total=Sum('amount'))
+        .values_list('month_str', 'total')
+    )
+
+    type_data = {m: {'Fixo': 0, 'Variavel': 0, 'Investimento': 0, 'Income': 0} for m in month_list}
+    for row in type_month_qs:
+        m = row['month_str']
+        t = row['category__category_type']
+        if m in type_data and t in type_data[m]:
+            type_data[m][t] = abs(float(row['total']))
+
+    expense_composition = []
+    for m in month_list:
+        parcelas_val = abs(float(installment_month_qs.get(m, 0) or 0))
+        variavel_raw = type_data[m]['Variavel']
+        expense_composition.append({
+            'month': m,
+            'fixo': round(type_data[m]['Fixo'], 2),
+            'variavel': round(max(0, variavel_raw - parcelas_val), 2),
+            'parcelas': round(parcelas_val, 2),
+            'investimento': round(type_data[m]['Investimento'], 2),
+        })
+
+    # -- 11. Top 10 expenses ------------------------------------------------
+    top_qs = (
+        base_qs.filter(amount__lt=0)
+        .select_related('category', 'account')
+        .order_by('amount')[:10]
+    )
+    top_expenses = [
+        {
+            'description': t.description,
+            'amount': round(abs(float(t.amount)), 2),
+            'date': t.date.isoformat(),
+            'month': t.month_str,
+            'category': t.category.name if t.category else 'Sem categoria',
+            'account': t.account.name,
+        }
+        for t in top_qs
+    ]
+
+    # -- 12. Summary KPIs (computed, no extra query) -------------------------
+    num_months = len(month_list) or 1
+    total_income = sum(st['income'] for st in spending_trends)
+    total_expenses = sum(st['expenses'] for st in spending_trends)
+    total_net = total_income - total_expenses
+    avg_savings = (total_net / total_income * 100) if total_income > 0 else 0
+
+    summary_kpis = {
+        'avg_monthly_income': round(total_income / num_months, 2),
+        'avg_monthly_expenses': round(total_expenses / num_months, 2),
+        'avg_savings_rate': round(avg_savings, 1),
+        'total_income': round(total_income, 2),
+        'total_expenses': round(total_expenses, 2),
+        'total_net': round(total_net, 2),
+        'num_months': num_months,
+        'best_month': max(spending_trends, key=lambda x: x['net'])['month'] if spending_trends else None,
+        'worst_month': min(spending_trends, key=lambda x: x['net'])['month'] if spending_trends else None,
+    }
+
+    # -- 13. Monthly stacked by category (ALL categories, with totals) -------
+    # Like the old Excel "Consumo por Ano/Mês e Categoria" chart
+    all_cat_month_qs = (
+        base_qs.filter(amount__lt=0, category__isnull=False)
+        .values('month_str', 'category__name')
+        .annotate(total=Sum('amount'))
+        .order_by('month_str', 'category__name')
+    )
+    # Also count uncategorized
+    uncat_month_qs = dict(
+        base_qs.filter(amount__lt=0, category__isnull=True)
+        .values('month_str')
+        .annotate(total=Sum('amount'))
+        .values_list('month_str', 'total')
+    )
+    # Collect all category names
+    all_cat_names = set()
+    monthly_cat_data = {m: {} for m in month_list}
+    for row in all_cat_month_qs:
+        m = row['month_str']
+        name = row['category__name']
+        if m in monthly_cat_data:
+            monthly_cat_data[m][name] = round(abs(float(row['total'])), 2)
+            all_cat_names.add(name)
+    # Add uncategorized
+    for m in month_list:
+        uncat_val = abs(float(uncat_month_qs.get(m, 0) or 0))
+        if uncat_val > 0:
+            monthly_cat_data[m]['Sem categoria'] = round(uncat_val, 2)
+            all_cat_names.add('Sem categoria')
+
+    # Sort categories by grand total descending
+    cat_totals_all = {}
+    for m in month_list:
+        for name, val in monthly_cat_data[m].items():
+            cat_totals_all[name] = cat_totals_all.get(name, 0) + val
+    sorted_cats = sorted(cat_totals_all, key=cat_totals_all.get, reverse=True)
+
+    monthly_category_stacked = {
+        'categories': sorted_cats,
+        'data': [
+            {
+                'month': m,
+                'total': round(sum(monthly_cat_data[m].values()), 2),
+                **{cat: monthly_cat_data[m].get(cat, 0) for cat in sorted_cats},
+            }
+            for m in month_list
+        ],
+    }
+
+    # -- 14. Category × Recurring Item breakdown --------------------------------
+    # Groups spending by type: recurring template items for Fixo/Income/Investimento,
+    # normalized descriptions for Variável categories.
+    # "Gastos Fixos" groups all Fixo recurring items together,
+    # Variável categories keep their description-level breakdown.
+    import re
+    def _normalize_desc(desc):
+        """Group similar descriptions: strip installment suffixes, parcela IDs, dates."""
+        s = desc.strip()
+        s = re.sub(r'\s*\d{2}/\d{2,3}$', '', s)
+        s = re.sub(r'(Cons Parcela)\d+', r'\1', s)
+        s = re.sub(r'\d{2}\s+\d{2}$', '', s).strip()
+        s = re.sub(r'(\d{2}\s+\d{2})$', '', s).strip()
+        return s or desc
+
+    # Build recurring template lookup: category_name → template for Fixo/Income/Investimento
+    from api.models import RecurringTemplate as RT
+    recurring_templates = {t.name: t for t in RT.objects.filter(is_active=True)}
+    # Category type lookup
+    cat_type_map = {c.name: c.category_type for c in Category.objects.all()}
+
+    # Query all expense transactions by category and description
+    cat_desc_qs = (
+        base_qs.filter(amount__lt=0, category__isnull=False)
+        .values('category__name', 'category__category_type', 'description')
+        .annotate(total=Sum('amount'))
+        .order_by('category__name')
+    )
+
+    # Separate into: Fixo items (grouped under "Gastos Fixos") and Variável categories
+    fixo_items = {}       # template_name → total
+    variavel_cats = {}    # category_name → {desc → total}
+
+    for row in cat_desc_qs:
+        cat = row['category__name']
+        cat_type = row['category__category_type']
+        val = round(abs(float(row['total'])), 2)
+
+        if cat_type in ('Fixo', 'Investimento'):
+            # Each Fixo/Investimento category IS a recurring item
+            fixo_items[cat] = fixo_items.get(cat, 0) + val
+        else:
+            # Variável: group by normalized description within category
+            desc = _normalize_desc(row['description'])
+            if cat not in variavel_cats:
+                variavel_cats[cat] = {}
+            variavel_cats[cat][desc] = variavel_cats[cat].get(desc, 0) + val
+
+    # Build output
+    category_desc_breakdown = []
+
+    # 1) "Gastos Fixos" — all Fixo recurring template items as sub-items
+    if fixo_items:
+        sorted_fixo = sorted(fixo_items.items(), key=lambda x: x[1], reverse=True)
+        items = []
+        for name, val in sorted_fixo:
+            tpl = recurring_templates.get(name)
+            items.append({
+                'name': name,
+                'value': round(val, 2),
+                'expected': float(tpl.default_limit) if tpl else None,
+            })
+        fixo_total = sum(v for _, v in sorted_fixo)
+        category_desc_breakdown.append({
+            'category': 'Gastos Fixos',
+            'total': round(fixo_total, 2),
+            'items': items,
+            'is_recurring': True,
+        })
+
+    # 2) Variável categories — top 8 descriptions + Outros
+    for cat in sorted_cats:
+        if cat == 'Sem categoria' or cat not in variavel_cats:
+            continue
+        cat_type = cat_type_map.get(cat, 'Variavel')
+        if cat_type in ('Fixo', 'Income', 'Investimento'):
+            continue  # already handled above
+        descs = variavel_cats[cat]
+        sorted_descs = sorted(descs.items(), key=lambda x: x[1], reverse=True)
+        top_items = sorted_descs[:8]
+        rest_total = sum(v for _, v in sorted_descs[8:])
+        items = [{'name': d, 'value': round(v, 2)} for d, v in top_items]
+        if rest_total > 0:
+            items.append({'name': 'Outros', 'value': round(rest_total, 2)})
+        cat_total = sum(v for _, v in sorted_descs)
+        category_desc_breakdown.append({
+            'category': cat,
+            'total': round(cat_total, 2),
+            'items': items,
+            'is_recurring': False,
+        })
+    category_desc_breakdown.sort(key=lambda x: x['total'], reverse=True)
+
+    return {
+        'months': month_list,
+        'available_months': {'min': data_min, 'max': data_max},
+        'default_start': default_start,
+        'available_categories': available_cats,
+        'spending_trends': spending_trends,
+        'savings_rate': savings_rate,
+        'category_breakdown': category_breakdown,
+        'category_trends': category_trends,
+        'expense_composition': expense_composition,
+        'budget_adherence': budget_adherence,
+        'card_analysis': card_analysis,
+        'top_expenses': top_expenses,
+        'summary_kpis': summary_kpis,
+        'monthly_category_stacked': monthly_category_stacked,
+        'category_desc_breakdown': category_desc_breakdown,
     }

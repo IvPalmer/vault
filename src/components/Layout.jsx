@@ -4,7 +4,8 @@ import styles from './Layout.module.css'
 
 function Layout({ children }) {
   const { pathname } = useLocation()
-  const showMonthPicker = pathname !== '/settings'
+  const showMonthPicker = pathname !== '/settings' && pathname !== '/analytics'
+  const isAnalytics = pathname === '/analytics'
 
   return (
     <div className={styles.layout}>
@@ -34,7 +35,7 @@ function Layout({ children }) {
         </div>
         {showMonthPicker && <MonthPicker />}
       </header>
-      <main className={styles.main}>
+      <main className={isAnalytics ? styles.mainWide : styles.main}>
         {children}
       </main>
     </div>

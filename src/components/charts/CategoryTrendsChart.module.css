@@ -1,0 +1,42 @@
+.header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-xs);
+}
+
+.toggle {
+  display: flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  background: var(--color-surface);
+  border: none;
+  border-right: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn:last-child {
+  border-right: none;
+}
+
+.btn:hover {
+  background: var(--color-surface-hover);
+}
+
+.btnActive {
+  background: var(--color-accent);
+  color: white;
+}
+
+.btnActive:hover {
+  background: var(--color-accent);
+}

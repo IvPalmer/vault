@@ -54,9 +54,9 @@ function ProjectionSection() {
     <section className={styles.section}>
       <div className={styles.header}>
         <h3 className={styles.title}>PROJEÇÃO</h3>
-        {data.starting_balance > 0 && (
+        {data.starting_balance != null && data.starting_balance !== 0 && (
           <span className={styles.subtitle}>
-            Saldo em conta: R$ {fmt(data.starting_balance)}
+            Saldo em conta: {data.starting_balance < 0 ? '−' : ''}R$ {fmt(data.starting_balance)}
           </span>
         )}
       </div>
