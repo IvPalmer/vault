@@ -61,6 +61,7 @@ from .services import (
     find_similar_transactions, rename_transaction,
     categorize_installment_siblings,
     get_analytics_trends,
+    get_spending_insights,
 )
 from .models import CustomMetric
 
@@ -347,7 +348,11 @@ class AnalyticsMetricasView(APIView):
         err = _validate_month_str(month_str)
         if err:
             return err
-        return Response(get_metricas(month_str, profile=request.profile))
+        try:
+            return Response(get_metricas(month_str, profile=request.profile))
+        except Exception as e:
+            logger.exception('AnalyticsMetricasView error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class RecurringDataView(APIView):
@@ -357,7 +362,11 @@ class RecurringDataView(APIView):
         err = _validate_month_str(month_str)
         if err:
             return err
-        return Response(get_recurring_data(month_str, profile=request.profile))
+        try:
+            return Response(get_recurring_data(month_str, profile=request.profile))
+        except Exception as e:
+            logger.exception('RecurringDataView error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class CardTransactionsView(APIView):
@@ -367,8 +376,12 @@ class CardTransactionsView(APIView):
         err = _validate_month_str(month_str)
         if err:
             return err
-        account_filter = request.query_params.get('account', None)
-        return Response(get_card_transactions(month_str, account_filter, profile=request.profile))
+        try:
+            account_filter = request.query_params.get('account', None)
+            return Response(get_card_transactions(month_str, account_filter, profile=request.profile))
+        except Exception as e:
+            logger.exception('CardTransactionsView error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class VariableTransactionsView(APIView):
@@ -378,7 +391,11 @@ class VariableTransactionsView(APIView):
         err = _validate_month_str(month_str)
         if err:
             return err
-        return Response(get_variable_transactions(month_str, profile=request.profile))
+        try:
+            return Response(get_variable_transactions(month_str, profile=request.profile))
+        except Exception as e:
+            logger.exception('VariableTransactionsView error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class MappingCandidatesView(APIView):
@@ -869,6 +886,16 @@ class AnalyticsTrendsView(APIView):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+class SpendingInsightsView(APIView):
+    """GET /api/analytics/insights/"""
+    def get(self, request):
+        try:
+            return Response(get_spending_insights(profile=request.profile))
+        except Exception as e:
+            logger.exception('SpendingInsightsView error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
 class OrcamentoView(APIView):
     """GET /api/analytics/orcamento/?month_str=2025-12"""
     def get(self, request):
@@ -1122,7 +1149,11 @@ class MetricasOrderView(APIView):
         err = _validate_month_str(month_str)
         if err:
             return err
-        return Response(get_metricas_order(month_str, profile=request.profile))
+        try:
+            return Response(get_metricas_order(month_str, profile=request.profile))
+        except Exception as e:
+            logger.exception('MetricasOrderView.get error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def post(self, request):
         month_str = request.data.get('month_str')
@@ -1130,7 +1161,11 @@ class MetricasOrderView(APIView):
         hidden_cards = request.data.get('hidden_cards')
         if not month_str or not card_order:
             return Response({'error': 'month_str and card_order required'}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(save_metricas_order(month_str, card_order, hidden_cards, profile=request.profile))
+        try:
+            return Response(save_metricas_order(month_str, card_order, hidden_cards, profile=request.profile))
+        except Exception as e:
+            logger.exception('MetricasOrderView.post error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class MetricasMakeDefaultView(APIView):
@@ -1150,7 +1185,11 @@ class MetricasLockView(APIView):
         locked = request.data.get('locked')
         if not month_str or locked is None:
             return Response({'error': 'month_str and locked required'}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(toggle_metricas_lock(month_str, locked, profile=request.profile))
+        try:
+            return Response(toggle_metricas_lock(month_str, locked, profile=request.profile))
+        except Exception as e:
+            logger.exception('MetricasLockView error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class CustomMetricsView(APIView):
@@ -1160,7 +1199,11 @@ class CustomMetricsView(APIView):
     DELETE /api/analytics/metricas/custom/  — Delete { id }
     """
     def get(self, request):
-        return Response(get_custom_metric_options(profile=request.profile))
+        try:
+            return Response(get_custom_metric_options(profile=request.profile))
+        except Exception as e:
+            logger.exception('CustomMetricsView.get error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def post(self, request):
         metric_type = request.data.get('metric_type')
@@ -1169,7 +1212,11 @@ class CustomMetricsView(APIView):
         color = request.data.get('color', 'var(--color-accent)')
         if not metric_type or not label:
             return Response({'error': 'metric_type and label required'}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(create_custom_metric(metric_type, label, config, color, profile=request.profile), status=status.HTTP_201_CREATED)
+        try:
+            return Response(create_custom_metric(metric_type, label, config, color, profile=request.profile), status=status.HTTP_201_CREATED)
+        except Exception as e:
+            logger.exception('CustomMetricsView.post error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request):
         metric_id = request.data.get('id')

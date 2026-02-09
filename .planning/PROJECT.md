@@ -63,12 +63,12 @@ Everything else — recurrent tracking, installment visibility, budget alerts, h
 - [x] UI distinguishes actual vs projected (PROJETADO badge)
 - [x] Cash flow forecast with cumulative balance line
 
-**Budgeting (Partial):**
+**Budgeting:**
 - [x] Category spending limits with progress bars (Orçamento section)
 - [x] Visual alerts when category spending exceeds limit (red/orange/green)
-- [ ] AI-powered spending analysis and suggestions
+- [x] Algorithmic spending insights (trends, spikes, budget adherence, savings rate)
+- [x] Target savings percentage with META POUPANCA metric card + chart reference line
 - [ ] Multiple budget profiles
-- [ ] Target savings percentage
 
 **Modern UI:**
 - [x] Clean React SPA with tab navigation (Overview, Analytics, Settings)
@@ -125,5 +125,8 @@ User is caught in an overdraft cycle: salary arrives, credit card payment drains
 | queryClient.removeQueries on profile switch | Clears all cached data; simpler than modifying 20 query key patterns | Done |
 | Per-profile SampleData directories | Clean separation: Palmer/ has Itaú files, Rafa/ has NuBank files | Done |
 
+| Algorithmic spending insights | Pattern-based analysis, no external AI API; 6 analysis strategies | Done |
+| Savings target on Profile model | Per-profile configurable target %; default 20% | Done |
+
 ---
-*Last updated: 2026-02-09 after Phase 8a multi-profile support*
+*Last updated: 2026-02-09 after BUDG-03 + BUDG-05 completion*

@@ -24,7 +24,7 @@ const FALLBACK_ORDER = [
   'entradas_atuais', 'entradas_projetadas', 'a_entrar', 'a_pagar',
   'dias_fechamento', 'gastos_atuais', 'gastos_projetados', 'gastos_fixos',
   'gastos_variaveis', 'diario_max', 'fatura_master', 'fatura_visa',
-  'parcelas', 'saldo_projetado', 'saude',
+  'parcelas', 'saldo_projetado', 'saude', 'meta_poupanca',
 ]
 
 function buildCards(data) {
@@ -128,6 +128,16 @@ function buildCards(data) {
       label: 'SAUDE DO MES',
       value: data.saude,
       color: SAUDE_COLORS[data.saude_level] || 'var(--color-text)',
+    },
+    meta_poupanca: {
+      label: 'META POUPANCA',
+      value: `${data.savings_rate?.toFixed?.(1) ?? '0'}%`,
+      subtitle: `meta: ${data.savings_target_pct ?? 20}%`,
+      color: (data.savings_rate ?? 0) >= (data.savings_target_pct ?? 20)
+        ? 'var(--color-green)'
+        : (data.savings_rate ?? 0) >= 0
+          ? 'var(--color-orange)'
+          : 'var(--color-red)',
     },
   }
 

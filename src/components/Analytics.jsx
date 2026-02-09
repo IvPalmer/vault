@@ -14,6 +14,7 @@ import {
   TopExpensesTable,
   MonthlyCategoryChart,
   CategoryDescBreakdownChart,
+  SpendingInsights,
 } from './charts'
 import Skeleton from './Skeleton'
 import styles from './Analytics.module.css'
@@ -65,6 +66,9 @@ function Analytics() {
         months={months}
         availableCategories={data?.available_categories}
       />
+
+      {/* Spending Insights */}
+      <SpendingInsights />
 
       {error && (
         <div className={styles.error}>Erro ao carregar dados de analytics</div>
@@ -121,7 +125,7 @@ function Analytics() {
           {/* Row 2: Savings Rate (4/6) + Category Donut (2/6) */}
           <div className={`${styles.card} ${styles.spanFour}`}>
             <h3 className={styles.cardTitle}>TAXA DE POUPANÇA</h3>
-            <SavingsRateChart data={data.savings_rate} />
+            <SavingsRateChart data={data.savings_rate} savingsTarget={data.savings_target_pct} />
           </div>
           <div className={`${styles.card} ${styles.spanTwo}`}>
             <h3 className={styles.cardTitle}>GASTOS POR CATEGORIA</h3>

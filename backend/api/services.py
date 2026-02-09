@@ -1072,6 +1072,12 @@ def get_metricas(month_str, _cascade=True, profile=None):
         'saude': saude,
         'saude_level': saude_level,
         'cross_month_moved': cross_month_info,
+        'savings_target_pct': float(profile.savings_target_pct) if profile else 20.0,
+        'savings_rate': round(
+            ((float(entradas_atuais) - float(gastos_atuais)) / float(entradas_atuais) * 100)
+            if float(entradas_atuais) > 0 else 0.0,
+            1
+        ),
     }
 
     # Append custom metrics computed from this month's data
@@ -1087,7 +1093,7 @@ BUILTIN_CARD_ORDER = [
     'entradas_atuais', 'entradas_projetadas', 'a_entrar', 'a_pagar',
     'dias_fechamento', 'gastos_atuais', 'gastos_projetados', 'gastos_fixos',
     'gastos_variaveis', 'diario_max', 'fatura_master', 'fatura_visa',
-    'parcelas', 'saldo_projetado', 'saude',
+    'parcelas', 'saldo_projetado', 'saude', 'meta_poupanca',
 ]
 
 
@@ -4128,6 +4134,9 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
         })
     category_desc_breakdown.sort(key=lambda x: x['total'], reverse=True)
 
+    # Include savings target from profile for chart reference line
+    savings_target = float(profile.savings_target_pct) if profile else 20.0
+
     return {
         'months': month_list,
         'available_months': {'min': data_min, 'max': data_max},
@@ -4135,6 +4144,7 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
         'available_categories': available_cats,
         'spending_trends': spending_trends,
         'savings_rate': savings_rate,
+        'savings_target_pct': savings_target,
         'category_breakdown': category_breakdown,
         'category_trends': category_trends,
         'expense_composition': expense_composition,
@@ -4144,4 +4154,223 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
         'summary_kpis': summary_kpis,
         'monthly_category_stacked': monthly_category_stacked,
         'category_desc_breakdown': category_desc_breakdown,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Spending Insights (BUDG-03)
+# ---------------------------------------------------------------------------
+
+def get_spending_insights(profile=None):
+    """
+    Algorithmic spending analysis that generates actionable insights.
+    Analyzes last 6 months of data for patterns, trends, and anomalies.
+    """
+    from django.db.models import Sum, Count, Avg
+
+    # Get last 6 months of data
+    all_months = list(
+        Transaction.objects.filter(profile=profile)
+        .values_list('month_str', flat=True)
+        .distinct()
+        .order_by('-month_str')[:6]
+    )
+    if len(all_months) < 2:
+        return {'insights': [], 'summary': 'Dados insuficientes para gerar insights.'}
+
+    all_months = sorted(all_months)
+    latest = all_months[-1]
+    prev = all_months[-2]
+
+    insights = []
+
+    # --- 1. Month-over-month spending change ---
+    def _month_totals(month):
+        inc = Transaction.objects.filter(
+            profile=profile, month_str=month, is_internal_transfer=False, amount__gt=0
+        ).aggregate(t=Sum('amount'))['t'] or 0
+        exp = Transaction.objects.filter(
+            profile=profile, month_str=month, is_internal_transfer=False, amount__lt=0
+        ).aggregate(t=Sum('amount'))['t'] or 0
+        return float(inc), abs(float(exp))
+
+    curr_inc, curr_exp = _month_totals(latest)
+    prev_inc, prev_exp = _month_totals(prev)
+
+    if prev_exp > 0:
+        exp_change = ((curr_exp - prev_exp) / prev_exp) * 100
+        if exp_change > 15:
+            insights.append({
+                'type': 'warning',
+                'icon': 'trending_up',
+                'title': 'Gastos em alta',
+                'message': f'Gastos subiram {exp_change:.0f}% em {latest} vs {prev} (R$ {curr_exp:,.0f} vs R$ {prev_exp:,.0f}).',
+                'priority': 1,
+            })
+        elif exp_change < -10:
+            insights.append({
+                'type': 'positive',
+                'icon': 'trending_down',
+                'title': 'Gastos em queda',
+                'message': f'Gastos caíram {abs(exp_change):.0f}% em {latest} vs {prev}. Continue assim!',
+                'priority': 3,
+            })
+
+    # --- 2. Category spikes (top 3 biggest increases) ---
+    cat_by_month = {}
+    for m in [prev, latest]:
+        rows = (
+            Transaction.objects.filter(
+                profile=profile, month_str=m, is_internal_transfer=False,
+                amount__lt=0, category__isnull=False,
+            )
+            .values('category__name')
+            .annotate(total=Sum('amount'))
+        )
+        cat_by_month[m] = {r['category__name']: abs(float(r['total'])) for r in rows}
+
+    spikes = []
+    for cat, curr_val in cat_by_month.get(latest, {}).items():
+        prev_val = cat_by_month.get(prev, {}).get(cat, 0)
+        if prev_val > 100:  # only meaningful if previous was substantial
+            change = curr_val - prev_val
+            pct = (change / prev_val) * 100
+            if pct > 30 and change > 200:
+                spikes.append((cat, change, pct, curr_val, prev_val))
+    spikes.sort(key=lambda x: x[1], reverse=True)
+
+    for cat, change, pct, curr_val, prev_val in spikes[:3]:
+        insights.append({
+            'type': 'warning',
+            'icon': 'category',
+            'title': f'{cat}: +{pct:.0f}%',
+            'message': f'Gastou R$ {curr_val:,.0f} em {cat} (era R$ {prev_val:,.0f}). Diferença de R$ {change:,.0f}.',
+            'priority': 2,
+        })
+
+    # --- 3. Savings rate vs target ---
+    target = float(profile.savings_target_pct) if profile else 20.0
+    if curr_inc > 0:
+        savings_rate = ((curr_inc - curr_exp) / curr_inc) * 100
+        if savings_rate < 0:
+            insights.append({
+                'type': 'danger',
+                'icon': 'savings',
+                'title': 'Gastando mais do que ganha',
+                'message': f'Taxa de poupança: {savings_rate:.1f}%. Gastos excedem receitas em R$ {curr_exp - curr_inc:,.0f}.',
+                'priority': 1,
+            })
+        elif savings_rate < target:
+            gap = target - savings_rate
+            insights.append({
+                'type': 'warning',
+                'icon': 'savings',
+                'title': f'Abaixo da meta de poupança',
+                'message': f'Taxa de poupança: {savings_rate:.1f}% (meta: {target:.0f}%). Faltam {gap:.1f}pp para atingir.',
+                'priority': 2,
+            })
+        else:
+            insights.append({
+                'type': 'positive',
+                'icon': 'savings',
+                'title': 'Meta de poupança atingida!',
+                'message': f'Taxa de poupança: {savings_rate:.1f}% (meta: {target:.0f}%). Parabéns!',
+                'priority': 4,
+            })
+
+    # --- 4. Budget adherence (categories over limit) ---
+    over_budget = []
+    variavel_cats = Category.objects.filter(
+        profile=profile, category_type='Variavel', is_active=True, default_limit__gt=0
+    )
+    for cat in variavel_cats:
+        # Check for month override
+        override = BudgetConfig.objects.filter(
+            profile=profile, category=cat, month_str=latest
+        ).first()
+        limit = float(override.limit_override) if override else float(cat.default_limit)
+        if limit <= 0:
+            continue
+        spent = abs(float(
+            Transaction.objects.filter(
+                profile=profile, month_str=latest, category=cat,
+                is_internal_transfer=False, amount__lt=0,
+            ).aggregate(t=Sum('amount'))['t'] or 0
+        ))
+        if spent > limit:
+            over_pct = ((spent - limit) / limit) * 100
+            over_budget.append((cat.name, spent, limit, over_pct))
+
+    over_budget.sort(key=lambda x: x[3], reverse=True)
+    for name, spent, limit, over_pct in over_budget[:3]:
+        insights.append({
+            'type': 'danger' if over_pct > 30 else 'warning',
+            'icon': 'budget',
+            'title': f'{name}: {over_pct:.0f}% acima',
+            'message': f'Gastou R$ {spent:,.0f} de R$ {limit:,.0f} ({over_pct:.0f}% acima do orçamento).',
+            'priority': 2,
+        })
+
+    # --- 5. Average trends (6-month spending trajectory) ---
+    if len(all_months) >= 3:
+        monthly_expenses = []
+        for m in all_months:
+            _, exp = _month_totals(m)
+            monthly_expenses.append(exp)
+        first_half_avg = sum(monthly_expenses[:len(monthly_expenses)//2]) / max(1, len(monthly_expenses)//2)
+        second_half_avg = sum(monthly_expenses[len(monthly_expenses)//2:]) / max(1, len(monthly_expenses) - len(monthly_expenses)//2)
+
+        if first_half_avg > 0:
+            trend_pct = ((second_half_avg - first_half_avg) / first_half_avg) * 100
+            if trend_pct > 10:
+                insights.append({
+                    'type': 'info',
+                    'icon': 'timeline',
+                    'title': 'Tendência de alta nos gastos',
+                    'message': f'Gastos médios subiram {trend_pct:.0f}% nos últimos meses (R$ {first_half_avg:,.0f} → R$ {second_half_avg:,.0f}).',
+                    'priority': 3,
+                })
+            elif trend_pct < -10:
+                insights.append({
+                    'type': 'positive',
+                    'icon': 'timeline',
+                    'title': 'Tendência de queda nos gastos',
+                    'message': f'Gastos médios caíram {abs(trend_pct):.0f}% nos últimos meses. Boa evolução!',
+                    'priority': 4,
+                })
+
+    # --- 6. New categories appearing ---
+    prev_cats = set(cat_by_month.get(prev, {}).keys())
+    curr_cats = set(cat_by_month.get(latest, {}).keys())
+    new_cats = curr_cats - prev_cats
+    new_significant = [(c, cat_by_month[latest][c]) for c in new_cats if cat_by_month[latest][c] > 100]
+    new_significant.sort(key=lambda x: x[1], reverse=True)
+    for cat, amount in new_significant[:2]:
+        insights.append({
+            'type': 'info',
+            'icon': 'new',
+            'title': f'Nova categoria: {cat}',
+            'message': f'R$ {amount:,.0f} gastos em {cat} — categoria nova este mês.',
+            'priority': 3,
+        })
+
+    # Sort by priority (1 = most urgent)
+    insights.sort(key=lambda x: x['priority'])
+
+    # Build summary
+    if not insights:
+        summary = 'Parabéns! Seus gastos estão estáveis e dentro do esperado.'
+    else:
+        warnings = sum(1 for i in insights if i['type'] in ('warning', 'danger'))
+        positives = sum(1 for i in insights if i['type'] == 'positive')
+        if warnings > positives:
+            summary = f'{warnings} ponto(s) de atenção identificado(s). Revise os alertas abaixo.'
+        else:
+            summary = f'{positives} indicador(es) positivo(s). Bom trabalho no controle financeiro!'
+
+    return {
+        'insights': insights,
+        'summary': summary,
+        'months_analyzed': len(all_months),
+        'latest_month': latest,
     }

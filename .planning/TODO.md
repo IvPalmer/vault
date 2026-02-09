@@ -8,8 +8,13 @@
 - [x] **Analytics dashboard** — Phase 7v2: 9 visualization sections with interactive Recharts
 - [x] **Multi-profile support** — Phase 8a: Profile model, middleware, ProfileSwitcher, per-profile data isolation
 - [x] **NuBank import** — OFX parsing with UTF-8 encoding, PIX description cleanup, CNPJ prefix stripping
-- [ ] **BUDG-03**: AI-powered spending analysis & budget suggestions (P2)
-- [ ] **BUDG-05**: Savings target percentage based on income (P2)
+- [x] **BUDG-03**: AI-powered spending analysis — algorithmic insights (spending trends, category spikes, budget adherence, savings rate vs target)
+- [x] **BUDG-05**: Savings target percentage — META POUPANCA metric card + green reference line on SavingsRateChart
+
+## Tech Debt (Resolved)
+
+- [x] **Analytics views error handling** — Added try-except to 8+ view methods with logging
+- [x] **localStorage unsafe access** — Added safeGetItem/safeSetItem wrappers in MonthContext
 
 ## Bugs / Issues Found
 

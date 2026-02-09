@@ -5,12 +5,12 @@
 See: .planning/PROJECT.md (updated 2026-02-09)
 
 **Core value:** Always know you can cover this month's bills without going negative before your next salary arrives.
-**Current focus:** Multi-profile support complete — Palmer + Rafa fully operational
+**Current focus:** All planned features complete — BUDG-03/05 shipped, tech debt resolved
 
 ## Current Position
 
-Phase: Phase 8a — Multi-Profile Support **COMPLETE**
-Status: Two profiles live (Palmer: 7,297 txns / Rafa: 682 txns), all sections profile-isolated
+Phase: Phase 9 — Budgeting Completion + Tech Debt **COMPLETE**
+Status: BUDG-03 (spending insights) + BUDG-05 (savings target) shipped; error handling + localStorage hardened
 Last activity: 2026-02-09
 
 ## What Happened
@@ -23,9 +23,10 @@ Phases 1-4 in a single effort:
 - Phase 2 (Recurrent Management): DONE — RecurringMapping model, templates, CRUD, inline editing
 - Phase 3 (Transaction Reconciliation): DONE — TransactionPicker, map/unmap, smart suggestions
 - Phase 4 (Future Projections): DONE — 6-month projection chart + table, installment schedule
-- Phase 5 (Smart Budgeting): PARTIAL — Category limits + Orçamento section, no AI suggestions yet
+- Phase 5 (Smart Budgeting): DONE — Category limits + Orçamento + spending insights + savings target
 - Phase 7v2 (Analytics): DONE — 9 visualization sections + recurring data safety
 - Phase 8a (Multi-Profile): DONE — Profile model, middleware, all endpoints scoped, Palmer + Rafa
+- Phase 9 (Budgeting + Tech Debt): DONE — BUDG-03/05 + error handling + localStorage safety
 
 ## Architecture (Current)
 
@@ -180,10 +181,7 @@ coverage from Google Sheets data.
 
 ### Pending Todos
 
-1. AI-powered spending analysis and suggestions (Phase 5 remainder)
-2. Savings target percentage (BUDG-05)
-3. Add error handling (try-except) to 5 analytics views that lack it
-4. Wrap localStorage access in MonthContext with try-catch
+1. Multiple budget profiles (BUDG — low priority, deferred)
 
 ### Blockers/Concerns
 
@@ -226,8 +224,37 @@ None.
 | Palmer | Checking, Mastercard Black, Visa Infinite, Mastercard - Rafa, Manual | 7,297 | Oct 2022 – Feb 2026 |
 | Rafa | NuBank Conta, NuBank Cartão, Manual | 682 | Aug 2025 – Feb 2026 |
 
+## Phase 9: Budgeting Completion + Tech Debt (2026-02-09)
+
+### What Changed
+
+**Backend (5 files):**
+- `api/models.py` — `savings_target_pct` DecimalField on Profile (default 20%)
+- `api/views.py` — try-except on 8+ view methods + new SpendingInsightsView
+- `api/services.py` — `savings_rate`/`savings_target_pct` in metricas, `get_spending_insights()` function (6 analysis strategies)
+- `api/urls.py` — `/api/analytics/insights/` endpoint
+- `api/migrations/0013_*.py` — Add savings_target_pct to Profile
+
+**Frontend (6 files):**
+- `src/context/MonthContext.jsx` — safeGetItem/safeSetItem wrappers for localStorage
+- `src/components/MetricasSection.jsx` — META POUPANCA builtin card
+- `src/components/Analytics.jsx` — SpendingInsights panel + savingsTarget prop to chart
+- `src/components/charts/SavingsRateChart.jsx` — Green dashed "Meta X%" reference line
+- `src/components/charts/SpendingInsights.jsx` — NEW: color-coded insight cards
+- `src/components/charts/SpendingInsights.module.css` — NEW: styles
+- `src/components/charts/index.js` — export SpendingInsights
+
+### Spending Insights Analysis Strategies
+
+1. **Month-over-month spending change** — warns if >15% increase, positive if >10% decrease
+2. **Category spikes** — top 3 biggest month-over-month increases (>30%)
+3. **Savings rate vs target** — compares actual savings rate to profile's target percentage
+4. **Budget adherence** — categories over their configured limit (top 3)
+5. **Average trends** — 6-month spending trajectory direction
+6. **New categories** — flags new spending categories with >R$100 spend
+
 ## Session Continuity
 
-Last session: 2026-02-09 (Phase 8a multi-profile support complete)
-Stopped at: All profiles working, data isolated, browser-verified
+Last session: 2026-02-09 (Phase 9 budgeting + tech debt complete)
+Stopped at: All 4 items implemented, tested, browser-verified
 Resume file: None

@@ -5,6 +5,14 @@ import { useProfile } from './ProfileContext'
 
 const MonthContext = createContext(null)
 
+function safeGetItem(key) {
+  try { return localStorage.getItem(key) } catch { return null }
+}
+
+function safeSetItem(key, value) {
+  try { localStorage.setItem(key, value) } catch { /* quota exceeded or disabled */ }
+}
+
 export function MonthProvider({ children }) {
   const { profileId } = useProfile()
 
@@ -12,7 +20,7 @@ export function MonthProvider({ children }) {
   const storageKey = profileId ? `vaultSelectedMonth_${profileId}` : 'vaultSelectedMonth'
 
   const [selectedMonth, setSelectedMonth] = useState(() => {
-    return localStorage.getItem(storageKey) || null
+    return safeGetItem(storageKey) || null
   })
 
   const { data: months = [], isLoading } = useQuery({
@@ -24,7 +32,7 @@ export function MonthProvider({ children }) {
   // Reset selected month when profile changes
   useEffect(() => {
     if (profileId) {
-      const stored = localStorage.getItem(storageKey)
+      const stored = safeGetItem(storageKey)
       setSelectedMonth(stored || null)
     }
   }, [profileId, storageKey])
@@ -41,7 +49,7 @@ export function MonthProvider({ children }) {
   // Persist selection (profile-scoped)
   useEffect(() => {
     if (selectedMonth && profileId) {
-      localStorage.setItem(storageKey, selectedMonth)
+      safeSetItem(storageKey, selectedMonth)
     }
   }, [selectedMonth, storageKey, profileId])
 

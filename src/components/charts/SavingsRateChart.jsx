@@ -42,7 +42,7 @@ function CustomTooltip({ active, payload, label }) {
   )
 }
 
-function SavingsRateChart({ data }) {
+function SavingsRateChart({ data, savingsTarget = 20 }) {
   const { chartData, avgRate } = useMemo(() => {
     if (!data?.length) return { chartData: [], avgRate: 0 }
     const chartData = data.map(row => ({
@@ -110,6 +110,16 @@ function SavingsRateChart({ data }) {
           stroke="var(--color-accent)"
           strokeDasharray="4 4"
           strokeOpacity={0.5}
+          label={{ value: `Média ${avgRate.toFixed(0)}%`, position: 'insideBottomRight', fontSize: 10, fill: 'var(--color-accent)' }}
+        />
+        <ReferenceLine
+          yAxisId="pct"
+          y={savingsTarget}
+          stroke="var(--color-green)"
+          strokeDasharray="6 3"
+          strokeWidth={2}
+          strokeOpacity={0.8}
+          label={{ value: `Meta ${savingsTarget}%`, position: 'insideTopRight', fontSize: 10, fill: 'var(--color-green)' }}
         />
       </ComposedChart>
     </ResponsiveContainer>
