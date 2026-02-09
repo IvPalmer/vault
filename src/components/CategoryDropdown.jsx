@@ -39,7 +39,7 @@ function CategoryDropdown({
   // Fetch categories with nested subcategories
   const { data: categories } = useQuery({
     queryKey: ['categories-dropdown'],
-    queryFn: () => api.get('/categories/?is_active=true'),
+    queryFn: () => api.get('/categories/?is_active=true&category_type=Variavel'),
     staleTime: 60_000,
   })
 
