@@ -1,7 +1,7 @@
 # Requirements: Vault - Personal Finance Tracker
 
 **Defined:** 2026-01-22
-**Updated:** 2026-02-08 (expanded metrics, installment editing, RecurringTemplate separation)
+**Updated:** 2026-02-09 (multi-profile support, analytics dashboard)
 **Core Value:** Always know you can cover this month's bills without going negative before your next salary arrives.
 
 ## v1 Requirements
@@ -32,7 +32,7 @@
 - [x] **BUDG-01**: User can set spending limits per category
 - [x] **BUDG-02**: System alerts user when category spending exceeds limit
 - [ ] **BUDG-03**: System analyzes spending habits and suggests budget based on patterns
-- [ ] **BUDG-04**: User can save multiple budget profiles (overall, vacation, equipment)
+- [x] **BUDG-04**: Multiple user profiles with isolated data — Phase 8a multi-profile support
 - [ ] **BUDG-05**: User can define target savings percentage based on income
 
 ### Dashboard Metrics
@@ -53,15 +53,27 @@
 - [x] **UIUX-05**: Inline category editing via portal-based CategoryDropdown in all transaction tables
 - [x] **UIUX-06**: Installment category editing with automatic sibling propagation
 
+### Multi-Profile Support
+
+- [x] **PROF-01**: Profile model with fully isolated data (accounts, transactions, categories, rules, budgets, templates, metrics)
+- [x] **PROF-02**: Profile switcher dropdown in header (no auth — household app)
+- [x] **PROF-03**: X-Profile-ID header middleware scopes all API endpoints
+- [x] **PROF-04**: Per-profile data directories for import pipeline
+- [x] **PROF-05**: NuBank OFX import with encoding detection and description cleanup
+- [x] **PROF-06**: Clone-from-profile for initial config setup (categories, rules, templates)
+
+### Analytics Dashboard
+
+- [x] **ANLY-01**: 9 visualization sections with interactive charts (Phase 7v2)
+
 ## v2 Requirements
 
 Deferred to future release.
 
-### Analytics
+### Analytics (Extended)
 
-- **ANLY-01**: Dedicated installment analytics tab with deep-dive across months
 - **ANLY-02**: AI-powered lifestyle/habit change suggestions to stay within budget
-- **ANLY-03**: Historical spending trends and patterns visualization
+- **ANLY-03**: Dedicated installment analytics tab with deep-dive across months
 
 ### Financial Control
 
@@ -110,14 +122,21 @@ Deferred to future release.
 | UIUX-06 | Done | categorize_installment_siblings() + installmentMode prop |
 | RECR-05 | Done | RecurringTemplate model + data migration |
 | BUDG-03 | Pending | No AI analysis yet |
-| BUDG-04 | Pending | Single profile only |
+| BUDG-04 | Done | Phase 8a multi-profile support |
 | BUDG-05 | Pending | No savings target feature |
+| PROF-01 | Done | Profile model + FK on 12 models |
+| PROF-02 | Done | ProfileSwitcher.jsx dropdown |
+| PROF-03 | Done | ProfileMiddleware + X-Profile-ID header |
+| PROF-04 | Done | SampleData/Palmer/ + SampleData/Rafa/ |
+| PROF-05 | Done | NuBank OFX UTF-8 + description cleanup |
+| PROF-06 | Done | clone endpoint on ProfileViewSet |
+| ANLY-01 | Done | Phase 7v2 analytics dashboard |
 
 **Coverage:**
-- v1 requirements: 29 total
-- Completed: 26
-- Pending: 3 (BUDG-03, BUDG-04, BUDG-05)
+- v1 requirements: 37 total
+- Completed: 35
+- Pending: 2 (BUDG-03, BUDG-05)
 
 ---
 *Requirements defined: 2026-01-22*
-*Last updated: 2026-02-08 expanded metrics, installment editing, RecurringTemplate separation*
+*Last updated: 2026-02-09 multi-profile support, analytics dashboard*

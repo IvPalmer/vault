@@ -56,9 +56,11 @@ def _do_backup():
             'due_day': t.due_day,
             'is_active': t.is_active,
             'display_order': t.display_order,
+            'profile_id': str(t.profile_id) if t.profile_id else None,
+            'profile_name': t.profile.name if t.profile else None,
         })
 
-    for m in RecurringMapping.objects.select_related('template', 'category').all():
+    for m in RecurringMapping.objects.select_related('template', 'category', 'profile').all():
         txn_ids = list(m.transactions.values_list('id', flat=True))
         cross_ids = list(m.cross_month_transactions.values_list('id', flat=True))
         data['recurring_mappings'].append({
@@ -80,9 +82,11 @@ def _do_backup():
             'custom_name': m.custom_name,
             'custom_type': m.custom_type,
             'display_order': m.display_order,
+            'profile_id': str(m.profile_id) if m.profile_id else None,
+            'profile_name': m.profile.name if m.profile else None,
         })
 
-    for b in BudgetConfig.objects.select_related('category', 'template').all():
+    for b in BudgetConfig.objects.select_related('category', 'template', 'profile').all():
         data['budget_configs'].append({
             'id': str(b.id),
             'category_id': str(b.category_id) if b.category_id else None,
@@ -91,6 +95,8 @@ def _do_backup():
             'template_name': b.template.name if b.template else None,
             'month_str': b.month_str,
             'limit_override': str(b.limit_override),
+            'profile_id': str(b.profile_id) if b.profile_id else None,
+            'profile_name': b.profile.name if b.profile else None,
         })
 
     path = _get_backup_path()

@@ -1,6 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
+    ProfileViewSet,
     AccountViewSet, CategoryViewSet, SubcategoryViewSet,
     CategorizationRuleViewSet, RenameRuleViewSet,
     TransactionViewSet, RecurringMappingViewSet,
@@ -26,15 +27,16 @@ from .views import (
 )
 
 router = DefaultRouter()
-router.register(r'accounts', AccountViewSet)
-router.register(r'categories', CategoryViewSet)
-router.register(r'subcategories', SubcategoryViewSet)
-router.register(r'rules', CategorizationRuleViewSet)
-router.register(r'renames', RenameRuleViewSet)
-router.register(r'transactions', TransactionViewSet)
-router.register(r'recurring-mappings', RecurringMappingViewSet)
-router.register(r'budget-configs', BudgetConfigViewSet)
-router.register(r'balance-overrides', BalanceOverrideViewSet)
+router.register(r'profiles', ProfileViewSet, basename='profile')
+router.register(r'accounts', AccountViewSet, basename='account')
+router.register(r'categories', CategoryViewSet, basename='category')
+router.register(r'subcategories', SubcategoryViewSet, basename='subcategory')
+router.register(r'rules', CategorizationRuleViewSet, basename='categorizationrule')
+router.register(r'renames', RenameRuleViewSet, basename='renamerule')
+router.register(r'transactions', TransactionViewSet, basename='transaction')
+router.register(r'recurring-mappings', RecurringMappingViewSet, basename='recurringmapping')
+router.register(r'budget-configs', BudgetConfigViewSet, basename='budgetconfig')
+router.register(r'balance-overrides', BalanceOverrideViewSet, basename='balanceoverride')
 
 urlpatterns = [
     # Transaction rename + similar must be BEFORE router include

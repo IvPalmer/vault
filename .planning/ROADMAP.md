@@ -46,15 +46,37 @@ Phases 2-5 were never started — the project pivoted to a full rewrite instead.
 | Refund sign handling | Fixed — positive CC txns treated as refunds |
 | invoice_month extraction from descriptions | Fixed — regex parser for "Parcela X/Y" patterns |
 
+### Phase 7v2: Analytics Dashboard
+
+| Feature | Status |
+|---------|--------|
+| 9 visualization sections (trends, breakdown, categories, etc.) | Done |
+| Recurring data safety + cross-month fixes | Done |
+
+### Phase 8a: Multi-Profile Support
+
+| Feature | Status |
+|---------|--------|
+| Profile model + FK on all 12 models | Done |
+| ProfileMiddleware (X-Profile-ID header) | Done |
+| ProfileViewSet + clone endpoint | Done |
+| All 9 ViewSets + 20 APIViews + 48 service functions scoped to profile | Done |
+| Frontend ProfileContext + ProfileSwitcher + cache clearing | Done |
+| Per-profile SampleData dirs (Palmer/Itaú, Rafa/NuBank) | Done |
+| NuBank OFX import (UTF-8 encoding, PIX description cleanup, CNPJ stripping) | Done |
+| DataLoader per-profile + import_legacy_data --profile flag | Done |
+| db_restore profile-aware | Done |
+| Profiles: Palmer (7,297 txns, Itaú), Rafa (682 txns, NuBank) | Done |
+
 ### Remaining Work
 
 | Item | Priority | Status |
 |------|----------|--------|
 | Salary normalization (effective month) | P1 | Done — via cross-month transaction linking |
 | Improve categorization logic (rules UI, smart-categorize UX, bulk actions) | P1 | Done — CategoryDropdown, SmartCategorizeBar, Settings rules tab |
-| Analytics tab (charts/trends) | P2 | Placeholder only |
+| Analytics tab (charts/trends) | P2 | Done — Phase 7v2 |
 | AI budget suggestions (BUDG-03) | P2 | Not started |
-| Multiple budget profiles (BUDG-04) | P2 | Not started |
+| ~~Multiple budget profiles (BUDG-04)~~ | P2 | Done — Phase 8a multi-profile |
 | Savings target % (BUDG-05) | P2 | Not started |
 
 ## Phase Details (Archived — Streamlit Plans)
@@ -72,5 +94,7 @@ rewrite architecture.
 | Recurrents (RECR) | 5 | 5 | 0 |
 | Reconciliation (RECO) | 4 | 4 | 0 |
 | Projections (PROJ) | 3 | 3 | 0 |
-| Budgeting (BUDG) | 5 | 2 | 3 |
-| **Total** | **29** | **26** | **3** |
+| Budgeting (BUDG) | 5 | 3 | 2 |
+| Analytics (ANLY) | 1 | 1 | 0 |
+| Multi-Profile (PROF) | 1 | 1 | 0 |
+| **Total** | **31** | **29** | **2** |

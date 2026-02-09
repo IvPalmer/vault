@@ -16,9 +16,28 @@ TEMPLATE_TYPE_CHOICES = (
 )
 
 
-class Account(models.Model):
+class Profile(models.Model):
+    """
+    User profile for multi-person household support.
+    Each person (Palmer, Rafa, etc.) gets isolated data.
+    No authentication — just a profile selector in the header.
+    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100, unique=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class Account(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='accounts', null=True, blank=True)
+    name = models.CharField(max_length=100)
     account_type = models.CharField(max_length=20, choices=[
         ('checking', 'Checking'),
         ('credit_card', 'Credit Card'),
@@ -32,6 +51,7 @@ class Account(models.Model):
 
     class Meta:
         ordering = ['name']
+        unique_together = ('profile', 'name')
 
     def __str__(self):
         return self.name
@@ -39,7 +59,8 @@ class Account(models.Model):
 
 class Category(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=100, unique=True)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='categories', null=True, blank=True)
+    name = models.CharField(max_length=100)
     category_type = models.CharField(max_length=20, choices=CATEGORY_TYPE_CHOICES, default='Variavel')
     default_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     due_day = models.IntegerField(null=True, blank=True)
@@ -51,6 +72,7 @@ class Category(models.Model):
     class Meta:
         ordering = ['display_order', 'name']
         verbose_name_plural = 'Categories'
+        unique_together = ('profile', 'name')
 
     def __str__(self):
         return f"{self.name} ({self.category_type})"
@@ -58,6 +80,7 @@ class Category(models.Model):
 
 class Subcategory(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='subcategories', null=True, blank=True)
     name = models.CharField(max_length=100)
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='subcategories')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -73,7 +96,8 @@ class Subcategory(models.Model):
 
 class CategorizationRule(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    keyword = models.CharField(max_length=200, unique=True)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='categorization_rules', null=True, blank=True)
+    keyword = models.CharField(max_length=200)
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='rules')
     subcategory = models.ForeignKey(
         Subcategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='rules'
@@ -84,6 +108,7 @@ class CategorizationRule(models.Model):
 
     class Meta:
         ordering = ['-priority', 'keyword']
+        unique_together = ('profile', 'keyword')
 
     def __str__(self):
         return f"{self.keyword} -> {self.category.name}"
@@ -91,13 +116,15 @@ class CategorizationRule(models.Model):
 
 class RenameRule(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    keyword = models.CharField(max_length=200, unique=True)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='rename_rules', null=True, blank=True)
+    keyword = models.CharField(max_length=200)
     display_name = models.CharField(max_length=200)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['keyword']
+        unique_together = ('profile', 'keyword')
 
     def __str__(self):
         return f"{self.keyword} -> {self.display_name}"
@@ -110,7 +137,8 @@ class RecurringTemplate(models.Model):
     Each month, initialize_month() creates RecurringMapping rows from active templates.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=100, unique=True)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='recurring_templates', null=True, blank=True)
+    name = models.CharField(max_length=100)
     template_type = models.CharField(max_length=20, choices=TEMPLATE_TYPE_CHOICES)
     default_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     due_day = models.IntegerField(null=True, blank=True)
@@ -121,6 +149,7 @@ class RecurringTemplate(models.Model):
 
     class Meta:
         ordering = ['display_order', 'name']
+        unique_together = ('profile', 'name')
 
     def __str__(self):
         return f"{self.name} ({self.template_type})"
@@ -128,6 +157,7 @@ class RecurringTemplate(models.Model):
 
 class Transaction(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='transactions', null=True, blank=True)
     date = models.DateField(db_index=True)
     description = models.CharField(max_length=500)
     description_original = models.CharField(max_length=500, blank=True)
@@ -159,6 +189,7 @@ class Transaction(models.Model):
             models.Index(fields=['month_str', 'account']),
             models.Index(fields=['category', 'month_str']),
             models.Index(fields=['date', 'amount', 'account']),
+            models.Index(fields=['profile', 'month_str']),
         ]
 
     def save(self, *args, **kwargs):
@@ -177,6 +208,7 @@ class RecurringMapping(models.Model):
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='recurring_mappings', null=True, blank=True)
     template = models.ForeignKey(
         RecurringTemplate, on_delete=models.CASCADE, null=True, blank=True,
         related_name='recurring_mappings',
@@ -221,9 +253,9 @@ class RecurringMapping(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=['template', 'month_str'],
+                fields=['profile', 'template', 'month_str'],
                 condition=models.Q(template__isnull=False),
-                name='unique_template_month_non_null',
+                name='unique_profile_template_month',
             ),
         ]
         ordering = ['month_str', 'display_order', 'template__display_order']
@@ -235,6 +267,7 @@ class RecurringMapping(models.Model):
 
 class BudgetConfig(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='budget_configs', null=True, blank=True)
     category = models.ForeignKey(
         Category, on_delete=models.CASCADE, null=True, blank=True, related_name='budget_configs'
     )
@@ -256,13 +289,15 @@ class BudgetConfig(models.Model):
 
 class BalanceOverride(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    month_str = models.CharField(max_length=7, unique=True)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='balance_overrides', null=True, blank=True)
+    month_str = models.CharField(max_length=7)
     balance = models.DecimalField(max_digits=12, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['-month_str']
+        unique_together = ('profile', 'month_str')
 
     def __str__(self):
         return f"{self.month_str}: R$ {self.balance}"
@@ -275,7 +310,8 @@ class MetricasOrderConfig(models.Model):
     All other rows are per-month overrides.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    month_str = models.CharField(max_length=20, unique=True)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='metricas_order_configs', null=True, blank=True)
+    month_str = models.CharField(max_length=20)
     card_order = models.JSONField(default=list)
     hidden_cards = models.JSONField(default=list)
     is_locked = models.BooleanField(default=False)
@@ -284,6 +320,7 @@ class MetricasOrderConfig(models.Model):
 
     class Meta:
         ordering = ['-month_str']
+        unique_together = ('profile', 'month_str')
 
     def __str__(self):
         locked = ' [LOCKED]' if self.is_locked else ''
@@ -306,6 +343,7 @@ class CustomMetric(models.Model):
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='custom_metrics', null=True, blank=True)
     metric_type = models.CharField(max_length=30, choices=METRIC_TYPE_CHOICES)
     label = models.CharField(max_length=100)
     config = models.JSONField(default=dict)

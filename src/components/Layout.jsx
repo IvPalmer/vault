@@ -1,5 +1,6 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import MonthPicker from './MonthPicker'
+import ProfileSwitcher from './ProfileSwitcher'
 import styles from './Layout.module.css'
 
 function Layout({ children }) {
@@ -12,6 +13,7 @@ function Layout({ children }) {
       <header className={styles.header}>
         <div className={styles.topRow}>
           <h1 className={styles.title}>vault</h1>
+          <ProfileSwitcher />
           <nav className={styles.nav}>
             <NavLink
               to="/overview"

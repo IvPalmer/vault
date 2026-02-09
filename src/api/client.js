@@ -1,10 +1,27 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
+// Profile management — injected into every request as X-Profile-ID header
+let currentProfileId = localStorage.getItem('vaultProfileId')
+
+export function setProfileId(id) {
+  currentProfileId = id
+  if (id) {
+    localStorage.setItem('vaultProfileId', id)
+  } else {
+    localStorage.removeItem('vaultProfileId')
+  }
+}
+
+export function getProfileId() {
+  return currentProfileId
+}
+
 async function request(endpoint, options = {}) {
   const url = `${API_BASE_URL}${endpoint}`
   const config = {
     headers: {
       'Content-Type': 'application/json',
+      ...(currentProfileId && { 'X-Profile-ID': currentProfileId }),
       ...options.headers,
     },
     ...options,

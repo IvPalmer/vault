@@ -17,13 +17,16 @@ class DataLoader:
     #   - OFX files: Use all (checking account, no overlap issue)
     HISTORICAL_CUTOFF = pd.Timestamp('2025-09-30')
 
-    def __init__(self, data_dir=None):
-        if data_dir is None:
-            # Default to sibling SampleData folder
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            self.data_dir = os.path.join(base_dir, "SampleData")
-        else:
+    def __init__(self, data_dir=None, profile_name=None):
+        if data_dir is not None:
             self.data_dir = data_dir
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            if profile_name:
+                # Per-profile data directory: SampleData/Palmer/, SampleData/Rafa/, etc.
+                self.data_dir = os.path.join(base_dir, "SampleData", profile_name)
+            else:
+                self.data_dir = os.path.join(base_dir, "SampleData")
 
         self.transactions = pd.DataFrame()
         self.engine = CategoryEngine() # Initialize Engine
@@ -181,6 +184,10 @@ class DataLoader:
             account = "Visa Infinite"
         elif "master" in lower_name:
             account = "Mastercard Black"
+        elif lower_name.startswith("nubank_") and lower_name.endswith(".ofx"):
+            account = "NuBank Cartão"   # NuBank credit card OFX (Nubank_YYYY-MM-DD.ofx)
+        elif lower_name.startswith("nu_") and lower_name.endswith(".ofx"):
+            account = "NuBank Conta"    # NuBank checking OFX (NU_730386301_*.ofx)
         else:
             account = "Checking"
             
@@ -574,18 +581,71 @@ class DataLoader:
             # print(f"TXT Parse Error: {e}")
             return pd.DataFrame()
 
+    @staticmethod
+    def _clean_nubank_description(desc):
+        """
+        Simplify verbose NuBank descriptions.
+        - PIX transfers: keep only direction + recipient name
+        - Boletos: shorten prefix
+        - Everything else: keep as-is
+        """
+        import re
+
+        def _strip_cnpj_prefix(name):
+            """Remove leading CNPJ fragment like '49.092.478 ' from name."""
+            return re.sub(r'^[\d.]+\s+', '', name).strip()
+
+        # "Transferência Enviada Pelo Pix - NAME - CPF/CNPJ - BANK ..."
+        m = re.match(
+            r'Transferência Enviada Pelo Pix - (.+?) - (?:•|[\d./])',
+            desc, re.IGNORECASE,
+        )
+        if m:
+            return f'PIX Enviado - {_strip_cnpj_prefix(m.group(1))}'
+
+        # "Transferência Recebida Pelo Pix - NAME - CPF/CNPJ - BANK ..."
+        m = re.match(
+            r'Transferência Recebida Pelo Pix - (.+?) - (?:•|[\d./])',
+            desc, re.IGNORECASE,
+        )
+        if m:
+            return f'PIX Recebido - {_strip_cnpj_prefix(m.group(1))}'
+
+        # "Transferência Recebida - CNPJ NAME - CPF/CNPJ - BANK ..."
+        m = re.match(
+            r'Transferência Recebida - (.+?) - (?:•|[\d./])',
+            desc, re.IGNORECASE,
+        )
+        if m:
+            return f'PIX Recebido - {_strip_cnpj_prefix(m.group(1))}'
+
+        # "Pagamento De Boleto Efetuado - BANK - CITY"
+        m = re.match(
+            r'Pagamento De Boleto Efetuado - (.+)',
+            desc, re.IGNORECASE,
+        )
+        if m:
+            return f'Boleto - {m.group(1).strip()}'
+
+        return desc
+
     def _parse_ofx(self, path, account):
         """Parses OFX files using Regex (since ofxparse is not available)."""
         import re
         try:
-            with open(path, 'r', encoding='latin1', errors='ignore') as f:
-                content = f.read()
-            
+            # Detect encoding: try UTF-8 first (NuBank), fall back to Latin-1 (Itaú)
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except UnicodeDecodeError:
+                with open(path, 'r', encoding='latin1', errors='ignore') as f:
+                    content = f.read()
+
             # Extract Transactions via Regex
             # Pattern: <STMTTRN> ... </STMTTRN>
             pattern = re.compile(r'<STMTTRN>(.*?)</STMTTRN>', re.DOTALL)
             matches = pattern.findall(content)
-            
+
             records = []
             for block in matches:
                 # Extract fields
@@ -593,16 +653,19 @@ class DataLoader:
                 amount_match = re.search(r'<TRNAMT>([-0-9.]+)', block)
                 memo_match = re.search(r'<MEMO>(.*)', block)
                 trntype_match = re.search(r'<TRNTYPE>(.*)', block)
-                
+
                 if date_match and amount_match:
                     dt_str = date_match.group(1)[:8] # YYYYMMDD
                     amt_str = amount_match.group(1)
                     desc = memo_match.group(1).strip() if memo_match else "Unknown"
                     ttype = trntype_match.group(1).strip() if trntype_match else ""
-                    
-                    # Fix encoding of Description (often latin1/utf8 mixed)
-                    # We opened file as latin1.
-                    
+
+                    # Strip closing XML tags from description (e.g. </MEMO>, </Memo>)
+                    desc = re.sub(r'</\w+>\s*$', '', desc).strip()
+
+                    # Clean up verbose NuBank PIX/transfer descriptions
+                    desc = self._clean_nubank_description(desc)
+
                     records.append({
                         'date': pd.to_datetime(dt_str, format='%Y%m%d', errors='coerce'),
                         'description': desc,

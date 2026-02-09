@@ -29,7 +29,7 @@ def _validate_month_str(month_str):
 from .models import (
     Account, Category, Subcategory, CategorizationRule,
     RenameRule, Transaction, RecurringMapping, RecurringTemplate,
-    BudgetConfig, BalanceOverride,
+    BudgetConfig, BalanceOverride, Profile,
 )
 from .serializers import (
     AccountSerializer, CategorySerializer, SubcategorySerializer,
@@ -37,6 +37,7 @@ from .serializers import (
     TransactionSerializer, TransactionListSerializer,
     RecurringMappingSerializer, RecurringTemplateSerializer,
     BudgetConfigSerializer, BalanceOverrideSerializer,
+    ProfileSerializer,
 )
 from .services import (
     get_metricas,
@@ -64,51 +65,149 @@ from .services import (
 from .models import CustomMetric
 
 
+class ProfileViewSet(viewsets.ModelViewSet):
+    queryset = Profile.objects.all()
+    serializer_class = ProfileSerializer
+    pagination_class = None
+
+    @action(detail=True, methods=['post'])
+    def clone(self, request, pk=None):
+        """Clone this profile's config (categories, rules, templates) to a new profile."""
+        source = self.get_object()
+        new_name = request.data.get('name')
+        if not new_name:
+            return Response({'error': 'name required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from .models import Category, CategorizationRule, RenameRule, RecurringTemplate
+        new_profile = Profile.objects.create(name=new_name)
+
+        # Clone categories (need old->new ID mapping for rules)
+        cat_map = {}
+        for cat in Category.objects.filter(profile=source):
+            old_id = cat.id
+            cat.pk = None
+            cat.id = None
+            cat.profile = new_profile
+            cat.save()
+            cat_map[old_id] = cat
+
+        # Clone categorization rules
+        rules_count = 0
+        for rule in CategorizationRule.objects.filter(profile=source):
+            new_cat = cat_map.get(rule.category_id)
+            if new_cat:
+                rule.pk = None
+                rule.id = None
+                rule.profile = new_profile
+                rule.category = new_cat
+                rule.subcategory = None  # subcategories need separate cloning
+                rule.save()
+                rules_count += 1
+
+        # Clone rename rules
+        renames_count = 0
+        for rr in RenameRule.objects.filter(profile=source):
+            rr.pk = None
+            rr.id = None
+            rr.profile = new_profile
+            rr.save()
+            renames_count += 1
+
+        # Clone recurring templates
+        templates_count = 0
+        for tpl in RecurringTemplate.objects.filter(profile=source):
+            tpl.pk = None
+            tpl.id = None
+            tpl.profile = new_profile
+            tpl.save()
+            templates_count += 1
+
+        return Response({
+            'profile': ProfileSerializer(new_profile).data,
+            'cloned': {
+                'categories': len(cat_map),
+                'rules': rules_count,
+                'renames': renames_count,
+                'templates': templates_count,
+            }
+        }, status=status.HTTP_201_CREATED)
+
+
 class AccountViewSet(viewsets.ModelViewSet):
-    queryset = Account.objects.all()
     serializer_class = AccountSerializer
+
+    def get_queryset(self):
+        return Account.objects.filter(profile=self.request.profile)
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
-    queryset = Category.objects.all()
     serializer_class = CategorySerializer
     filterset_fields = ['category_type', 'is_active']
     search_fields = ['name']
     pagination_class = None  # Always return full list (used as dropdown data)
 
+    def get_queryset(self):
+        return Category.objects.filter(profile=self.request.profile)
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)
+
 
 class SubcategoryViewSet(viewsets.ModelViewSet):
-    queryset = Subcategory.objects.all()
     serializer_class = SubcategorySerializer
     filterset_fields = ['category']
     pagination_class = None
 
+    def get_queryset(self):
+        return Subcategory.objects.filter(profile=self.request.profile)
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)
+
 
 class CategorizationRuleViewSet(viewsets.ModelViewSet):
-    queryset = CategorizationRule.objects.all()
     serializer_class = CategorizationRuleSerializer
     filterset_fields = ['category', 'is_active']
     search_fields = ['keyword']
     pagination_class = None  # Rules list needs to be complete for settings UI
 
+    def get_queryset(self):
+        return CategorizationRule.objects.filter(profile=self.request.profile)
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)
+
 
 class RenameRuleViewSet(viewsets.ModelViewSet):
-    queryset = RenameRule.objects.all()
     serializer_class = RenameRuleSerializer
     search_fields = ['keyword', 'display_name']
     pagination_class = None
 
+    def get_queryset(self):
+        return RenameRule.objects.filter(profile=self.request.profile)
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)
+
 
 class TransactionViewSet(viewsets.ModelViewSet):
-    queryset = Transaction.objects.select_related('account', 'category').all()
     filterset_fields = ['month_str', 'account', 'category', 'is_recurring', 'is_internal_transfer']
     search_fields = ['description', 'description_original']
     ordering_fields = ['date', 'amount', 'description']
+
+    def get_queryset(self):
+        return Transaction.objects.filter(profile=self.request.profile).select_related('account', 'category')
 
     def get_serializer_class(self):
         if self.action == 'list':
             return TransactionListSerializer
         return TransactionSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)
 
     @action(detail=False, methods=['get'])
     def months(self, request):
@@ -119,12 +218,13 @@ class TransactionViewSet(viewsets.ModelViewSet):
         """
         real_months = list(
             Transaction.objects
+            .filter(profile=request.profile)
             .values_list('month_str', flat=True)
             .distinct()
             .order_by('-month_str')
         )
 
-        last_inst_month = get_last_installment_month()
+        last_inst_month = get_last_installment_month(profile=request.profile)
         if last_inst_month and real_months:
             latest_real = real_months[0]
             if last_inst_month > latest_real:
@@ -156,13 +256,15 @@ class TransactionViewSet(viewsets.ModelViewSet):
         update_fields = {'category_id': category_id, 'is_manually_categorized': True}
         if subcategory_id:
             update_fields['subcategory_id'] = subcategory_id
-        updated = Transaction.objects.filter(id__in=transaction_ids).update(**update_fields)
+        updated = Transaction.objects.filter(
+            id__in=transaction_ids, profile=request.profile
+        ).update(**update_fields)
 
         # Learning feedback: find similar uncategorized + suggest rule
         feedback = {}
         if len(transaction_ids) == 1:
             try:
-                feedback = find_similar_transactions(transaction_ids[0])
+                feedback = find_similar_transactions(transaction_ids[0], profile=request.profile)
             except Transaction.DoesNotExist:
                 pass
 
@@ -170,9 +272,14 @@ class TransactionViewSet(viewsets.ModelViewSet):
 
 
 class RecurringMappingViewSet(viewsets.ModelViewSet):
-    queryset = RecurringMapping.objects.select_related('template', 'category', 'transaction').all()
     serializer_class = RecurringMappingSerializer
     filterset_fields = ['month_str', 'status']
+
+    def get_queryset(self):
+        return RecurringMapping.objects.filter(profile=self.request.profile).select_related('template', 'category', 'transaction')
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)
 
     @action(detail=False, methods=['post'])
     def generate(self, request):
@@ -183,12 +290,13 @@ class RecurringMappingViewSet(viewsets.ModelViewSet):
                 {'error': 'month_str required'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        templates = RecurringTemplate.objects.filter(is_active=True)
+        templates = RecurringTemplate.objects.filter(is_active=True, profile=request.profile)
         created = 0
         for tpl in templates:
             _, was_created = RecurringMapping.objects.get_or_create(
                 template=tpl,
                 month_str=month_str,
+                profile=request.profile,
                 defaults={
                     'expected_amount': tpl.default_limit,
                     'status': 'missing',
@@ -209,7 +317,7 @@ class RecurringMappingViewSet(viewsets.ModelViewSet):
             )
         # Get unmapped entries
         mappings = RecurringMapping.objects.filter(
-            month_str=month_str, status='missing'
+            month_str=month_str, status='missing', profile=request.profile
         ).select_related('template', 'category')
 
         matched = 0
@@ -220,6 +328,7 @@ class RecurringMappingViewSet(viewsets.ModelViewSet):
                     month_str=month_str,
                     category=mapping.category,
                     is_internal_transfer=False,
+                    profile=request.profile,
                 ).first()
                 if txn:
                     mapping.transaction = txn
@@ -238,7 +347,7 @@ class AnalyticsMetricasView(APIView):
         err = _validate_month_str(month_str)
         if err:
             return err
-        return Response(get_metricas(month_str))
+        return Response(get_metricas(month_str, profile=request.profile))
 
 
 class RecurringDataView(APIView):
@@ -248,7 +357,7 @@ class RecurringDataView(APIView):
         err = _validate_month_str(month_str)
         if err:
             return err
-        return Response(get_recurring_data(month_str))
+        return Response(get_recurring_data(month_str, profile=request.profile))
 
 
 class CardTransactionsView(APIView):
@@ -259,7 +368,7 @@ class CardTransactionsView(APIView):
         if err:
             return err
         account_filter = request.query_params.get('account', None)
-        return Response(get_card_transactions(month_str, account_filter))
+        return Response(get_card_transactions(month_str, account_filter, profile=request.profile))
 
 
 class VariableTransactionsView(APIView):
@@ -269,7 +378,7 @@ class VariableTransactionsView(APIView):
         err = _validate_month_str(month_str)
         if err:
             return err
-        return Response(get_variable_transactions(month_str))
+        return Response(get_variable_transactions(month_str, profile=request.profile))
 
 
 class MappingCandidatesView(APIView):
@@ -287,7 +396,7 @@ class MappingCandidatesView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            return Response(get_mapping_candidates(month_str, category_id=category_id, mapping_id=mapping_id))
+            return Response(get_mapping_candidates(month_str, category_id=category_id, mapping_id=mapping_id, profile=request.profile))
         except (RecurringMapping.DoesNotExist, Category.DoesNotExist) as e:
             return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
@@ -311,7 +420,7 @@ class MapTransactionView(APIView):
             )
         try:
             result = map_transaction_to_category(
-                transaction_id, category_id=category_id, mapping_id=mapping_id
+                transaction_id, category_id=category_id, mapping_id=mapping_id, profile=request.profile
             )
             return Response(result)
         except (Transaction.DoesNotExist, RecurringMapping.DoesNotExist, Category.DoesNotExist) as e:
@@ -329,7 +438,7 @@ class MapTransactionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            result = unmap_transaction(transaction_id, mapping_id=mapping_id)
+            result = unmap_transaction(transaction_id, mapping_id=mapping_id, profile=request.profile)
             return Response(result)
         except (Transaction.DoesNotExist, RecurringMapping.DoesNotExist) as e:
             return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
@@ -357,7 +466,7 @@ class ToggleMatchModeView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            mapping = RecurringMapping.objects.get(id=mapping_id)
+            mapping = RecurringMapping.objects.get(id=mapping_id, profile=request.profile)
             mapping.match_mode = match_mode
             if match_mode == 'category' and category_id:
                 # Only clear M2M when explicitly selecting a category
@@ -367,7 +476,7 @@ class ToggleMatchModeView(APIView):
                 mapping.actual_amount = None
                 mapping.status = 'missing'  # Will be recomputed on next fetch
                 try:
-                    cat = Category.objects.get(id=category_id)
+                    cat = Category.objects.get(id=category_id, profile=request.profile)
                     mapping.category = cat
                 except Category.DoesNotExist:
                     pass
@@ -396,19 +505,21 @@ class ImportStatementsView(APIView):
     def get(self, request):
         """Return current import status."""
         from django.db.models import Min, Max
-        txn_count = Transaction.objects.count()
-        month_count = Transaction.objects.values('month_str').distinct().count()
-        date_range = Transaction.objects.aggregate(
+        profile = request.profile
+        txn_count = Transaction.objects.filter(profile=profile).count()
+        month_count = Transaction.objects.filter(profile=profile).values('month_str').distinct().count()
+        date_range = Transaction.objects.filter(profile=profile).aggregate(
             earliest=Min('date'), latest=Max('date')
         )
         accounts = {}
-        for acct in Account.objects.all():
-            c = Transaction.objects.filter(account=acct).count()
+        for acct in Account.objects.filter(profile=profile):
+            c = Transaction.objects.filter(account=acct, profile=profile).count()
             if c > 0:
                 accounts[acct.name] = c
 
-        # List files in SampleData
-        sample_dir = os.path.abspath(self.SAMPLE_DATA_DIR)
+        # List files in SampleData (profile-specific subdirectory)
+        profile_name = request.profile.name if request.profile else 'Palmer'
+        sample_dir = os.path.abspath(os.path.join(self.SAMPLE_DATA_DIR, profile_name))
         files = []
         if os.path.isdir(sample_dir):
             for f in sorted(os.listdir(sample_dir)):
@@ -449,7 +560,8 @@ class ImportStatementsView(APIView):
         if not files:
             return Response({'error': 'No files provided'}, status=status.HTTP_400_BAD_REQUEST)
 
-        sample_dir = os.path.abspath(self.SAMPLE_DATA_DIR)
+        profile_name = request.profile.name if request.profile else 'Palmer'
+        sample_dir = os.path.abspath(os.path.join(self.SAMPLE_DATA_DIR, profile_name))
         os.makedirs(sample_dir, exist_ok=True)
 
         results = []
@@ -519,18 +631,22 @@ class ImportStatementsView(APIView):
         stdout_capture = StringIO()
         stderr_capture = StringIO()
 
+        profile_name = request.profile.name if request.profile else 'Palmer'
+
         try:
             call_command(
                 'import_legacy_data',
                 '--clear',
+                '--profile', profile_name,
                 stdout=stdout_capture,
                 stderr=stderr_capture,
             )
             output = stdout_capture.getvalue()
 
             # Extract key stats from output
-            txn_count = Transaction.objects.count()
-            month_count = Transaction.objects.values('month_str').distinct().count()
+            profile = request.profile
+            txn_count = Transaction.objects.filter(profile=profile).count()
+            month_count = Transaction.objects.filter(profile=profile).values('month_str').distinct().count()
 
             return Response({
                 'success': True,
@@ -553,7 +669,7 @@ class RecurringInitializeView(APIView):
         if not month_str:
             return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = initialize_month(month_str)
+            result = initialize_month(month_str, profile=request.profile)
             return Response(result)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -570,7 +686,7 @@ class RecurringExpectedView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            result = update_recurring_expected(mapping_id, expected_amount)
+            result = update_recurring_expected(mapping_id, expected_amount, profile=request.profile)
             return Response(result)
         except RecurringMapping.DoesNotExist:
             return Response({'error': 'Mapping not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -601,7 +717,7 @@ class RecurringUpdateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            result = update_recurring_item(mapping_id, **kwargs)
+            result = update_recurring_item(mapping_id, profile=request.profile, **kwargs)
             return Response(result)
         except RecurringMapping.DoesNotExist:
             return Response({'error': 'Mapping not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -626,7 +742,7 @@ class RecurringCustomView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            result = add_custom_recurring(month_str, name, template_type, expected_amount)
+            result = add_custom_recurring(month_str, name, template_type, expected_amount, profile=request.profile)
             return Response(result, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -636,7 +752,7 @@ class RecurringCustomView(APIView):
         if not mapping_id:
             return Response({'error': 'mapping_id required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = delete_custom_recurring(mapping_id)
+            result = delete_custom_recurring(mapping_id, profile=request.profile)
             return Response(result)
         except RecurringMapping.DoesNotExist:
             return Response({'error': 'Mapping not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -654,7 +770,7 @@ class RecurringSkipView(APIView):
         if not mapping_id:
             return Response({'error': 'mapping_id required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = skip_recurring(mapping_id)
+            result = skip_recurring(mapping_id, profile=request.profile)
             return Response(result)
         except RecurringMapping.DoesNotExist:
             return Response({'error': 'Mapping not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -664,7 +780,7 @@ class RecurringSkipView(APIView):
         if not mapping_id:
             return Response({'error': 'mapping_id required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = unskip_recurring(mapping_id)
+            result = unskip_recurring(mapping_id, profile=request.profile)
             return Response(result)
         except RecurringMapping.DoesNotExist:
             return Response({'error': 'Mapping not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -681,22 +797,32 @@ class BalanceSaveView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            result = save_balance_override(month_str, balance)
+            result = save_balance_override(month_str, balance, profile=request.profile)
             return Response(result)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class BudgetConfigViewSet(viewsets.ModelViewSet):
-    queryset = BudgetConfig.objects.select_related('category', 'template').all()
     serializer_class = BudgetConfigSerializer
     filterset_fields = ['month_str', 'category']
 
+    def get_queryset(self):
+        return BudgetConfig.objects.filter(profile=self.request.profile).select_related('category', 'template')
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)
+
 
 class BalanceOverrideViewSet(viewsets.ModelViewSet):
-    queryset = BalanceOverride.objects.all()
     serializer_class = BalanceOverrideSerializer
     filterset_fields = ['month_str']
+
+    def get_queryset(self):
+        return BalanceOverride.objects.filter(profile=self.request.profile)
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)
 
 
 class ProjectionView(APIView):
@@ -711,7 +837,7 @@ class ProjectionView(APIView):
         except (ValueError, TypeError):
             return Response({'error': 'months must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            return Response(get_projection(month_str, num_months))
+            return Response(get_projection(month_str, num_months, profile=request.profile))
         except Exception as e:
             logger.exception('ProjectionView error')
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -737,7 +863,7 @@ class AnalyticsTrendsView(APIView):
         # Account filter
         account_filter = request.query_params.get('accounts', '') or None
         try:
-            return Response(get_analytics_trends(start_month, end_month, category_ids, account_filter))
+            return Response(get_analytics_trends(start_month, end_month, category_ids, account_filter, profile=request.profile))
         except Exception as e:
             logger.exception('AnalyticsTrendsView error')
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -751,7 +877,7 @@ class OrcamentoView(APIView):
         if err:
             return err
         try:
-            return Response(get_orcamento(month_str))
+            return Response(get_orcamento(month_str, profile=request.profile))
         except Exception as e:
             logger.exception('OrcamentoView error')
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -765,7 +891,7 @@ class InstallmentDetailsView(APIView):
         if err:
             return err
         try:
-            return Response(get_installment_details(month_str))
+            return Response(get_installment_details(month_str, profile=request.profile))
         except Exception as e:
             logger.exception('InstallmentDetailsView error')
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -788,7 +914,7 @@ class CategorizeInstallmentView(APIView):
             )
         try:
             result = categorize_installment_siblings(
-                transaction_id, category_id, subcategory_id
+                transaction_id, category_id, subcategory_id, profile=request.profile
             )
             return Response(result)
         except Transaction.DoesNotExist:
@@ -812,7 +938,7 @@ class SmartCategorizeView(APIView):
         month_str = request.data.get('month_str')
         dry_run = request.data.get('dry_run', False)
         try:
-            result = smart_categorize(month_str=month_str, dry_run=dry_run)
+            result = smart_categorize(month_str=month_str, dry_run=dry_run, profile=request.profile)
             return Response(result)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -827,7 +953,7 @@ class RecurringTemplatesView(APIView):
     """
     def get(self, request):
         try:
-            return Response(get_recurring_templates())
+            return Response(get_recurring_templates(profile=request.profile))
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -840,7 +966,7 @@ class RecurringTemplatesView(APIView):
         if not name:
             return Response({'error': 'name required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = create_recurring_template(name, template_type, default_limit, due_day)
+            result = create_recurring_template(name, template_type, default_limit, due_day, profile=request.profile)
             return Response(result, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -859,7 +985,7 @@ class RecurringTemplatesView(APIView):
         if not kwargs:
             return Response({'error': 'At least one field required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = update_recurring_template(template_id, **kwargs)
+            result = update_recurring_template(template_id, profile=request.profile, **kwargs)
             return Response(result)
         except RecurringTemplate.DoesNotExist:
             return Response({'error': 'Template not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -871,7 +997,7 @@ class RecurringTemplatesView(APIView):
         if not template_id:
             return Response({'error': 'id required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = delete_recurring_template(template_id)
+            result = delete_recurring_template(template_id, profile=request.profile)
             return Response(result)
         except RecurringTemplate.DoesNotExist:
             return Response({'error': 'Template not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -886,7 +1012,7 @@ class ReapplyTemplateView(APIView):
         if not month_str:
             return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = reapply_template_to_month(month_str)
+            result = reapply_template_to_month(month_str, profile=request.profile)
             return Response(result)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -899,7 +1025,7 @@ class CheckingTransactionsView(APIView):
         err = _validate_month_str(month_str)
         if err:
             return err
-        data = get_checking_transactions(month_str)
+        data = get_checking_transactions(month_str, profile=request.profile)
         return Response(data)
 
 
@@ -914,7 +1040,7 @@ class AutoLinkRecurringView(APIView):
         if not month_str:
             return Response({'error': 'month_str required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = auto_link_recurring(month_str)
+            result = auto_link_recurring(month_str, profile=request.profile)
             return Response(result)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -938,7 +1064,7 @@ class RecurringReorderView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         mappings = list(
-            RecurringMapping.objects.filter(month_str=month_str)
+            RecurringMapping.objects.filter(month_str=month_str, profile=request.profile)
             .order_by('display_order', 'template__display_order')
         )
         id_to_mapping = {str(m.id): m for m in mappings}
@@ -979,7 +1105,7 @@ class MonthCategoriesView(APIView):
         if err:
             return err
         try:
-            data = get_month_categories(month_str)
+            data = get_month_categories(month_str, profile=request.profile)
             return Response(data)
         except Exception as e:
             logger.exception('MonthCategoriesView error')
@@ -996,7 +1122,7 @@ class MetricasOrderView(APIView):
         err = _validate_month_str(month_str)
         if err:
             return err
-        return Response(get_metricas_order(month_str))
+        return Response(get_metricas_order(month_str, profile=request.profile))
 
     def post(self, request):
         month_str = request.data.get('month_str')
@@ -1004,7 +1130,7 @@ class MetricasOrderView(APIView):
         hidden_cards = request.data.get('hidden_cards')
         if not month_str or not card_order:
             return Response({'error': 'month_str and card_order required'}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(save_metricas_order(month_str, card_order, hidden_cards))
+        return Response(save_metricas_order(month_str, card_order, hidden_cards, profile=request.profile))
 
 
 class MetricasMakeDefaultView(APIView):
@@ -1014,7 +1140,7 @@ class MetricasMakeDefaultView(APIView):
         hidden_cards = request.data.get('hidden_cards')
         if not card_order:
             return Response({'error': 'card_order required'}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(make_default_order(card_order, hidden_cards))
+        return Response(make_default_order(card_order, hidden_cards, profile=request.profile))
 
 
 class MetricasLockView(APIView):
@@ -1024,7 +1150,7 @@ class MetricasLockView(APIView):
         locked = request.data.get('locked')
         if not month_str or locked is None:
             return Response({'error': 'month_str and locked required'}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(toggle_metricas_lock(month_str, locked))
+        return Response(toggle_metricas_lock(month_str, locked, profile=request.profile))
 
 
 class CustomMetricsView(APIView):
@@ -1034,7 +1160,7 @@ class CustomMetricsView(APIView):
     DELETE /api/analytics/metricas/custom/  — Delete { id }
     """
     def get(self, request):
-        return Response(get_custom_metric_options())
+        return Response(get_custom_metric_options(profile=request.profile))
 
     def post(self, request):
         metric_type = request.data.get('metric_type')
@@ -1043,14 +1169,14 @@ class CustomMetricsView(APIView):
         color = request.data.get('color', 'var(--color-accent)')
         if not metric_type or not label:
             return Response({'error': 'metric_type and label required'}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(create_custom_metric(metric_type, label, config, color), status=status.HTTP_201_CREATED)
+        return Response(create_custom_metric(metric_type, label, config, color, profile=request.profile), status=status.HTTP_201_CREATED)
 
     def delete(self, request):
         metric_id = request.data.get('id')
         if not metric_id:
             return Response({'error': 'id required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            return Response(delete_custom_metric(metric_id))
+            return Response(delete_custom_metric(metric_id, profile=request.profile))
         except CustomMetric.DoesNotExist:
             return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -1061,10 +1187,10 @@ class TransactionRenameView(APIView):
     Rename a transaction description with optional propagation to similar ones.
 
     Preview mode:  { transaction_id, new_description }
-    → Returns renamed count + list of similar transactions for user confirmation.
+    -> Returns renamed count + list of similar transactions for user confirmation.
 
     Apply mode:    { transaction_ids: [...], new_description, propagate: true }
-    → Renames all selected + creates RenameRule for future imports.
+    -> Renames all selected + creates RenameRule for future imports.
     """
     def post(self, request):
         new_description = request.data.get('new_description')
@@ -1080,7 +1206,7 @@ class TransactionRenameView(APIView):
             if not transaction_id:
                 return Response({'error': 'transaction_id required'}, status=status.HTTP_400_BAD_REQUEST)
             try:
-                result = rename_transaction(transaction_id, new_description, propagate_ids=transaction_ids)
+                result = rename_transaction(transaction_id, new_description, profile=request.profile, propagate_ids=transaction_ids)
                 return Response(result)
             except Transaction.DoesNotExist:
                 return Response({'error': 'Transaction not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -1090,7 +1216,7 @@ class TransactionRenameView(APIView):
             if not transaction_id:
                 return Response({'error': 'transaction_id required'}, status=status.HTTP_400_BAD_REQUEST)
             try:
-                result = rename_transaction(transaction_id, new_description)
+                result = rename_transaction(transaction_id, new_description, profile=request.profile)
                 return Response(result)
             except Transaction.DoesNotExist:
                 return Response({'error': 'Transaction not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -1106,6 +1232,6 @@ class TransactionSimilarView(APIView):
         if not transaction_id:
             return Response({'error': 'transaction_id required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            return Response(find_similar_transactions(transaction_id))
+            return Response(find_similar_transactions(transaction_id, profile=request.profile))
         except Transaction.DoesNotExist:
             return Response({'error': 'Transaction not found'}, status=status.HTTP_404_NOT_FOUND)

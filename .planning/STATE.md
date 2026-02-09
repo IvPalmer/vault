@@ -2,16 +2,16 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-02-06)
+See: .planning/PROJECT.md (updated 2026-02-09)
 
 **Core value:** Always know you can cover this month's bills without going negative before your next salary arrives.
-**Current focus:** Post-bug-fix stabilization — CC totals validated against checking account
+**Current focus:** Multi-profile support complete — Palmer + Rafa fully operational
 
 ## Current Position
 
-Phase: Post-rewrite stabilization
-Status: Installment + CC display bugs **FIXED**, import pipeline **FIXED**, totals **VALIDATED**
-Last activity: 2026-02-06
+Phase: Phase 8a — Multi-Profile Support **COMPLETE**
+Status: Two profiles live (Palmer: 7,297 txns / Rafa: 682 txns), all sections profile-isolated
+Last activity: 2026-02-09
 
 ## What Happened
 
@@ -24,12 +24,15 @@ Phases 1-4 in a single effort:
 - Phase 3 (Transaction Reconciliation): DONE — TransactionPicker, map/unmap, smart suggestions
 - Phase 4 (Future Projections): DONE — 6-month projection chart + table, installment schedule
 - Phase 5 (Smart Budgeting): PARTIAL — Category limits + Orçamento section, no AI suggestions yet
+- Phase 7v2 (Analytics): DONE — 9 visualization sections + recurring data safety
+- Phase 8a (Multi-Profile): DONE — Profile model, middleware, all endpoints scoped, Palmer + Rafa
 
 ## Architecture (Current)
 
-- **Backend:** Django 5.2 + DRF, PostgreSQL 15
+- **Backend:** Django 5.2 + DRF, PostgreSQL 15 (all 12 data models profile-scoped)
 - **Frontend:** React 18 + Vite + TanStack Table/Query + Recharts
-- **Legacy:** FinanceDashboard/ Streamlit app still exists (data import source)
+- **Profiles:** Palmer (Itaú: Checking, MC Black, Visa Infinite) + Rafa (NuBank: Conta, Cartão)
+- **Legacy:** FinanceDashboard/ Streamlit app still exists (data import source, per-profile dirs)
 - **Deploy:** Docker Compose (postgres + django + vite) or start.sh for local dev
 
 ## Bug Fixes Applied (2026-02-06)
@@ -169,21 +172,62 @@ coverage from Google Sheets data.
 - **month_str for other sections** — transaction date perspective (gastos variáveis, orçamento)
 - **Simple negation for CC amounts** — preserves refund signs (no abs())
 - **Installment dedup: lowest position per purchase per invoice**
+- **Multi-profile via X-Profile-ID header** — no URL changes, middleware injects request.profile
+- **Profile FK on all 12 models** — simple `.filter(profile=profile)` everywhere
+- **No auth** — household app, dropdown profile selector, no passwords
+- **Per-profile SampleData dirs** — Palmer/ (Itaú CSV/OFX) and Rafa/ (NuBank OFX)
+- **NuBank description cleanup** — PIX/Boleto descriptions cleaned, CNPJ prefixes stripped
 
 ### Pending Todos
 
-1. Analytics tab (placeholder — Phase 7)
-2. Salary normalization (effective month vs bank month)
-3. AI-powered spending analysis and suggestions (Phase 5 remainder)
-4. Add error handling (try-except) to 5 analytics views that lack it
-5. Wrap localStorage access in MonthContext with try-catch
+1. AI-powered spending analysis and suggestions (Phase 5 remainder)
+2. Savings target percentage (BUDG-05)
+3. Add error handling (try-except) to 5 analytics views that lack it
+4. Wrap localStorage access in MonthContext with try-catch
 
 ### Blockers/Concerns
 
 None.
 
+## Phase 8a: Multi-Profile Support (2026-02-09)
+
+### What Changed
+
+**Backend (13 files):**
+- `api/models.py` — Profile model + `profile` FK on all 12 data models + updated unique constraints
+- `api/middleware.py` — NEW: ProfileMiddleware reads X-Profile-ID header, injects request.profile
+- `api/views.py` — ProfileViewSet + clone endpoint + all 9 ViewSets scoped to profile
+- `api/serializers.py` — ProfileSerializer
+- `api/services.py` — all 48 service functions accept `profile` param, all querysets filtered
+- `api/urls.py` — registered ProfileViewSet at `/api/profiles/`
+- `api/signals.py` — backup JSON includes profile_name on all records
+- `api/admin.py` — Profile registered, profile added to list_display/list_filter
+- `vault_project/settings.py` — ProfileMiddleware + X-Profile-ID in CORS headers
+- `api/management/commands/import_legacy_data.py` — `--profile` flag, per-profile dirs/accounts
+- `api/management/commands/db_restore.py` — `--profile` flag, profile-scoped queries
+- `api/migrations/0011_*.py` — Add Profile model + nullable FKs
+- `api/migrations/0012_*.py` — Data migration: assign all existing data to "Palmer"
+
+**Frontend (6 files):**
+- `src/context/ProfileContext.jsx` — NEW: fetches profiles, manages selection, cache clearing
+- `src/components/ProfileSwitcher.jsx` — NEW: dropdown in header
+- `src/components/ProfileSwitcher.module.css` — NEW: styles
+- `src/api/client.js` — X-Profile-ID header on all requests
+- `src/main.jsx` — wrapped with ProfileProvider
+- `src/context/MonthContext.jsx` — profile-scoped localStorage key
+
+**Data Pipeline (1 file):**
+- `FinanceDashboard/DataLoader.py` — profile_name param, NuBank account detection, UTF-8 encoding fix, PIX/Boleto description cleanup, CNPJ prefix stripping
+
+### Profile Data
+
+| Profile | Accounts | Transactions | Date Range |
+|---------|----------|-------------|------------|
+| Palmer | Checking, Mastercard Black, Visa Infinite, Mastercard - Rafa, Manual | 7,297 | Oct 2022 – Feb 2026 |
+| Rafa | NuBank Conta, NuBank Cartão, Manual | 682 | Aug 2025 – Feb 2026 |
+
 ## Session Continuity
 
-Last session: 2026-02-06 (bug fix + import pipeline fix + validation session)
-Stopped at: All bugs fixed, totals validated against checking account
+Last session: 2026-02-09 (Phase 8a multi-profile support complete)
+Stopped at: All profiles working, data isolated, browser-verified
 Resume file: None

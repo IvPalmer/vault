@@ -20,13 +20,13 @@ from .models import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _get_expected_amount(template, month_str):
+def _get_expected_amount(template, month_str, profile=None):
     """
     Return the expected amount for a recurring template in a month.
     Uses BudgetConfig override if it exists, otherwise template.default_limit.
     """
     try:
-        bc = BudgetConfig.objects.get(template=template, month_str=month_str)
+        bc = BudgetConfig.objects.get(template=template, month_str=month_str, profile=profile)
         return bc.limit_override
     except BudgetConfig.DoesNotExist:
         return template.default_limit
@@ -36,7 +36,7 @@ def _get_expected_amount(template, month_str):
 # A2-1: initialize_month
 # ---------------------------------------------------------------------------
 
-def initialize_month(month_str):
+def initialize_month(month_str, profile=None):
     """
     Create RecurringMapping rows for a month from RecurringTemplate.
     Idempotent — skips templates that already have a mapping for the month.
@@ -45,13 +45,15 @@ def initialize_month(month_str):
     templates = RecurringTemplate.objects.filter(
         is_active=True,
         default_limit__gt=0,
+        profile=profile,
     )
     created = 0
     for tpl in templates:
-        expected = _get_expected_amount(tpl, month_str)
+        expected = _get_expected_amount(tpl, month_str, profile=profile)
         _, was_created = RecurringMapping.objects.get_or_create(
             template=tpl,
             month_str=month_str,
+            profile=profile,
             defaults={
                 'expected_amount': expected,
                 'status': 'missing',
@@ -61,7 +63,7 @@ def initialize_month(month_str):
         if was_created:
             created += 1
 
-    total = RecurringMapping.objects.filter(month_str=month_str).count()
+    total = RecurringMapping.objects.filter(month_str=month_str, profile=profile).count()
     return {
         'month_str': month_str,
         'created': created,
@@ -74,7 +76,7 @@ def initialize_month(month_str):
 # A2-2: get_recurring_data (REWRITE)
 # ---------------------------------------------------------------------------
 
-def get_recurring_data(month_str):
+def get_recurring_data(month_str, profile=None):
     """
     RECORRENTES — recurring items sourced from RecurringMapping table.
 
@@ -87,15 +89,16 @@ def get_recurring_data(month_str):
     plus 'all' list, and 'initialized' flag.
     """
     # Auto-initialize if no mappings exist for this month
-    existing = RecurringMapping.objects.filter(month_str=month_str).count()
+    existing = RecurringMapping.objects.filter(month_str=month_str, profile=profile).count()
     was_initialized = False
     if existing == 0:
-        result = initialize_month(month_str)
+        result = initialize_month(month_str, profile=profile)
         was_initialized = result['initialized']
 
     # Fetch all mappings for this month
     mappings = RecurringMapping.objects.filter(
         month_str=month_str,
+        profile=profile,
     ).select_related('template', 'category', 'transaction', 'transaction__account').prefetch_related(
         'transactions', 'transactions__account'
     ).order_by(
@@ -105,6 +108,7 @@ def get_recurring_data(month_str):
     # Transaction pools for suggestion matching
     txns = Transaction.objects.filter(
         month_str=month_str,
+        profile=profile,
     ).select_related('category', 'account')
     income_pool = txns.filter(amount__gt=0)
     expense_pool = txns.filter(amount__lt=0)
@@ -366,12 +370,12 @@ def get_recurring_data(month_str):
 # A2-3: update_recurring_expected
 # ---------------------------------------------------------------------------
 
-def update_recurring_expected(mapping_id, expected_amount):
+def update_recurring_expected(mapping_id, expected_amount, profile=None):
     """
     Update the expected amount for a RecurringMapping.
     Returns the updated mapping summary.
     """
-    mapping = RecurringMapping.objects.select_related('template').get(id=mapping_id)
+    mapping = RecurringMapping.objects.select_related('template').get(id=mapping_id, profile=profile)
     mapping.expected_amount = Decimal(str(expected_amount))
     mapping.save()
 
@@ -390,7 +394,7 @@ def update_recurring_expected(mapping_id, expected_amount):
 # A2-3b: update_recurring_item (general field update)
 # ---------------------------------------------------------------------------
 
-def update_recurring_item(mapping_id, **kwargs):
+def update_recurring_item(mapping_id, profile=None, **kwargs):
     """
     Update editable fields on a RecurringMapping: name, template_type,
     expected_amount, due_day.
@@ -398,7 +402,7 @@ def update_recurring_item(mapping_id, **kwargs):
     For template-based items, name/type changes convert them to custom items
     (is_custom=True) to preserve the override without affecting the template.
     """
-    mapping = RecurringMapping.objects.select_related('template').get(id=mapping_id)
+    mapping = RecurringMapping.objects.select_related('template').get(id=mapping_id, profile=profile)
 
     if 'expected_amount' in kwargs and kwargs['expected_amount'] is not None:
         mapping.expected_amount = Decimal(str(kwargs['expected_amount']))
@@ -455,7 +459,7 @@ def update_recurring_item(mapping_id, **kwargs):
 # A2-4: add_custom_recurring
 # ---------------------------------------------------------------------------
 
-def add_custom_recurring(month_str, name, category_type, expected_amount):
+def add_custom_recurring(month_str, name, category_type, expected_amount, profile=None):
     """
     Add a custom one-off recurring item for a specific month.
     Custom items have is_custom=True and no template/category FK.
@@ -469,6 +473,7 @@ def add_custom_recurring(month_str, name, category_type, expected_amount):
         status='missing',
         template=None,
         category=None,
+        profile=profile,
     )
 
     return {
@@ -484,12 +489,12 @@ def add_custom_recurring(month_str, name, category_type, expected_amount):
 # A2-5: delete_custom_recurring
 # ---------------------------------------------------------------------------
 
-def delete_custom_recurring(mapping_id):
+def delete_custom_recurring(mapping_id, profile=None):
     """
     Delete a custom recurring item. Only works for is_custom=True items.
     Raises ValueError if trying to delete a non-custom item.
     """
-    mapping = RecurringMapping.objects.get(id=mapping_id)
+    mapping = RecurringMapping.objects.get(id=mapping_id, profile=profile)
     if not mapping.is_custom:
         raise ValueError('Cannot delete non-custom recurring items. Use skip instead.')
 
@@ -507,9 +512,9 @@ def delete_custom_recurring(mapping_id):
 # A2-6: skip / unskip recurring
 # ---------------------------------------------------------------------------
 
-def skip_recurring(mapping_id):
+def skip_recurring(mapping_id, profile=None):
     """Mark a recurring item as skipped for this month."""
-    mapping = RecurringMapping.objects.select_related('template').get(id=mapping_id)
+    mapping = RecurringMapping.objects.select_related('template').get(id=mapping_id, profile=profile)
     mapping.status = 'skipped'
     mapping.save()
 
@@ -523,9 +528,9 @@ def skip_recurring(mapping_id):
     }
 
 
-def unskip_recurring(mapping_id):
+def unskip_recurring(mapping_id, profile=None):
     """Restore a skipped recurring item back to missing status."""
-    mapping = RecurringMapping.objects.select_related('template').get(id=mapping_id)
+    mapping = RecurringMapping.objects.select_related('template').get(id=mapping_id, profile=profile)
     mapping.status = 'missing'
     mapping.save()
 
@@ -543,12 +548,13 @@ def unskip_recurring(mapping_id):
 # A2-7: save_balance_override
 # ---------------------------------------------------------------------------
 
-def save_balance_override(month_str, balance):
+def save_balance_override(month_str, balance, profile=None):
     """
     Save or update the checking account balance override for a month.
     """
     bo, created = BalanceOverride.objects.update_or_create(
         month_str=month_str,
+        profile=profile,
         defaults={'balance': Decimal(str(balance))},
     )
     return {
@@ -562,12 +568,13 @@ def save_balance_override(month_str, balance):
 # Recurring template management (Settings)
 # ---------------------------------------------------------------------------
 
-def get_recurring_templates():
+def get_recurring_templates(profile=None):
     """
     Return all RecurringTemplate items used for recurring budget tracking.
     """
     templates = RecurringTemplate.objects.filter(
         is_active=True,
+        profile=profile,
     ).order_by('display_order', 'name')
 
     items = []
@@ -584,12 +591,12 @@ def get_recurring_templates():
     return {'templates': items, 'count': len(items)}
 
 
-def update_recurring_template(template_id, **kwargs):
+def update_recurring_template(template_id, profile=None, **kwargs):
     """
     Update a RecurringTemplate used for recurring items.
     Supported fields: name, template_type, default_limit, due_day, display_order
     """
-    tpl = RecurringTemplate.objects.get(id=template_id)
+    tpl = RecurringTemplate.objects.get(id=template_id, profile=profile)
 
     if 'name' in kwargs and kwargs['name'] is not None:
         tpl.name = kwargs['name'].strip()
@@ -614,13 +621,14 @@ def update_recurring_template(template_id, **kwargs):
     }
 
 
-def create_recurring_template(name, template_type, default_limit, due_day=None):
+def create_recurring_template(name, template_type, default_limit, due_day=None, profile=None):
     """
     Create a new RecurringTemplate for recurring budget tracking.
     """
     # Find max display_order for this type
     max_order = RecurringTemplate.objects.filter(
-        template_type=template_type
+        template_type=template_type,
+        profile=profile,
     ).aggregate(m=Max('display_order'))['m'] or 0
 
     tpl = RecurringTemplate.objects.create(
@@ -630,6 +638,7 @@ def create_recurring_template(name, template_type, default_limit, due_day=None):
         due_day=due_day,
         is_active=True,
         display_order=max_order + 1,
+        profile=profile,
     )
 
     return {
@@ -642,12 +651,12 @@ def create_recurring_template(name, template_type, default_limit, due_day=None):
     }
 
 
-def delete_recurring_template(template_id):
+def delete_recurring_template(template_id, profile=None):
     """
     Deactivate a RecurringTemplate (soft delete).
     Sets is_active=False and default_limit=0 so it won't appear in future months.
     """
-    tpl = RecurringTemplate.objects.get(id=template_id)
+    tpl = RecurringTemplate.objects.get(id=template_id, profile=profile)
     tpl.is_active = False
     tpl.default_limit = Decimal('0.00')
     tpl.save()
@@ -664,7 +673,7 @@ def delete_recurring_template(template_id):
 # Replaces the old get_summary_metrics() and get_control_metrics() functions.
 # ---------------------------------------------------------------------------
 
-def _get_prev_month_saldo(month_str):
+def _get_prev_month_saldo(month_str, profile=None):
     """
     Get the previous month's saldo projetado to use as this month's
     starting balance when no BalanceOverride is set.
@@ -675,20 +684,20 @@ def _get_prev_month_saldo(month_str):
     prev_str = _month_str_add(month_str, -1)
 
     # Check if prev month has any transactions at all
-    has_data = Transaction.objects.filter(month_str=prev_str).exists()
+    has_data = Transaction.objects.filter(month_str=prev_str, profile=profile).exists()
     if not has_data:
         # Also check if prev month has a BalanceOverride
         try:
-            BalanceOverride.objects.get(month_str=prev_str)
+            BalanceOverride.objects.get(month_str=prev_str, profile=profile)
         except BalanceOverride.DoesNotExist:
             return None
 
     # Compute prev month's full metricas to get its saldo_projetado
-    prev_metricas = get_metricas(prev_str, _cascade=False)
+    prev_metricas = get_metricas(prev_str, _cascade=False, profile=profile)
     return Decimal(str(prev_metricas['saldo_projetado']))
 
 
-def get_metricas(month_str, _cascade=True):
+def get_metricas(month_str, _cascade=True, profile=None):
     """
     MÉTRICAS — unified dashboard metrics replacing both get_summary_metrics
     and get_control_metrics. Returns 15 metrics computed with shared queries.
@@ -710,7 +719,9 @@ def get_metricas(month_str, _cascade=True):
     # income/expense totals to avoid double-counting.
     cross_month_exclude_ids = set()
     cross_month_targets = {}  # txn_id -> target month_str
-    other_month_mappings = RecurringMapping.objects.exclude(
+    other_month_mappings = RecurringMapping.objects.filter(
+        profile=profile,
+    ).exclude(
         month_str=month_str
     ).prefetch_related('cross_month_transactions')
     for om in other_month_mappings:
@@ -722,6 +733,7 @@ def get_metricas(month_str, _cascade=True):
     txns = Transaction.objects.filter(
         month_str=month_str,
         is_internal_transfer=False,
+        profile=profile,
     ).exclude(
         id__in=cross_month_exclude_ids
     ).select_related('category', 'account')
@@ -732,7 +744,8 @@ def get_metricas(month_str, _cascade=True):
     # Unfiltered pools for recurring matching (includes internal transfers,
     # but still excludes cross-month moved transactions)
     all_txns = Transaction.objects.filter(
-        month_str=month_str
+        month_str=month_str,
+        profile=profile,
     ).exclude(
         id__in=cross_month_exclude_ids
     ).select_related('category', 'account')
@@ -746,7 +759,8 @@ def get_metricas(month_str, _cascade=True):
     cross_month_include_income = Decimal('0.00')
     cross_month_include_expense = Decimal('0.00')
     this_month_mappings_cm = RecurringMapping.objects.filter(
-        month_str=month_str
+        month_str=month_str,
+        profile=profile,
     ).prefetch_related('cross_month_transactions')
     for m in this_month_mappings_cm:
         for t in m.cross_month_transactions.all():
@@ -768,6 +782,7 @@ def get_metricas(month_str, _cascade=True):
     # =====================================================================
     income_mappings = RecurringMapping.objects.filter(
         month_str=month_str,
+        profile=profile,
     ).filter(
         Q(template__template_type='Income') | Q(is_custom=True, custom_type='Income')
     ).exclude(status='skipped').select_related('template', 'category', 'transaction').prefetch_related('transactions')
@@ -790,6 +805,7 @@ def get_metricas(month_str, _cascade=True):
     # =====================================================================
     fixo_mappings_all = RecurringMapping.objects.filter(
         month_str=month_str,
+        profile=profile,
     ).filter(
         Q(template__template_type='Fixo') | Q(is_custom=True, custom_type='Fixo')
     ).exclude(status='skipped').select_related('template', 'category', 'transaction').prefetch_related('transactions')
@@ -798,11 +814,12 @@ def get_metricas(month_str, _cascade=True):
     for m in fixo_mappings_all:
         fixo_expected_total += m.expected_amount
 
-    schedule = _compute_installment_schedule(month_str, num_future_months=0)
+    schedule = _compute_installment_schedule(month_str, num_future_months=0, profile=profile)
     parcelas_total = Decimal(str(schedule.get(month_str, 0)))
 
     variable_budget = Category.objects.filter(
         category_type='Variavel', is_active=True,
+        profile=profile,
     ).aggregate(total=Sum('default_limit'))['total'] or Decimal('0.00')
 
     gastos_projetados = fixo_expected_total + parcelas_total + variable_budget
@@ -878,6 +895,7 @@ def get_metricas(month_str, _cascade=True):
     fatura_master = abs(Transaction.objects.filter(
         invoice_month=month_str,
         account__name__icontains='Mastercard',
+        profile=profile,
     ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
 
     # =====================================================================
@@ -886,6 +904,7 @@ def get_metricas(month_str, _cascade=True):
     fatura_visa = abs(Transaction.objects.filter(
         invoice_month=month_str,
         account__name__icontains='Visa',
+        profile=profile,
     ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
 
     # =====================================================================
@@ -928,7 +947,7 @@ def get_metricas(month_str, _cascade=True):
     # =====================================================================
     balance_override = None
     try:
-        bo = BalanceOverride.objects.get(month_str=month_str)
+        bo = BalanceOverride.objects.get(month_str=month_str, profile=profile)
         balance_override = float(bo.balance)
     except BalanceOverride.DoesNotExist:
         pass
@@ -937,7 +956,7 @@ def get_metricas(month_str, _cascade=True):
     prev_month_saldo = None
     prev_month_saldo_float = None
     if _cascade:
-        prev_month_saldo = _get_prev_month_saldo(month_str)
+        prev_month_saldo = _get_prev_month_saldo(month_str, profile=profile)
         prev_month_saldo_float = float(prev_month_saldo) if prev_month_saldo is not None else None
 
     if balance_override is not None:
@@ -959,7 +978,8 @@ def get_metricas(month_str, _cascade=True):
     # 13. DIAS ATÉ O FECHAMENTO
     # =====================================================================
     cc_account = Account.objects.filter(
-        account_type='credit_card', is_active=True
+        account_type='credit_card', is_active=True,
+        profile=profile,
     ).first()
     closing_day = cc_account.closing_day if cc_account and cc_account.closing_day else 30
 
@@ -1016,7 +1036,8 @@ def get_metricas(month_str, _cascade=True):
     if cross_month_targets:
         cross_txns = {
             t.id: t for t in Transaction.objects.filter(
-                id__in=list(cross_month_targets.keys())
+                id__in=list(cross_month_targets.keys()),
+                profile=profile,
             )
         }
         for txn_id, target in cross_month_targets.items():
@@ -1054,7 +1075,7 @@ def get_metricas(month_str, _cascade=True):
     }
 
     # Append custom metrics computed from this month's data
-    result_dict['custom_metrics'] = _compute_custom_metrics(month_str, result_dict)
+    result_dict['custom_metrics'] = _compute_custom_metrics(month_str, result_dict, profile=profile)
     return result_dict
 
 
@@ -1070,12 +1091,12 @@ BUILTIN_CARD_ORDER = [
 ]
 
 
-def _compute_custom_metrics(month_str, metricas_data):
+def _compute_custom_metrics(month_str, metricas_data, profile=None):
     """
     Compute values for all active CustomMetrics for the given month.
     Takes already-computed metricas_data to avoid circular calls.
     """
-    custom_metrics = list(CustomMetric.objects.filter(is_active=True).order_by('label'))
+    custom_metrics = list(CustomMetric.objects.filter(is_active=True, profile=profile).order_by('label'))
     if not custom_metrics:
         return []
 
@@ -1106,7 +1127,7 @@ def _compute_custom_metrics(month_str, metricas_data):
     # Batch: categories lookup (1 query)
     cats_by_id = {}
     if cat_ids_needed:
-        cats_by_id = {str(c.id): c for c in Category.objects.filter(id__in=cat_ids_needed)}
+        cats_by_id = {str(c.id): c for c in Category.objects.filter(id__in=cat_ids_needed, profile=profile)}
 
     # Batch: BudgetConfig overrides for referenced categories (1 query)
     budget_overrides = {}
@@ -1114,7 +1135,7 @@ def _compute_custom_metrics(month_str, metricas_data):
         budget_overrides = {
             str(bc.category_id): float(bc.limit_override)
             for bc in BudgetConfig.objects.filter(
-                category_id__in=cat_ids_needed, month_str=month_str
+                category_id__in=cat_ids_needed, month_str=month_str, profile=profile,
             )
         }
 
@@ -1127,6 +1148,7 @@ def _compute_custom_metrics(month_str, metricas_data):
                 category_id__in=cat_ids_needed,
                 amount__lt=0,
                 is_internal_transfer=False,
+                profile=profile,
             ).values('category_id').annotate(
                 total=Sum('amount')
             ).values_list('category_id', 'total')
@@ -1148,6 +1170,7 @@ def _compute_custom_metrics(month_str, metricas_data):
                 Transaction.objects.filter(
                     month_str=month_str,
                     category_id__in=cat_match_ids,
+                    profile=profile,
                     **amount_filter,
                 ).values('category_id').annotate(
                     t=Sum('amount')
@@ -1176,7 +1199,7 @@ def _compute_custom_metrics(month_str, metricas_data):
 
     if needs_fixo:
         qs = RecurringMapping.objects.filter(
-            month_str=month_str, template__template_type='Fixo',
+            month_str=month_str, template__template_type='Fixo', profile=profile,
         ).select_related('template', 'category').prefetch_related(
             'transactions', 'cross_month_transactions'
         )
@@ -1184,7 +1207,7 @@ def _compute_custom_metrics(month_str, metricas_data):
 
     if needs_invest:
         qs = RecurringMapping.objects.filter(
-            month_str=month_str, template__template_type='Investimento',
+            month_str=month_str, template__template_type='Investimento', profile=profile,
         ).select_related('template', 'category').prefetch_related(
             'transactions', 'cross_month_transactions'
         )
@@ -1192,7 +1215,7 @@ def _compute_custom_metrics(month_str, metricas_data):
 
     if needs_income:
         qs = RecurringMapping.objects.filter(
-            month_str=month_str, template__template_type='Income',
+            month_str=month_str, template__template_type='Income', profile=profile,
         ).select_related('template', 'category').prefetch_related(
             'transactions', 'cross_month_transactions'
         )
@@ -1202,7 +1225,7 @@ def _compute_custom_metrics(month_str, metricas_data):
     item_mappings_by_template = {}
     if template_ids_needed:
         item_mappings = RecurringMapping.objects.filter(
-            month_str=month_str, template_id__in=template_ids_needed,
+            month_str=month_str, template_id__in=template_ids_needed, profile=profile,
         ).select_related('template', 'category').prefetch_related(
             'transactions', 'cross_month_transactions'
         )
@@ -1284,6 +1307,7 @@ def _compute_custom_metrics(month_str, metricas_data):
                             agg = Transaction.objects.filter(
                                 month_str=month_str, category=mapping.category,
                                 amount__gt=0,
+                                profile=profile,
                             ).aggregate(t=Sum('amount'))['t'] or Decimal('0.00')
                         else:
                             agg = cat_spending.get(cat_key, Decimal('0.00'))
@@ -1324,11 +1348,11 @@ def _compute_custom_metrics(month_str, metricas_data):
     return results
 
 
-def _get_all_known_card_ids():
+def _get_all_known_card_ids(profile=None):
     """Return set of all valid card IDs (builtin + active custom)."""
     custom_ids = [
         f'custom_{str(cid)}'
-        for cid in CustomMetric.objects.filter(is_active=True)
+        for cid in CustomMetric.objects.filter(is_active=True, profile=profile)
             .order_by('label')
             .values_list('id', flat=True)
     ]
@@ -1354,17 +1378,17 @@ def _reconcile_order(order, hidden, all_known_ids):
     return order, hidden
 
 
-def get_metricas_order(month_str):
+def get_metricas_order(month_str, profile=None):
     """
     Return the card order + hidden cards + lock status for a month.
     Resolution: per-month override > global default > hardcoded BUILTIN_CARD_ORDER.
     """
-    all_known_ids = _get_all_known_card_ids()
+    all_known_ids = _get_all_known_card_ids(profile=profile)
 
     # Global default
     global_hidden = []
     try:
-        global_cfg = MetricasOrderConfig.objects.get(month_str='__default__')
+        global_cfg = MetricasOrderConfig.objects.get(month_str='__default__', profile=profile)
         global_order = list(global_cfg.card_order)
         global_hidden = list(global_cfg.hidden_cards or [])
     except MetricasOrderConfig.DoesNotExist:
@@ -1376,7 +1400,7 @@ def get_metricas_order(month_str):
 
     # Per-month override
     try:
-        month_cfg = MetricasOrderConfig.objects.get(month_str=month_str)
+        month_cfg = MetricasOrderConfig.objects.get(month_str=month_str, profile=profile)
         effective_order = list(month_cfg.card_order)
         effective_hidden = list(month_cfg.hidden_cards or [])
         is_locked = month_cfg.is_locked
@@ -1402,13 +1426,14 @@ def get_metricas_order(month_str):
     }
 
 
-def save_metricas_order(month_str, card_order, hidden_cards=None):
+def save_metricas_order(month_str, card_order, hidden_cards=None, profile=None):
     """Save card order (and optionally hidden cards) for a specific month."""
     defaults = {'card_order': card_order}
     if hidden_cards is not None:
         defaults['hidden_cards'] = hidden_cards
     cfg, created = MetricasOrderConfig.objects.update_or_create(
         month_str=month_str,
+        profile=profile,
         defaults=defaults,
     )
     return {
@@ -1418,7 +1443,7 @@ def save_metricas_order(month_str, card_order, hidden_cards=None):
     }
 
 
-def make_default_order(card_order, hidden_cards=None):
+def make_default_order(card_order, hidden_cards=None, profile=None):
     """
     Set card_order as the global default and delete all unlocked per-month
     overrides so they inherit the new default.
@@ -1428,22 +1453,25 @@ def make_default_order(card_order, hidden_cards=None):
         defaults['hidden_cards'] = hidden_cards
     MetricasOrderConfig.objects.update_or_create(
         month_str='__default__',
+        profile=profile,
         defaults=defaults,
     )
     deleted_count, _ = MetricasOrderConfig.objects.filter(
-        is_locked=False
+        is_locked=False,
+        profile=profile,
     ).exclude(
         month_str='__default__'
     ).delete()
     return {'global_default': card_order, 'months_reset': deleted_count}
 
 
-def toggle_metricas_lock(month_str, locked):
+def toggle_metricas_lock(month_str, locked, profile=None):
     """Lock or unlock a month's metricas order."""
     if locked:
-        order_data = get_metricas_order(month_str)
+        order_data = get_metricas_order(month_str, profile=profile)
         cfg, _ = MetricasOrderConfig.objects.update_or_create(
             month_str=month_str,
+            profile=profile,
             defaults={
                 'card_order': order_data['card_order'],
                 'hidden_cards': order_data['hidden_cards'],
@@ -1452,7 +1480,7 @@ def toggle_metricas_lock(month_str, locked):
         )
     else:
         try:
-            cfg = MetricasOrderConfig.objects.get(month_str=month_str)
+            cfg = MetricasOrderConfig.objects.get(month_str=month_str, profile=profile)
             cfg.is_locked = False
             cfg.save(update_fields=['is_locked', 'updated_at'])
         except MetricasOrderConfig.DoesNotExist:
@@ -1460,11 +1488,11 @@ def toggle_metricas_lock(month_str, locked):
     return {'month_str': month_str, 'is_locked': locked}
 
 
-def get_custom_metric_options():
+def get_custom_metric_options(profile=None):
     """Return active custom metrics + available categories + templates + builtin keys for the picker UI."""
-    metrics = CustomMetric.objects.filter(is_active=True).order_by('label')
+    metrics = CustomMetric.objects.filter(is_active=True, profile=profile).order_by('label')
     categories = list(
-        Category.objects.filter(is_active=True)
+        Category.objects.filter(is_active=True, profile=profile)
         .order_by('display_order', 'name')
         .values('id', 'name', 'category_type', 'default_limit')
     )
@@ -1475,7 +1503,7 @@ def get_custom_metric_options():
 
     # Recurring templates for the "recurring_item" picker
     templates = list(
-        RecurringTemplate.objects.filter(is_active=True)
+        RecurringTemplate.objects.filter(is_active=True, profile=profile)
         .order_by('template_type', 'name')
         .values('id', 'name', 'template_type', 'default_limit')
     )
@@ -1514,29 +1542,30 @@ def get_custom_metric_options():
     }
 
 
-def create_custom_metric(metric_type, label, config, color='var(--color-accent)'):
+def create_custom_metric(metric_type, label, config, color='var(--color-accent)', profile=None):
     """Create a new custom metric definition."""
     cm = CustomMetric.objects.create(
         metric_type=metric_type,
         label=label,
         config=config,
         color=color,
+        profile=profile,
     )
     card_id = f'custom_{str(cm.id)}'
     # Append to all existing order configs
-    for cfg in MetricasOrderConfig.objects.all():
+    for cfg in MetricasOrderConfig.objects.filter(profile=profile):
         if card_id not in cfg.card_order:
             cfg.card_order.append(card_id)
             cfg.save(update_fields=['card_order'])
     return {'id': str(cm.id), 'card_id': card_id, 'label': cm.label}
 
 
-def delete_custom_metric(metric_id):
+def delete_custom_metric(metric_id, profile=None):
     """Delete a custom metric and remove from all order configs."""
-    cm = CustomMetric.objects.get(id=metric_id)
+    cm = CustomMetric.objects.get(id=metric_id, profile=profile)
     card_id = f'custom_{str(cm.id)}'
     cm.delete()
-    for cfg in MetricasOrderConfig.objects.all():
+    for cfg in MetricasOrderConfig.objects.filter(profile=profile):
         if card_id in cfg.card_order:
             cfg.card_order.remove(card_id)
             cfg.save(update_fields=['card_order'])
@@ -1547,7 +1576,7 @@ def delete_custom_metric(metric_id):
 # Card transactions
 # ---------------------------------------------------------------------------
 
-def get_card_transactions(month_str, account_filter=None):
+def get_card_transactions(month_str, account_filter=None, profile=None):
     """
     CONTROLE CARTÕES — credit card transactions from the statement (invoice)
     being paid this month.
@@ -1562,6 +1591,7 @@ def get_card_transactions(month_str, account_filter=None):
     qs = Transaction.objects.filter(
         invoice_month=month_str,
         account__account_type='credit_card',
+        profile=profile,
     ).select_related('account', 'category', 'subcategory').order_by('-date')
 
     if not qs.exists():
@@ -1569,6 +1599,7 @@ def get_card_transactions(month_str, account_filter=None):
             month_str=month_str,
             invoice_month='',
             account__account_type='credit_card',
+            profile=profile,
         ).select_related('account', 'category', 'subcategory').order_by('-date')
 
     if account_filter:
@@ -1606,7 +1637,7 @@ def get_card_transactions(month_str, account_filter=None):
     }
 
 
-def get_installment_details(month_str):
+def get_installment_details(month_str, profile=None):
     """
     INSTALLMENT BREAKDOWN — installments being charged on this month's bill.
 
@@ -1630,6 +1661,7 @@ def get_installment_details(month_str):
         invoice_month=month_str,
         is_installment=True,
         amount__lt=0,
+        profile=profile,
     ).select_related('account', 'category', 'subcategory')
 
     if not real_installments.exists():
@@ -1638,6 +1670,7 @@ def get_installment_details(month_str):
             invoice_month='',
             is_installment=True,
             amount__lt=0,
+            profile=profile,
         ).select_related('account', 'category', 'subcategory')
 
     if real_installments.exists():
@@ -1734,6 +1767,7 @@ def get_installment_details(month_str):
         invoice_month__in=lookback_months_list,
         is_installment=True,
         amount__lt=0,
+        profile=profile,
     ).select_related('account', 'category', 'subcategory'))
     _lb_by_invoice = {}
     for txn in _lb_invoice_txns:
@@ -1748,6 +1782,7 @@ def get_installment_details(month_str):
             invoice_month='',
             is_installment=True,
             amount__lt=0,
+            profile=profile,
         ).select_related('account', 'category', 'subcategory'))
         for txn in _lb_fallback_txns:
             _lb_by_fallback.setdefault(txn.month_str, []).append(txn)
@@ -1837,7 +1872,7 @@ def get_installment_details(month_str):
 # Installment sibling categorization
 # ---------------------------------------------------------------------------
 
-def categorize_installment_siblings(transaction_id, category_id, subcategory_id=None):
+def categorize_installment_siblings(transaction_id, category_id, subcategory_id=None, profile=None):
     """
     Categorize an installment transaction AND all its siblings (same purchase,
     different months).
@@ -1847,7 +1882,7 @@ def categorize_installment_siblings(transaction_id, category_id, subcategory_id=
 
     Returns: dict with count of updated transactions and their IDs.
     """
-    txn = Transaction.objects.select_related('account', 'category', 'subcategory').get(id=transaction_id)
+    txn = Transaction.objects.select_related('account', 'category', 'subcategory').get(id=transaction_id, profile=profile)
 
     # Parse installment info
     m_match = re.search(r'(\d{1,2})/(\d{1,2})', txn.description)
@@ -1861,7 +1896,7 @@ def categorize_installment_siblings(transaction_id, category_id, subcategory_id=
             update_fields['subcategory_id'] = subcategory_id
         else:
             update_fields['subcategory_id'] = None
-        Transaction.objects.filter(id=transaction_id).update(**update_fields)
+        Transaction.objects.filter(id=transaction_id, profile=profile).update(**update_fields)
         return {'updated': 1, 'sibling_ids': [str(transaction_id)]}
 
     total_installments = int(m_match.group(2))
@@ -1874,6 +1909,7 @@ def categorize_installment_siblings(transaction_id, category_id, subcategory_id=
     candidates = Transaction.objects.filter(
         account_id=acct_id,
         is_installment=True,
+        profile=profile,
     )
 
     sibling_ids = []
@@ -1901,7 +1937,7 @@ def categorize_installment_siblings(transaction_id, category_id, subcategory_id=
         update_fields['subcategory_id'] = subcategory_id
     else:
         update_fields['subcategory_id'] = None
-    updated = Transaction.objects.filter(id__in=sibling_ids).update(**update_fields)
+    updated = Transaction.objects.filter(id__in=sibling_ids, profile=profile).update(**update_fields)
 
     return {
         'updated': updated,
@@ -1913,7 +1949,7 @@ def categorize_installment_siblings(transaction_id, category_id, subcategory_id=
 # Mapping candidates + map/unmap
 # ---------------------------------------------------------------------------
 
-def get_mapping_candidates(month_str, category_id=None, mapping_id=None):
+def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile=None):
     """
     Returns candidate transactions for mapping to a recurring category.
     Includes BOTH checking (month_str) and CC (invoice_month) transactions.
@@ -1933,19 +1969,19 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None):
     cat_name = ''
 
     if mapping_id:
-        mapping = RecurringMapping.objects.select_related('template', 'category').get(id=mapping_id)
+        mapping = RecurringMapping.objects.select_related('template', 'category').get(id=mapping_id, profile=profile)
         cat = mapping.category
         expected = float(mapping.expected_amount)
         cat_name = mapping.custom_name if mapping.is_custom else (
             mapping.template.name if mapping.template else '?'
         )
     elif category_id:
-        cat = Category.objects.get(id=category_id)
+        cat = Category.objects.get(id=category_id, profile=profile)
         expected = float(cat.default_limit)
         cat_name = cat.name
         # Look up the mapping for this category+month (if it exists)
         mapping = RecurringMapping.objects.filter(
-            category=cat, month_str=month_str
+            category=cat, month_str=month_str, profile=profile,
         ).first()
 
     # Build set of linked transaction IDs for THIS mapping
@@ -1959,6 +1995,7 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None):
     globally_linked_ids = set()
     all_mappings = RecurringMapping.objects.filter(
         month_str=month_str,
+        profile=profile,
     ).prefetch_related('transactions')
     for m in all_mappings:
         for t in m.transactions.all():
@@ -1981,12 +2018,14 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None):
     qs = Transaction.objects.filter(
         Q(month_str=month_str, account__account_type='checking') |
         Q(month_str=month_str, account__account_type='manual') |
-        Q(invoice_month=month_str, account__account_type='credit_card')
+        Q(invoice_month=month_str, account__account_type='credit_card'),
+        profile=profile,
     ).select_related('account', 'category').order_by('-date').distinct()
 
     prior_qs = Transaction.objects.filter(
         Q(month_str=prev_month_str, account__account_type='checking') |
-        Q(month_str=prev_month_str, account__account_type='manual')
+        Q(month_str=prev_month_str, account__account_type='manual'),
+        profile=profile,
     ).select_related('account', 'category').order_by('-date').distinct()
 
     # Build set of transactions already cross-month-moved to ANY mapping.
@@ -2005,6 +2044,7 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None):
     # Check all mappings that have cross-month transactions (current, next, and prev months)
     for cm in RecurringMapping.objects.filter(
         month_str__in=[month_str, next_month_str, prev_month_str],
+        profile=profile,
     ).prefetch_related('cross_month_transactions'):
         for t in cm.cross_month_transactions.all():
             cross_month_moved_ids.add(str(t.id))
@@ -2097,7 +2137,7 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None):
     }
 
 
-def map_transaction_to_category(transaction_id, category_id=None, mapping_id=None):
+def map_transaction_to_category(transaction_id, category_id=None, mapping_id=None, profile=None):
     """
     Map a transaction to a recurring category or custom mapping.
     Updates the transaction's category FK and marks it as manually categorized.
@@ -2107,7 +2147,7 @@ def map_transaction_to_category(transaction_id, category_id=None, mapping_id=Non
     Accepts either category_id (for category-based items) or mapping_id
     (for custom items without a category).
     """
-    txn = Transaction.objects.select_related('account').get(id=transaction_id)
+    txn = Transaction.objects.select_related('account').get(id=transaction_id, profile=profile)
 
     def _update_mapping(mapping):
         """Add transaction to M2M set and recompute actual.
@@ -2132,7 +2172,7 @@ def map_transaction_to_category(transaction_id, category_id=None, mapping_id=Non
         mapping.save()
 
     if mapping_id:
-        mapping = RecurringMapping.objects.select_related('template', 'category').get(id=mapping_id)
+        mapping = RecurringMapping.objects.select_related('template', 'category').get(id=mapping_id, profile=profile)
         if mapping.category:
             txn.category = mapping.category
         txn.is_manually_categorized = True
@@ -2149,7 +2189,7 @@ def map_transaction_to_category(transaction_id, category_id=None, mapping_id=Non
             'amount': float(txn.amount),
         }
     elif category_id:
-        cat = Category.objects.get(id=category_id)
+        cat = Category.objects.get(id=category_id, profile=profile)
         txn.category = cat
         txn.is_manually_categorized = True
         txn.save()
@@ -2157,6 +2197,7 @@ def map_transaction_to_category(transaction_id, category_id=None, mapping_id=Non
             mapping = RecurringMapping.objects.get(
                 category=cat,
                 month_str=txn.month_str,
+                profile=profile,
             )
             _update_mapping(mapping)
         except RecurringMapping.DoesNotExist:
@@ -2172,19 +2213,19 @@ def map_transaction_to_category(transaction_id, category_id=None, mapping_id=Non
         raise ValueError('Either category_id or mapping_id must be provided')
 
 
-def unmap_transaction(transaction_id, mapping_id=None):
+def unmap_transaction(transaction_id, mapping_id=None, profile=None):
     """
     Remove a transaction from a recurring mapping's linked set.
     If mapping_id is given, remove from that specific mapping.
     Otherwise, find by category + month (legacy behavior).
     Resets transaction category to 'Não categorizado'.
     """
-    txn = Transaction.objects.get(id=transaction_id)
+    txn = Transaction.objects.get(id=transaction_id, profile=profile)
     old_category = txn.category
     old_month = txn.month_str
 
     # Find or get the "Não categorizado" category
-    uncat = Category.objects.filter(name='Não categorizado').first()
+    uncat = Category.objects.filter(name='Não categorizado', profile=profile).first()
     txn.category = uncat
     txn.is_manually_categorized = False
     txn.save()
@@ -2193,7 +2234,7 @@ def unmap_transaction(transaction_id, mapping_id=None):
     mapping = None
     if mapping_id:
         try:
-            mapping = RecurringMapping.objects.get(id=mapping_id)
+            mapping = RecurringMapping.objects.get(id=mapping_id, profile=profile)
         except RecurringMapping.DoesNotExist:
             pass
     elif old_category:
@@ -2201,6 +2242,7 @@ def unmap_transaction(transaction_id, mapping_id=None):
             mapping = RecurringMapping.objects.get(
                 category=old_category,
                 month_str=old_month,
+                profile=profile,
             )
         except RecurringMapping.DoesNotExist:
             pass
@@ -2243,7 +2285,7 @@ def unmap_transaction(transaction_id, mapping_id=None):
 # Variable transactions
 # ---------------------------------------------------------------------------
 
-def get_variable_transactions(month_str):
+def get_variable_transactions(month_str, profile=None):
     """
     Variable transactions for the VARIÁVEIS tab.
     Returns all variable-type expense transactions for a month.
@@ -2254,6 +2296,7 @@ def get_variable_transactions(month_str):
         amount__lt=0,
         category__category_type='Variavel',
         is_internal_transfer=False,
+        profile=profile,
     ).select_related('account', 'category').order_by('-date')
 
     results = []
@@ -2293,7 +2336,7 @@ def _month_str_add(month_str, months):
     return dt.strftime('%Y-%m')
 
 
-def _compute_installment_schedule(target_month_str, num_future_months=6):
+def _compute_installment_schedule(target_month_str, num_future_months=6, profile=None):
     """
     Compute installment totals for target_month and future months.
 
@@ -2321,6 +2364,7 @@ def _compute_installment_schedule(target_month_str, num_future_months=6):
         invoice_month__in=all_months,
         is_installment=True,
         amount__lt=0,
+        profile=profile,
     ).select_related('account'))
 
     # Group by invoice_month
@@ -2337,6 +2381,7 @@ def _compute_installment_schedule(target_month_str, num_future_months=6):
             invoice_month='',
             is_installment=True,
             amount__lt=0,
+            profile=profile,
         ).select_related('account'))
         txns_by_fallback_month = {}
         for txn in fallback_txns:
@@ -2434,7 +2479,7 @@ def _compute_installment_schedule(target_month_str, num_future_months=6):
     return {m: round(v, 2) for m, v in schedule.items()}
 
 
-def get_last_installment_month():
+def get_last_installment_month(profile=None):
     """
     Return the furthest future month_str that still has a projected installment.
 
@@ -2446,6 +2491,7 @@ def get_last_installment_month():
     inst_txns = Transaction.objects.filter(
         is_installment=True,
         amount__lt=0,
+        profile=profile,
     ).select_related('account').values_list(
         'invoice_month', 'month_str', 'installment_info', 'description', 'amount', 'account__name'
     )
@@ -2487,7 +2533,7 @@ def get_last_installment_month():
     return furthest
 
 
-def get_projection(start_month_str, num_months=6):
+def get_projection(start_month_str, num_months=6, profile=None):
     """
     PROJEÇÃO — Forward-looking financial projection.
 
@@ -2506,13 +2552,13 @@ def get_projection(start_month_str, num_months=6):
 
     # Starting balance
     try:
-        bo = BalanceOverride.objects.get(month_str=start_month_str)
+        bo = BalanceOverride.objects.get(month_str=start_month_str, profile=profile)
         starting_balance = float(bo.balance)
     except BalanceOverride.DoesNotExist:
         starting_balance = 0.0
 
     # Template defaults for recurring items
-    tpls = RecurringTemplate.objects.filter(is_active=True)
+    tpls = RecurringTemplate.objects.filter(is_active=True, profile=profile)
     income_tpls = tpls.filter(template_type='Income')
     fixo_tpls = tpls.filter(template_type='Fixo')
     invest_tpls = tpls.filter(template_type='Investimento')
@@ -2529,6 +2575,7 @@ def get_projection(start_month_str, num_months=6):
     # Variable budget comes from taxonomy Category (not templates)
     variable_cats = Category.objects.filter(
         category_type='Variavel', is_active=True, default_limit__gt=0,
+        profile=profile,
     )
     total_variable_default = float(
         variable_cats.aggregate(t=Sum('default_limit'))['t'] or 0
@@ -2536,7 +2583,7 @@ def get_projection(start_month_str, num_months=6):
 
     # Active installments — compute from all recent CC statements
     installment_schedule = _compute_installment_schedule(
-        start_month_str, num_future_months=num_months
+        start_month_str, num_future_months=num_months, profile=profile,
     )
     current_installment_total = installment_schedule.get(start_month_str, 0)
 
@@ -2551,6 +2598,7 @@ def get_projection(start_month_str, num_months=6):
             # Current month: use actual RecurringMapping data
             mappings = RecurringMapping.objects.filter(
                 month_str=month,
+                profile=profile,
             ).exclude(status='skipped').select_related('template')
 
             income = 0.0
@@ -2604,7 +2652,7 @@ def get_projection(start_month_str, num_months=6):
 # B2: Variable budget (Orçamento) service
 # ---------------------------------------------------------------------------
 
-def get_orcamento(month_str):
+def get_orcamento(month_str, profile=None):
     """
     ORÇAMENTO — Variable spending budget tracking per category.
 
@@ -2620,6 +2668,7 @@ def get_orcamento(month_str):
         is_active=True,
         category_type='Variavel',
         default_limit__gt=0,
+        profile=profile,
     ).order_by('display_order', 'name')
 
     cat_ids = [c.id for c in variable_cats]
@@ -2633,7 +2682,7 @@ def get_orcamento(month_str):
     budget_overrides = {
         bc.category_id: float(bc.limit_override)
         for bc in BudgetConfig.objects.filter(
-            category_id__in=cat_ids, month_str=month_str
+            category_id__in=cat_ids, month_str=month_str, profile=profile,
         )
     }
 
@@ -2644,6 +2693,7 @@ def get_orcamento(month_str):
             category_id__in=cat_ids,
             amount__lt=0,
             is_internal_transfer=False,
+            profile=profile,
         ).values('category_id').annotate(
             total=Sum('amount')
         ).values_list('category_id', 'total')
@@ -2656,6 +2706,7 @@ def get_orcamento(month_str):
             category_id__in=cat_ids,
             amount__lt=0,
             is_internal_transfer=False,
+            profile=profile,
         ).values('category_id').annotate(
             total=Sum('amount')
         ).values_list('category_id', 'total')
@@ -2669,6 +2720,7 @@ def get_orcamento(month_str):
             category_id__in=cat_ids,
             amount__lt=0,
             is_internal_transfer=False,
+            profile=profile,
         ).values('category_id').annotate(
             month_count=Count('month_str', distinct=True)
         ).values_list('category_id', 'month_count')
@@ -2760,7 +2812,7 @@ def _extract_tokens(desc):
     return [t for t in tokens if len(t) >= 3 and t not in stop_words]
 
 
-def smart_categorize(month_str=None, dry_run=False):
+def smart_categorize(month_str=None, dry_run=False, profile=None):
     """
     Self-improving categorization engine with 5-strategy priority chain.
 
@@ -2786,7 +2838,7 @@ def smart_categorize(month_str=None, dry_run=False):
     Returns:
         dict with categorized count, strategy breakdown, inconsistencies, and details.
     """
-    nao_cat = Category.objects.filter(name='Não categorizado').first()
+    nao_cat = Category.objects.filter(name='Não categorizado', profile=profile).first()
     if not nao_cat:
         return {'categorized': 0, 'details': [], 'error': 'No uncategorized category found'}
 
@@ -2797,6 +2849,7 @@ def smart_categorize(month_str=None, dry_run=False):
     qs = Transaction.objects.filter(
         category=nao_cat,
         is_internal_transfer=False,
+        profile=profile,
     ).select_related('account', 'category')
     if month_str:
         from django.db.models import Q
@@ -2820,10 +2873,11 @@ def smart_categorize(month_str=None, dry_run=False):
     variable_cat_ids = set(
         Category.objects.filter(
             category_type='Variavel', is_active=True,
+            profile=profile,
         ).values_list('id', flat=True)
     )
     # Also include "Contas" (special catch-all for bank fees/charges)
-    contas_cat = Category.objects.filter(name='Contas', is_active=True).first()
+    contas_cat = Category.objects.filter(name='Contas', is_active=True, profile=profile).first()
     if contas_cat:
         variable_cat_ids.add(contas_cat.id)
 
@@ -2832,6 +2886,7 @@ def smart_categorize(month_str=None, dry_run=False):
     all_categorized = Transaction.objects.filter(
         is_internal_transfer=False,
         category_id__in=variable_cat_ids,
+        profile=profile,
     ).select_related('category', 'subcategory', 'account')
 
     # Manual categorizations get 3x weight (higher trust)
@@ -2883,13 +2938,14 @@ def smart_categorize(month_str=None, dry_run=False):
     # ── Load active categorization rules (ordered by priority) ──
     rules = list(CategorizationRule.objects.filter(
         is_active=True,
+        profile=profile,
     ).select_related('category', 'subcategory').order_by('-priority'))
 
     # Category lookup — includes ALL active categories (rules can still assign Fixo)
-    cat_lookup = {c.id: c for c in Category.objects.filter(is_active=True)}
+    cat_lookup = {c.id: c for c in Category.objects.filter(is_active=True, profile=profile)}
     # Subcategory lookup — also track which subcategory belongs to which category
     from api.models import Subcategory
-    sub_lookup = {s.id: s for s in Subcategory.objects.select_related('category')}
+    sub_lookup = {s.id: s for s in Subcategory.objects.filter(profile=profile).select_related('category')}
     # Valid subcategory IDs per category: sub must belong to the same category
     sub_to_cat = {s.id: s.category_id for s in sub_lookup.values()}
 
@@ -3049,7 +3105,7 @@ def smart_categorize(month_str=None, dry_run=False):
                 txn.save(update_fields=['category', 'subcategory', 'updated_at'])
 
     # ── Inconsistency Detection ──
-    inconsistencies = _detect_inconsistencies(nao_cat)
+    inconsistencies = _detect_inconsistencies(nao_cat, profile=profile)
 
     return {
         'categorized': len(results),
@@ -3061,7 +3117,7 @@ def smart_categorize(month_str=None, dry_run=False):
     }
 
 
-def _detect_inconsistencies(nao_cat):
+def _detect_inconsistencies(nao_cat, profile=None):
     """
     Find descriptions that appear in multiple different categories.
     These indicate categorization conflicts that need manual resolution.
@@ -3071,6 +3127,7 @@ def _detect_inconsistencies(nao_cat):
     # Get all non-uncategorized, non-transfer transactions
     txns = Transaction.objects.filter(
         is_internal_transfer=False,
+        profile=profile,
     ).exclude(
         category=nao_cat,
     ).exclude(
@@ -3105,7 +3162,7 @@ def _detect_inconsistencies(nao_cat):
     return inconsistencies[:20]
 
 
-def find_similar_transactions(transaction_id):
+def find_similar_transactions(transaction_id, profile=None):
     """
     Find transactions similar to the given one that are uncategorized.
     Used for learning feedback — when user categorizes one transaction,
@@ -3113,8 +3170,8 @@ def find_similar_transactions(transaction_id):
 
     Returns similar uncategorized transactions + rule suggestion.
     """
-    txn = Transaction.objects.select_related('account', 'category').get(id=transaction_id)
-    nao_cat = Category.objects.filter(name='Não categorizado').first()
+    txn = Transaction.objects.select_related('account', 'category').get(id=transaction_id, profile=profile)
+    nao_cat = Category.objects.filter(name='Não categorizado', profile=profile).first()
     if not nao_cat or not txn.category or txn.category == nao_cat:
         return {'similar_uncategorized': [], 'suggest_rule': None}
 
@@ -3124,6 +3181,7 @@ def find_similar_transactions(transaction_id):
     similar_qs = Transaction.objects.filter(
         category=nao_cat,
         is_internal_transfer=False,
+        profile=profile,
     ).select_related('account')
 
     similar = []
@@ -3147,10 +3205,12 @@ def find_similar_transactions(transaction_id):
         would_match = Transaction.objects.filter(
             description__icontains=keyword,
             is_internal_transfer=False,
+            profile=profile,
         ).exclude(category=txn.category).count()
         already_correct = Transaction.objects.filter(
             description__icontains=keyword,
             category=txn.category,
+            profile=profile,
         ).count()
 
         if would_match > 0 or already_correct > 1:
@@ -3168,7 +3228,7 @@ def find_similar_transactions(transaction_id):
     }
 
 
-def rename_transaction(transaction_id, new_description, propagate_ids=None):
+def rename_transaction(transaction_id, new_description, propagate_ids=None, profile=None):
     """
     Rename a transaction's description and optionally propagate to similar ones.
 
@@ -3177,7 +3237,7 @@ def rename_transaction(transaction_id, new_description, propagate_ids=None):
 
     Similarity: same raw_description/description_original, same account, amount ±15%.
     """
-    txn = Transaction.objects.select_related('account').get(id=transaction_id)
+    txn = Transaction.objects.select_related('account').get(id=transaction_id, profile=profile)
     old_description = txn.description
     original_desc = txn.description_original or txn.raw_description or old_description
 
@@ -3190,6 +3250,7 @@ def rename_transaction(transaction_id, new_description, propagate_ids=None):
         if propagate_ids:
             Transaction.objects.filter(
                 id__in=propagate_ids,
+                profile=profile,
             ).update(description=new_description)
 
         # Auto-create RenameRule for future imports
@@ -3197,6 +3258,7 @@ def rename_transaction(transaction_id, new_description, propagate_ids=None):
         if norm_original and norm_original != _normalize_description(new_description):
             RenameRule.objects.get_or_create(
                 keyword=norm_original,
+                profile=profile,
                 defaults={'display_name': new_description, 'is_active': True},
             )
 
@@ -3214,6 +3276,7 @@ def rename_transaction(transaction_id, new_description, propagate_ids=None):
         account=txn.account,
         amount__gte=min(amt_low, amt_high),
         amount__lte=max(amt_low, amt_high),
+        profile=profile,
     ).exclude(id=txn.id).select_related('account')
 
     # Filter by original description similarity
@@ -3241,7 +3304,7 @@ def rename_transaction(transaction_id, new_description, propagate_ids=None):
 # Auto-link recurring items
 # ---------------------------------------------------------------------------
 
-def auto_link_recurring(month_str):
+def auto_link_recurring(month_str, profile=None):
     """
     Try to automatically link unmatched recurring items to transactions.
 
@@ -3262,6 +3325,7 @@ def auto_link_recurring(month_str):
     mappings = RecurringMapping.objects.filter(
         month_str=month_str,
         match_mode='manual',
+        profile=profile,
     ).exclude(
         status__in=['skipped', 'mapped'],
     ).select_related('template', 'category', 'transaction').prefetch_related('transactions')
@@ -3275,6 +3339,7 @@ def auto_link_recurring(month_str):
     # Get all transactions for this month
     all_txns = Transaction.objects.filter(
         month_str=month_str,
+        profile=profile,
     ).select_related('account', 'category')
 
     income_txns = list(all_txns.filter(amount__gt=0))
@@ -3282,7 +3347,7 @@ def auto_link_recurring(month_str):
 
     # Build set of already-linked transaction IDs (across ALL mappings this month)
     already_linked = set()
-    all_mappings = RecurringMapping.objects.filter(month_str=month_str).prefetch_related('transactions')
+    all_mappings = RecurringMapping.objects.filter(month_str=month_str, profile=profile).prefetch_related('transactions')
     for m in all_mappings:
         for t in m.transactions.all():
             already_linked.add(t.id)
@@ -3293,6 +3358,7 @@ def auto_link_recurring(month_str):
     prev_month = _month_str_add(month_str, -1)
     prev_mappings = RecurringMapping.objects.filter(
         month_str=prev_month,
+        profile=profile,
     ).select_related('template').prefetch_related('transactions')
 
     prev_links = {}  # template_id -> list of (description_normalized, amount)
@@ -3430,14 +3496,14 @@ def auto_link_recurring(month_str):
 # Reapply Template to Month
 # ---------------------------------------------------------------------------
 
-def reapply_template_to_month(month_str):
+def reapply_template_to_month(month_str, profile=None):
     """
     Delete all existing RecurringMapping rows for the month and re-initialize
     from the current RecurringTemplate. This lets the user reset a month's
     recurring items after editing the template.
     """
-    deleted_count = RecurringMapping.objects.filter(month_str=month_str).delete()[0]
-    result = initialize_month(month_str)
+    deleted_count = RecurringMapping.objects.filter(month_str=month_str, profile=profile).delete()[0]
+    result = initialize_month(month_str, profile=profile)
     result['deleted'] = deleted_count
     return result
 
@@ -3446,7 +3512,7 @@ def reapply_template_to_month(month_str):
 # Month Categories (for TransactionPicker category matching)
 # ---------------------------------------------------------------------------
 
-def get_month_categories(month_str):
+def get_month_categories(month_str, profile=None):
     """
     Return categories with their transaction counts for a given month.
     Only includes expense transactions (amount < 0), excluding internal
@@ -3461,6 +3527,7 @@ def get_month_categories(month_str):
             amount__lt=0,
             is_internal_transfer=False,
             category__isnull=False,
+            profile=profile,
         )
         .values(
             'category__id',
@@ -3495,7 +3562,7 @@ def get_month_categories(month_str):
 # Checking Account Transactions
 # ---------------------------------------------------------------------------
 
-def get_checking_transactions(month_str):
+def get_checking_transactions(month_str, profile=None):
     """
     Fetch all checking account transactions for a given month.
     Returns transactions grouped with summary totals.
@@ -3504,11 +3571,14 @@ def get_checking_transactions(month_str):
     txns = Transaction.objects.filter(
         month_str=month_str,
         account__account_type='checking',
+        profile=profile,
     ).select_related('account', 'category', 'subcategory').order_by('date')
 
     # Find cross-month-moved transaction IDs for this month
     cross_month_moved = {}
-    other_month_mappings = RecurringMapping.objects.exclude(
+    other_month_mappings = RecurringMapping.objects.filter(
+        profile=profile,
+    ).exclude(
         month_str=month_str
     ).prefetch_related('cross_month_transactions')
     for om in other_month_mappings:
@@ -3559,7 +3629,7 @@ def get_checking_transactions(month_str):
 # Phase 7: Analytics Trends
 # ---------------------------------------------------------------------------
 
-def get_analytics_trends(start_month=None, end_month=None, category_ids=None, account_filter=None):
+def get_analytics_trends(start_month=None, end_month=None, category_ids=None, account_filter=None, profile=None):
     """
     Aggregate data for the Analytics page charts.
     All queries are batched (no N+1).
@@ -3575,7 +3645,7 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     """
     # -- 1. Determine month range -------------------------------------------
     all_months = list(
-        Transaction.objects
+        Transaction.objects.filter(profile=profile)
         .values_list('month_str', flat=True)
         .distinct()
         .order_by('month_str')
@@ -3610,6 +3680,7 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     base_qs = Transaction.objects.filter(
         month_str__in=month_list,
         is_internal_transfer=False,
+        profile=profile,
     )
     if category_ids:
         base_qs = base_qs.filter(category_id__in=category_ids)
@@ -3662,7 +3733,7 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     # Get all budget configs for the target month (category-based)
     budget_configs = list(
         BudgetConfig.objects
-        .filter(month_str=budget_month, category__isnull=False)
+        .filter(month_str=budget_month, category__isnull=False, profile=profile)
         .select_related('category')
     )
 
@@ -3670,7 +3741,7 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     budget_cat_ids = {bc.category_id for bc in budget_configs}
     cats_with_defaults = list(
         Category.objects
-        .filter(is_active=True, default_limit__gt=0)
+        .filter(is_active=True, default_limit__gt=0, profile=profile)
         .exclude(id__in=budget_cat_ids)
     )
 
@@ -3689,6 +3760,7 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
                 is_internal_transfer=False,
                 amount__lt=0,
                 category_id__in=budget_map.keys(),
+                profile=profile,
             )
             .values('category__id', 'category__name')
             .annotate(total=Sum('amount'))
@@ -3727,6 +3799,7 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
         account__account_type='credit_card',
         is_internal_transfer=False,
         amount__lt=0,
+        profile=profile,
     )
     if category_ids:
         cc_qs = cc_qs.filter(category_id__in=category_ids)
@@ -3751,6 +3824,7 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
         account__account_type='checking',
         is_internal_transfer=False,
         amount__lt=0,
+        profile=profile,
     )
     if category_ids:
         checking_qs = checking_qs.filter(category_id__in=category_ids)
@@ -3777,6 +3851,7 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
             is_internal_transfer=False,
             amount__lt=0,
             category__isnull=False,
+            profile=profile,
         )
         .values('category__id', 'category__name', 'category__category_type')
         .annotate(cnt=Count('id'))
@@ -3977,9 +4052,9 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
 
     # Build recurring template lookup: category_name → template for Fixo/Income/Investimento
     from api.models import RecurringTemplate as RT
-    recurring_templates = {t.name: t for t in RT.objects.filter(is_active=True)}
+    recurring_templates = {t.name: t for t in RT.objects.filter(is_active=True, profile=profile)}
     # Category type lookup
-    cat_type_map = {c.name: c.category_type for c in Category.objects.all()}
+    cat_type_map = {c.name: c.category_type for c in Category.objects.filter(profile=profile)}
 
     # Query all expense transactions by category and description
     cat_desc_qs = (

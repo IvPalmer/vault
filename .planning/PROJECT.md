@@ -19,12 +19,14 @@ Everything else — recurrent tracking, installment visibility, budget alerts, h
 - Legacy: FinanceDashboard/ (Streamlit) kept for data import pipeline
 
 **Key files:**
-- `backend/api/services.py` — all business logic (2000+ lines)
-- `backend/api/models.py` — 9 Django models
-- `backend/api/views.py` — 20+ API endpoints
-- `src/components/` — 17 React components
-- `src/api/client.js` — API wrapper
-- `src/context/MonthContext.jsx` — global month state
+- `backend/api/services.py` — all business logic (2000+ lines, all profile-scoped)
+- `backend/api/models.py` — 13 Django models (Profile + 12 profile-scoped)
+- `backend/api/views.py` — 20+ API endpoints (all profile-scoped via middleware)
+- `backend/api/middleware.py` — ProfileMiddleware (X-Profile-ID header)
+- `src/components/` — 18 React components (incl. ProfileSwitcher)
+- `src/api/client.js` — API wrapper with X-Profile-ID header
+- `src/context/MonthContext.jsx` — global month state (profile-scoped localStorage)
+- `src/context/ProfileContext.jsx` — profile selection and cache management
 
 ## Requirements
 
@@ -74,10 +76,18 @@ Everything else — recurrent tracking, installment visibility, budget alerts, h
 - [x] Standardized VaultTable component (sorting, search, semantic colors)
 - [x] CSS Module design system with custom properties
 
+**Multi-Profile Support:**
+- [x] Profile model with isolated data (accounts, transactions, categories, rules, budgets)
+- [x] Profile switcher dropdown in header (no auth needed — household app)
+- [x] X-Profile-ID header middleware for API scoping
+- [x] Per-profile data directories for import (SampleData/Palmer/, SampleData/Rafa/)
+- [x] NuBank OFX import with UTF-8 encoding and description cleanup
+- [x] Clone-from-profile for initial config (categories, rules, templates)
+
 ### Out of Scope
 
 - Mobile app — web-first, desktop browser experience
-- Multi-user/family accounts — single user personal finance
+- ~~Multi-user/family accounts — single user personal finance~~ (Now supported: household profiles)
 - Bank API integrations — manual CSV/OFX import is sufficient
 - Investment portfolio tracking — focus is cash flow, not asset management
 - Receipt scanning/OCR — transaction data comes from bank extracts
@@ -109,6 +119,11 @@ User is caught in an overdraft cycle: salary arrives, credit card payment drains
 | invoice_month for CC sections | Cash flow: show what's being PAID this month | Done |
 | month_str for other sections | Transaction date for spending/budget tracking | Done |
 | Installment dedup (lowest position) | CC bills list all future positions; only lowest is the actual charge | Done |
+| Multi-profile via X-Profile-ID header | No URL changes across 52+ endpoints; middleware injects request.profile | Done |
+| Profile FK on all 12 models | Simple `.filter(profile=profile)` on every queryset | Done |
+| No Django User model for profiles | Household app with 2-3 people, no passwords needed | Done |
+| queryClient.removeQueries on profile switch | Clears all cached data; simpler than modifying 20 query key patterns | Done |
+| Per-profile SampleData directories | Clean separation: Palmer/ has Itaú files, Rafa/ has NuBank files | Done |
 
 ---
-*Last updated: 2026-02-06 after installment/CC bug fixes*
+*Last updated: 2026-02-09 after Phase 8a multi-profile support*

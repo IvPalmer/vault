@@ -1,9 +1,15 @@
 from rest_framework import serializers
 from .models import (
-    Account, Category, Subcategory, CategorizationRule,
+    Profile, Account, Category, Subcategory, CategorizationRule,
     RenameRule, RecurringTemplate, Transaction, RecurringMapping,
     BudgetConfig, BalanceOverride,
 )
+
+
+class ProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Profile
+        fields = '__all__'
 
 
 class AccountSerializer(serializers.ModelSerializer):
