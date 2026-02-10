@@ -211,11 +211,11 @@ function Settings() {
     return list.filter((c) => c.is_active)
   }, [categoriesData])
 
-  // Taxonomy categories = transaction classification (have subcategories)
-  // These are from the predefined spreadsheet: Alimentação, Compras, Transporte, etc.
+  // Taxonomy categories = transaction classification (Variavel type)
+  // Alimentação, Compras, Transporte, etc. — shown regardless of whether they have subcategories
   const taxonomyCategories = useMemo(() => {
     return allCategories
-      .filter((c) => c.subcategories && c.subcategories.length > 0)
+      .filter((c) => c.category_type === 'Variavel')
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
   }, [allCategories])
 

@@ -24,18 +24,39 @@ function ParcelaCell({ value }) {
   return <span className={tableStyles.parcela}>{value}</span>
 }
 
-const TABS = [
-  { key: 'all', label: 'TODOS', filter: null },
-  { key: 'master', label: 'MASTER', filter: 'Mastercard Black' },
-  { key: 'visa', label: 'VISA', filter: 'Visa Infinite' },
-  { key: 'rafa', label: 'RAFA', filter: 'Mastercard - Rafa' },
-]
-
 function CardsSection() {
   const { selectedMonth } = useMonth()
   const [activeTab, setActiveTab] = useState('all')
   const [showInstallments, setShowInstallments] = useState(true)
   const queryClient = useQueryClient()
+
+  // Fetch credit card accounts for current profile to build dynamic tabs
+  const { data: accountsData } = useQuery({
+    queryKey: ['accounts-cc'],
+    queryFn: () => api.get('/accounts/?account_type=credit_card'),
+    staleTime: 300_000,
+  })
+
+  const TABS = useMemo(() => {
+    const tabs = [{ key: 'all', label: 'Todos', filter: null }]
+    if (accountsData) {
+      const ccAccounts = (Array.isArray(accountsData) ? accountsData : accountsData.results || [])
+        .filter(a => a.account_type === 'credit_card')
+        .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+      for (const acct of ccAccounts) {
+        // Build a short label: strip brand prefix, leading dashes/spaces
+        const label = acct.name
+          .replace(/^(Mastercard|NuBank)\s*/i, '')
+          .replace(/^[-–—]\s*/, '')
+          .trim() || acct.name
+        tabs.push({ key: acct.id, label, filter: acct.name })
+      }
+    }
+    return tabs
+  }, [accountsData])
+
+  // Reset to 'all' if active tab no longer exists (profile switch)
+  const effectiveTab = TABS.find(t => t.key === activeTab) ? activeTab : 'all'
 
   const { data, isLoading } = useQuery({
     queryKey: ['analytics-cards', selectedMonth],
@@ -218,7 +239,7 @@ function CardsSection() {
   const { filteredData, billTotal } = useMemo(() => {
     if (!data?.transactions) return { filteredData: [], billTotal: 0 }
 
-    const currentTab = TABS.find(t => t.key === activeTab)
+    const currentTab = TABS.find(t => t.key === effectiveTab)
     let txns = data.transactions
 
     if (currentTab?.filter) {
@@ -230,29 +251,29 @@ function CardsSection() {
       // Sum of ALL transactions on the invoice (charges + refunds) = what you actually pay
       billTotal: Math.abs(txns.reduce((s, t) => s + t.amount, 0)),
     }
-  }, [data, activeTab])
+  }, [data, effectiveTab, TABS])
 
   // Filter installments by active tab
   const filteredInstallments = useMemo(() => {
     if (!instData?.items) return []
-    const currentTab = TABS.find(t => t.key === activeTab)
+    const currentTab = TABS.find(t => t.key === effectiveTab)
     if (!currentTab?.filter) return instData.items
     return instData.items.filter(i => i.account === currentTab.filter)
-  }, [instData, activeTab])
+  }, [instData, effectiveTab, TABS])
 
   // Use API-provided deduped total for "all" tab; client-side sum for filtered tabs
   const instTotal = useMemo(() => {
-    if (activeTab === 'all' && instData?.total != null) return instData.total
+    if (effectiveTab === 'all' && instData?.total != null) return instData.total
     return filteredInstallments.reduce((s, i) => s + i.amount, 0)
-  }, [filteredInstallments, activeTab, instData])
+  }, [filteredInstallments, effectiveTab, instData])
 
   if (isLoading) {
     return <div className={styles.loading}>Carregando cartões...</div>
   }
 
   /* For filtered tabs, hide the CARTÃO column */
-  const cols = activeTab === 'all' ? cardColumns : cardColumns.filter(c => c.accessorKey !== 'account')
-  const instCols = activeTab === 'all'
+  const cols = effectiveTab === 'all' ? cardColumns : cardColumns.filter(c => c.accessorKey !== 'account')
+  const instCols = effectiveTab === 'all'
     ? installmentColumns
     : installmentColumns.filter(c => c.accessorKey !== 'account' && c.accessorKey !== 'subcategory')
 
@@ -265,7 +286,7 @@ function CardsSection() {
         {TABS.map((tab) => (
           <button
             key={tab.key}
-            className={`${styles.tab} ${activeTab === tab.key ? styles.active : ''}`}
+            className={`${styles.tab} ${effectiveTab === tab.key ? styles.active : ''}`}
             onClick={() => setActiveTab(tab.key)}
           >
             {tab.label}
@@ -289,7 +310,7 @@ function CardsSection() {
             <span className={styles.installmentMeta}>
               <span className={tableStyles.negative}>R$ {fmt(instTotal)}</span>
               <span className={styles.summaryCount}>
-                {' '}{activeTab === 'all' && instData?.count != null ? instData.count : filteredInstallments.length} parcelas
+                {' '}{effectiveTab === 'all' && instData?.count != null ? instData.count : filteredInstallments.length} parcelas
               </span>
               <span className={styles.chevron}>{showInstallments ? '▾' : '▸'}</span>
             </span>

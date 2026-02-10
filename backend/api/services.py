@@ -1611,6 +1611,9 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
     if account_filter:
         qs = qs.filter(account__name__icontains=account_filter)
 
+    # Collect mapped transaction IDs for this month
+    mapped_txn_ids = _get_mapped_transaction_ids(month_str, profile)
+
     results = []
     for txn in qs:
         # Extract installment info from description
@@ -1633,6 +1636,7 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
             'subcategory_id': str(txn.subcategory.id) if txn.subcategory else None,
             'parcela': parcela,
             'is_installment': txn.is_installment,
+            'is_mapped': txn.id in mapped_txn_ids,
         })
 
     return {
@@ -3565,6 +3569,27 @@ def get_month_categories(month_str, profile=None):
 
 
 # ---------------------------------------------------------------------------
+# Mapped Transaction Helper
+# ---------------------------------------------------------------------------
+
+def _get_mapped_transaction_ids(month_str, profile):
+    """
+    Return a set of transaction UUIDs that are linked to any RecurringMapping
+    for the given month (via M2M transactions or cross_month_transactions).
+    """
+    mappings = RecurringMapping.objects.filter(
+        profile=profile, month_str=month_str,
+    ).prefetch_related('transactions', 'cross_month_transactions')
+    ids = set()
+    for m in mappings:
+        for t in m.transactions.all():
+            ids.add(t.id)
+        for t in m.cross_month_transactions.all():
+            ids.add(t.id)
+    return ids
+
+
+# ---------------------------------------------------------------------------
 # Checking Account Transactions
 # ---------------------------------------------------------------------------
 
@@ -3590,6 +3615,9 @@ def get_checking_transactions(month_str, profile=None):
     for om in other_month_mappings:
         for ct in om.cross_month_transactions.filter(month_str=month_str):
             cross_month_moved[str(ct.id)] = om.month_str
+
+    # Collect all transaction IDs that are linked to recurring mappings this month
+    mapped_txn_ids = _get_mapped_transaction_ids(month_str, profile)
 
     items = []
     total_in = 0.0
@@ -3619,6 +3647,7 @@ def get_checking_transactions(month_str, profile=None):
             'is_internal_transfer': t.is_internal_transfer,
             'is_recurring': t.is_recurring,
             'moved_to_month': moved_to,
+            'is_mapped': t.id in mapped_txn_ids,
         })
 
     return {

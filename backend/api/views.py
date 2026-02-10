@@ -136,6 +136,8 @@ class ProfileViewSet(viewsets.ModelViewSet):
 
 class AccountViewSet(viewsets.ModelViewSet):
     serializer_class = AccountSerializer
+    filterset_fields = ['account_type']
+    pagination_class = None
 
     def get_queryset(self):
         return Account.objects.filter(profile=self.request.profile)

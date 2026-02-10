@@ -40,6 +40,15 @@
   opacity: 0.35;
 }
 
+.mappedBadge {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--color-green, #16a34a);
+  cursor: default;
+  opacity: 0.8;
+}
+
 .movedBadge {
   flex-shrink: 0;
   font-size: 0.6rem;

@@ -17,24 +17,38 @@ function AmountCell({ value }) {
   return <span className={cls}>R$ {fmt(value)}</span>
 }
 
+function MappedBadge() {
+  return (
+    <span
+      className={styles.mappedBadge}
+      title="Vinculada a item recorrente"
+    >⟁</span>
+  )
+}
+
 function DescriptionCell({ value, row, onUpdated }) {
   const moved = row.original.moved_to_month
+  const mapped = row.original.is_mapped
   if (moved) {
     const mm = moved.slice(5)
     const yy = moved.slice(0, 4)
     return (
       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {mapped && <MappedBadge />}
         <span style={{ opacity: 0.5 }}>{value}</span>
         <span className={styles.movedBadge}>movida → {mm}/{yy}</span>
       </span>
     )
   }
   return (
-    <DescriptionEdit
-      transactionId={row.original.id}
-      description={value}
-      onUpdated={onUpdated}
-    />
+    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      {mapped && <MappedBadge />}
+      <DescriptionEdit
+        transactionId={row.original.id}
+        description={value}
+        onUpdated={onUpdated}
+      />
+    </span>
   )
 }
 
