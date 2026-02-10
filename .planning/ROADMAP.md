@@ -68,6 +68,18 @@ Phases 2-5 were never started — the project pivoted to a full rewrite instead.
 | db_restore profile-aware | Done |
 | Profiles: Palmer (7,297 txns, Itaú), Rafa (682 txns, NuBank) | Done |
 
+### Phase 10: Profile Polish + UX Improvements
+
+| Feature | Status |
+|---------|--------|
+| Dynamic CC tabs per profile (hide "Todos" for single card) | Done |
+| Better CC tab labels (MC Black, MC - Rafa, Visa Infinite) | Done |
+| Settings page refresh on profile switch (resetQueries) | Done |
+| Section title redesign (accent border-left, larger font) | Done |
+| CategoryDropdown filter fix (Variavel only) | Done |
+| CC mapping candidates by purchase date | Done |
+| Mapped transaction indicator (⟁) on checking | Done |
+
 ### Remaining Work
 
 | Item | Priority | Status |

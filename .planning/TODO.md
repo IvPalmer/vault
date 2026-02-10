@@ -30,3 +30,10 @@
 - [x] **NuBank OFX encoding garbled** — Fixed: try UTF-8 first, fall back to Latin-1
 - [x] **db_restore MultipleObjectsReturned** — Fixed: full rewrite with --profile flag, profile-scoped queries
 - [x] **Import creates Palmer templates for Rafa** — Workaround: manual cleanup after import (delete non-Variavel categories + all templates for Rafa)
+- [x] **CategoryDropdown showing recurrent items** — Fixed: added `category_type=Variavel` filter to only show taxonomy categories
+- [x] **Rafa seeing Palmer's CC tabs** — Fixed: dynamic CC tabs from accounts API per profile
+- [x] **Settings only showing 3 of 10 categories for Rafa** — Fixed: filter by `category_type === 'Variavel'` instead of presence of subcategories
+- [x] **CC mapping candidates missing purchase-date CC transactions** — Fixed: include CC by both `invoice_month` and `month_str`
+- [x] **Settings page not refreshing on profile switch** — Fixed: `resetQueries` instead of `removeQueries` + X-Profile-ID on raw fetch calls
+- [x] **CC tab "Todos" showing for single-card profiles** — Fixed: hide tab bar when only 1 card
+- [x] **Section titles too small and hard to see** — Fixed: redesigned with accent border-left, larger font, darker text

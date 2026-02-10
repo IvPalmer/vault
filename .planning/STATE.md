@@ -5,13 +5,13 @@
 See: .planning/PROJECT.md (updated 2026-02-09)
 
 **Core value:** Always know you can cover this month's bills without going negative before your next salary arrives.
-**Current focus:** All planned features complete — BUDG-03/05 shipped, tech debt resolved
+**Current focus:** All planned features complete — polishing UX and fixing profile isolation bugs
 
 ## Current Position
 
-Phase: Phase 9 — Budgeting Completion + Tech Debt **COMPLETE**
-Status: BUDG-03 (spending insights) + BUDG-05 (savings target) shipped; error handling + localStorage hardened
-Last activity: 2026-02-09
+Phase: Phase 10 — Profile Polish + UX Improvements **COMPLETE**
+Status: CC tabs per-profile, Settings refresh fix, section title redesign, category dropdown fix
+Last activity: 2026-02-10
 
 ## What Happened
 
@@ -27,6 +27,7 @@ Phases 1-4 in a single effort:
 - Phase 7v2 (Analytics): DONE — 9 visualization sections + recurring data safety
 - Phase 8a (Multi-Profile): DONE — Profile model, middleware, all endpoints scoped, Palmer + Rafa
 - Phase 9 (Budgeting + Tech Debt): DONE — BUDG-03/05 + error handling + localStorage safety
+- Phase 10 (Profile Polish + UX): DONE — CC tabs per-profile, Settings refresh, section title redesign, category dropdown fix
 
 ## Architecture (Current)
 
@@ -253,8 +254,23 @@ None.
 5. **Average trends** — 6-month spending trajectory direction
 6. **New categories** — flags new spending categories with >R$100 spend
 
+## Phase 10: Profile Polish + UX Improvements (2026-02-10)
+
+### What Changed
+
+**Frontend (9 files):**
+- `src/components/CardsSection.jsx` — Dynamic CC tabs: hide "Todos" for single-card profiles, better labels (MC Black, MC - Rafa, Visa Infinite), hide CARTÃO column for single card
+- `src/components/CardsSection.module.css` — Section title redesign: accent border-left, larger font (0.95rem), darker text
+- `src/components/CheckingSection.module.css` — Section title redesign
+- `src/components/MetricasSection.module.css` — Section title redesign
+- `src/components/OrcamentoSection.module.css` — Section title redesign
+- `src/components/ProjectionSection.module.css` — Section title redesign
+- `src/components/RecurringSection.module.css` — Section title redesign
+- `src/components/Settings.jsx` — X-Profile-ID header on raw fetch calls (upload/import)
+- `src/context/ProfileContext.jsx` — `resetQueries` instead of `removeQueries` for immediate refetch on profile switch
+
 ## Session Continuity
 
-Last session: 2026-02-09 (Phase 9 budgeting + tech debt complete)
-Stopped at: All 4 items implemented, tested, browser-verified
+Last session: 2026-02-10 (Phase 10 profile polish + UX complete)
+Stopped at: All 4 issues fixed, committed, pushed
 Resume file: None

@@ -122,11 +122,13 @@ User is caught in an overdraft cycle: salary arrives, credit card payment drains
 | Multi-profile via X-Profile-ID header | No URL changes across 52+ endpoints; middleware injects request.profile | Done |
 | Profile FK on all 12 models | Simple `.filter(profile=profile)` on every queryset | Done |
 | No Django User model for profiles | Household app with 2-3 people, no passwords needed | Done |
-| queryClient.removeQueries on profile switch | Clears all cached data; simpler than modifying 20 query key patterns | Done |
+| queryClient.resetQueries on profile switch | Resets + triggers immediate refetch on mounted components; fixes Settings page stale data | Done |
 | Per-profile SampleData directories | Clean separation: Palmer/ has Itaú files, Rafa/ has NuBank files | Done |
 
 | Algorithmic spending insights | Pattern-based analysis, no external AI API; 6 analysis strategies | Done |
 | Savings target on Profile model | Per-profile configurable target %; default 20% | Done |
+| Dynamic CC tabs per profile | Auto-build from accounts API; hide "Todos" for single-card profiles | Done |
+| Section title accent design | 3px border-left + larger font for visual hierarchy | Done |
 
 ---
-*Last updated: 2026-02-09 after BUDG-03 + BUDG-05 completion*
+*Last updated: 2026-02-10 after profile polish + UX improvements*
