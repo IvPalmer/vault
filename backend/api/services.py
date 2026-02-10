@@ -2023,12 +2023,14 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile
     # Three separate pools:
     # 1. Checking transactions: month_str = target month (bank transactions in Feb)
     # 2. CC transactions: invoice_month = target month (credit card bill for Feb)
+    #    OR month_str = target month (purchases made in Feb, even if on next invoice)
     # 3. Prior month: checking/manual from previous month (for cross-month linking)
     from django.db.models import Q
     qs = Transaction.objects.filter(
         Q(month_str=month_str, account__account_type='checking') |
         Q(month_str=month_str, account__account_type='manual') |
-        Q(invoice_month=month_str, account__account_type='credit_card'),
+        Q(invoice_month=month_str, account__account_type='credit_card') |
+        Q(month_str=month_str, account__account_type='credit_card'),
         profile=profile,
     ).select_related('account', 'category').order_by('-date').distinct()
 
