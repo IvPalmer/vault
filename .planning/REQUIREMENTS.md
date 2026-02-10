@@ -31,9 +31,9 @@
 
 - [x] **BUDG-01**: User can set spending limits per category
 - [x] **BUDG-02**: System alerts user when category spending exceeds limit
-- [ ] **BUDG-03**: System analyzes spending habits and suggests budget based on patterns
+- [x] **BUDG-03**: System analyzes spending habits and suggests budget based on patterns
 - [x] **BUDG-04**: Multiple user profiles with isolated data — Phase 8a multi-profile support
-- [ ] **BUDG-05**: User can define target savings percentage based on income
+- [x] **BUDG-05**: User can define target savings percentage based on income
 
 ### Dashboard Metrics
 
@@ -121,9 +121,9 @@ Deferred to future release.
 | UIUX-05 | Done | CategoryDropdown.jsx (portal, search, clear) |
 | UIUX-06 | Done | categorize_installment_siblings() + installmentMode prop |
 | RECR-05 | Done | RecurringTemplate model + data migration |
-| BUDG-03 | Pending | No AI analysis yet |
+| BUDG-03 | Done | SpendingInsights — 6 algorithmic analysis strategies |
 | BUDG-04 | Done | Phase 8a multi-profile support |
-| BUDG-05 | Pending | No savings target feature |
+| BUDG-05 | Done | META POUPANCA card + SavingsRateChart target line |
 | PROF-01 | Done | Profile model + FK on 12 models |
 | PROF-02 | Done | ProfileSwitcher.jsx dropdown |
 | PROF-03 | Done | ProfileMiddleware + X-Profile-ID header |
@@ -134,8 +134,8 @@ Deferred to future release.
 
 **Coverage:**
 - v1 requirements: 37 total
-- Completed: 35
-- Pending: 2 (BUDG-03, BUDG-05)
+- Completed: 37
+- Pending: 0
 
 ---
 *Requirements defined: 2026-01-22*

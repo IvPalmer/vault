@@ -75,9 +75,9 @@ Phases 2-5 were never started — the project pivoted to a full rewrite instead.
 | Salary normalization (effective month) | P1 | Done — via cross-month transaction linking |
 | Improve categorization logic (rules UI, smart-categorize UX, bulk actions) | P1 | Done — CategoryDropdown, SmartCategorizeBar, Settings rules tab |
 | Analytics tab (charts/trends) | P2 | Done — Phase 7v2 |
-| AI budget suggestions (BUDG-03) | P2 | Not started |
+| AI budget suggestions (BUDG-03) | P2 | Done — SpendingInsights (6 algorithmic strategies) |
 | ~~Multiple budget profiles (BUDG-04)~~ | P2 | Done — Phase 8a multi-profile |
-| Savings target % (BUDG-05) | P2 | Not started |
+| Savings target % (BUDG-05) | P2 | Done — META POUPANCA card + chart reference line |
 
 ## Phase Details (Archived — Streamlit Plans)
 
@@ -94,7 +94,7 @@ rewrite architecture.
 | Recurrents (RECR) | 5 | 5 | 0 |
 | Reconciliation (RECO) | 4 | 4 | 0 |
 | Projections (PROJ) | 3 | 3 | 0 |
-| Budgeting (BUDG) | 5 | 3 | 2 |
+| Budgeting (BUDG) | 5 | 5 | 0 |
 | Analytics (ANLY) | 1 | 1 | 0 |
 | Multi-Profile (PROF) | 1 | 1 | 0 |
-| **Total** | **31** | **29** | **2** |
+| **Total** | **31** | **31** | **0** |
