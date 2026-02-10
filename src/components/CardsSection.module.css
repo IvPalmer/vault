@@ -5,11 +5,13 @@
 }
 
 .title {
-  font-size: 0.75rem;
+  font-size: 0.95rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 1.5px;
-  color: var(--color-text-secondary);
+  letter-spacing: 2px;
+  color: var(--color-text);
+  padding-left: var(--space-md);
+  border-left: 3px solid var(--color-accent);
 }
 
 .loading {

@@ -33,8 +33,9 @@ export function ProfileProvider({ children }) {
   const switchProfile = useCallback((id) => {
     setProfileIdState(id)
     setProfileId(id)
-    // Nuclear: clear all cached data so everything refetches for new profile
-    queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== 'profiles' })
+    // Nuclear: reset all cached data so active queries refetch for new profile
+    // resetQueries (vs removeQueries) triggers immediate refetch on mounted components
+    queryClient.resetQueries({ predicate: (query) => query.queryKey[0] !== 'profiles' })
   }, [queryClient])
 
   const currentProfile = (profiles.results || profiles).find(p => p.id === profileId) || null

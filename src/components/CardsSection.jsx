@@ -38,25 +38,30 @@ function CardsSection() {
   })
 
   const TABS = useMemo(() => {
-    const tabs = [{ key: 'all', label: 'Todos', filter: null }]
-    if (accountsData) {
-      const ccAccounts = (Array.isArray(accountsData) ? accountsData : accountsData.results || [])
-        .filter(a => a.account_type === 'credit_card')
-        .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
-      for (const acct of ccAccounts) {
-        // Build a short label: strip brand prefix, leading dashes/spaces
-        const label = acct.name
-          .replace(/^(Mastercard|NuBank)\s*/i, '')
-          .replace(/^[-–—]\s*/, '')
-          .trim() || acct.name
-        tabs.push({ key: acct.id, label, filter: acct.name })
-      }
-    }
-    return tabs
+    if (!accountsData) return [{ key: 'all', label: 'Todos', filter: null }]
+
+    const ccAccounts = (Array.isArray(accountsData) ? accountsData : accountsData.results || [])
+      .filter(a => a.account_type === 'credit_card')
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+
+    // Build short labels: "Mastercard Black" → "MC Black", "NuBank Cartão" → "NuBank", etc.
+    const cardTabs = ccAccounts.map((acct) => {
+      let label = acct.name
+        .replace(/^Mastercard\s*/i, 'MC ')
+        .replace(/^NuBank\s*/i, 'NuBank ')
+        .replace(/^[-–—]\s*/, '')
+        .trim() || acct.name
+      return { key: acct.id, label, filter: acct.name }
+    })
+
+    // Skip "Todos" tab when there's only 1 card
+    if (cardTabs.length <= 1) return cardTabs.length === 1 ? cardTabs : [{ key: 'all', label: 'Todos', filter: null }]
+
+    return [{ key: 'all', label: 'Todos', filter: null }, ...cardTabs]
   }, [accountsData])
 
-  // Reset to 'all' if active tab no longer exists (profile switch)
-  const effectiveTab = TABS.find(t => t.key === activeTab) ? activeTab : 'all'
+  // Reset to first tab if active tab no longer exists (profile switch, single-card)
+  const effectiveTab = TABS.find(t => t.key === activeTab) ? activeTab : TABS[0]?.key || 'all'
 
   const { data, isLoading } = useQuery({
     queryKey: ['analytics-cards', selectedMonth],
@@ -271,9 +276,10 @@ function CardsSection() {
     return <div className={styles.loading}>Carregando cartões...</div>
   }
 
-  /* For filtered tabs, hide the CARTÃO column */
-  const cols = effectiveTab === 'all' ? cardColumns : cardColumns.filter(c => c.accessorKey !== 'account')
-  const instCols = effectiveTab === 'all'
+  /* For filtered tabs or single-card profiles, hide the CARTÃO column */
+  const showAllCards = effectiveTab === 'all' && TABS.length > 1
+  const cols = showAllCards ? cardColumns : cardColumns.filter(c => c.accessorKey !== 'account')
+  const instCols = showAllCards
     ? installmentColumns
     : installmentColumns.filter(c => c.accessorKey !== 'account' && c.accessorKey !== 'subcategory')
 
@@ -281,18 +287,20 @@ function CardsSection() {
     <div className={styles.section}>
       <h3 className={styles.title}>CONTROLE CARTÕES</h3>
 
-      {/* Tab bar */}
-      <div className={styles.tabBar}>
-        {TABS.map((tab) => (
-          <button
-            key={tab.key}
-            className={`${styles.tab} ${effectiveTab === tab.key ? styles.active : ''}`}
-            onClick={() => setActiveTab(tab.key)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      {/* Tab bar — hidden when only 1 card */}
+      {TABS.length > 1 && (
+        <div className={styles.tabBar}>
+          {TABS.map((tab) => (
+            <button
+              key={tab.key}
+              className={`${styles.tab} ${effectiveTab === tab.key ? styles.active : ''}`}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Installment breakdown */}
       {instData && filteredInstallments.length > 0 && (

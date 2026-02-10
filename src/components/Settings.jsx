@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import api from '../api/client'
+import api, { getProfileId } from '../api/client'
 import InlineEdit from './InlineEdit'
 import styles from './Settings.module.css'
 
@@ -107,9 +107,11 @@ function Settings() {
     }
 
     try {
+      const profileId = getProfileId()
       const res = await fetch(`${API_BASE}/import/?action=upload`, {
         method: 'POST',
         body: formData,
+        headers: profileId ? { 'X-Profile-ID': profileId } : {},
       })
       const data = await res.json()
       if (res.ok) {
@@ -135,8 +137,13 @@ function Settings() {
     setImporting(true)
     setImportResult(null)
     try {
+      const profileId = getProfileId()
       const res = await fetch(`${API_BASE}/import/?action=run`, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(profileId && { 'X-Profile-ID': profileId }),
+        },
       })
       const data = await res.json()
       setImportResult(data)
