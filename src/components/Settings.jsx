@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import api, { getProfileId } from '../api/client'
+import { useProfile } from '../context/ProfileContext'
 import InlineEdit from './InlineEdit'
 import styles from './Settings.module.css'
 
@@ -85,6 +86,27 @@ function Settings() {
   const [newRuleSaving, setNewRuleSaving] = useState(false)
   const [ruleSearch, setRuleSearch] = useState('')
 
+  // Profile settings
+  const { profileId, currentProfile } = useProfile()
+  const [allocName, setAllocName] = useState('')
+  const [allocPct, setAllocPct] = useState('')
+  const [allocSaving, setAllocSaving] = useState(false)
+
+  // Account management
+  const [showNewAcctForm, setShowNewAcctForm] = useState(false)
+  const [newAcctName, setNewAcctName] = useState('')
+  const [newAcctType, setNewAcctType] = useState('checking')
+  const [newAcctClosingDay, setNewAcctClosingDay] = useState('')
+  const [newAcctDueDay, setNewAcctDueDay] = useState('')
+  const [newAcctSaving, setNewAcctSaving] = useState(false)
+
+  // Rename rules
+  const [showNewRenameForm, setShowNewRenameForm] = useState(false)
+  const [newRenameKeyword, setNewRenameKeyword] = useState('')
+  const [newRenameDisplay, setNewRenameDisplay] = useState('')
+  const [newRenameSaving, setNewRenameSaving] = useState(false)
+  const [renameSearch, setRenameSearch] = useState('')
+
   const { data: status, refetch: refetchStatus } = useQuery({
     queryKey: ['import-status'],
     queryFn: () => api.get('/import/'),
@@ -95,6 +117,203 @@ function Settings() {
     queryKey: ['recurring-templates'],
     queryFn: () => api.get('/analytics/recurring/templates/'),
   })
+
+  // Profile data query
+  const { data: profileData, refetch: refetchProfile } = useQuery({
+    queryKey: ['profile-settings', profileId],
+    queryFn: () => api.get(`/profiles/${profileId}/`),
+    enabled: !!profileId,
+  })
+
+  // Accounts query
+  const { data: accountsData, refetch: refetchAccounts } = useQuery({
+    queryKey: ['all-accounts'],
+    queryFn: () => api.get('/accounts/'),
+  })
+
+  const allAccounts = useMemo(() => {
+    if (!accountsData) return []
+    return Array.isArray(accountsData) ? accountsData : (accountsData.results || [])
+  }, [accountsData])
+
+  // Rename rules query
+  const { data: renamesData, refetch: refetchRenames } = useQuery({
+    queryKey: ['rename-rules'],
+    queryFn: () => api.get('/renames/'),
+  })
+
+  const filteredRenames = useMemo(() => {
+    const list = Array.isArray(renamesData) ? renamesData : (renamesData?.results || [])
+    if (!renameSearch.trim()) return list.filter(r => r.is_active !== false)
+    const q = renameSearch.toLowerCase().trim()
+    return list.filter(r =>
+      r.is_active !== false && (
+        (r.keyword || '').toLowerCase().includes(q) ||
+        (r.display_name || '').toLowerCase().includes(q)
+      )
+    )
+  }, [renamesData, renameSearch])
+
+  // Bank templates query (for dynamic import instructions)
+  const { data: bankTemplatesData } = useQuery({
+    queryKey: ['bank-templates'],
+    queryFn: () => api.get('/bank-templates/'),
+  })
+
+  const bankTemplates = useMemo(() => {
+    if (!bankTemplatesData) return []
+    return Array.isArray(bankTemplatesData) ? bankTemplatesData : (bankTemplatesData.results || [])
+  }, [bankTemplatesData])
+
+  const groupedBankTemplates = useMemo(() => {
+    const groups = {}
+    for (const tpl of bankTemplates) {
+      const bank = tpl.bank_name || 'Outro'
+      if (!groups[bank]) groups[bank] = []
+      groups[bank].push(tpl)
+    }
+    return groups
+  }, [bankTemplates])
+
+  // Profile update handler
+  const handleUpdateProfile = async (field, value) => {
+    if (!profileId) return
+    try {
+      await api.patch(`/profiles/${profileId}/`, { [field]: value })
+      refetchProfile()
+    } catch (err) {
+      console.error('Failed to update profile:', err)
+    }
+  }
+
+  // Investment allocation handlers
+  const investmentAllocation = useMemo(() => {
+    if (!profileData?.investment_allocation) return []
+    const alloc = profileData.investment_allocation
+    if (typeof alloc === 'object' && !Array.isArray(alloc)) {
+      return Object.entries(alloc).map(([name, pct]) => ({ name, pct }))
+    }
+    return Array.isArray(alloc) ? alloc : []
+  }, [profileData])
+
+  const handleSaveAllocation = async (newAlloc) => {
+    if (!profileId) return
+    const allocObj = {}
+    for (const item of newAlloc) {
+      allocObj[item.name] = item.pct
+    }
+    try {
+      await api.patch(`/profiles/${profileId}/`, { investment_allocation: allocObj })
+      refetchProfile()
+    } catch (err) {
+      console.error('Failed to save allocation:', err)
+    }
+  }
+
+  const handleAddAllocation = async () => {
+    if (!allocName.trim() || !allocPct) return
+    setAllocSaving(true)
+    try {
+      const newAlloc = [...investmentAllocation, { name: allocName.trim(), pct: parseFloat(allocPct) }]
+      await handleSaveAllocation(newAlloc)
+      setAllocName('')
+      setAllocPct('')
+    } catch (err) {
+      console.error('Failed to add allocation:', err)
+    } finally {
+      setAllocSaving(false)
+    }
+  }
+
+  const handleRemoveAllocation = (idx) => {
+    const newAlloc = investmentAllocation.filter((_, i) => i !== idx)
+    handleSaveAllocation(newAlloc)
+  }
+
+  // Account handlers
+  const handleCreateAccount = async (e) => {
+    e.preventDefault()
+    if (!newAcctName.trim()) return
+    setNewAcctSaving(true)
+    try {
+      await api.post('/accounts/', {
+        name: newAcctName.trim(),
+        account_type: newAcctType,
+        closing_day: newAcctClosingDay ? parseInt(newAcctClosingDay) : null,
+        due_day: newAcctDueDay ? parseInt(newAcctDueDay) : null,
+      })
+      refetchAccounts()
+      setShowNewAcctForm(false)
+      setNewAcctName('')
+      setNewAcctType('checking')
+      setNewAcctClosingDay('')
+      setNewAcctDueDay('')
+    } catch (err) {
+      console.error('Failed to create account:', err)
+    } finally {
+      setNewAcctSaving(false)
+    }
+  }
+
+  const handleUpdateAccount = async (acctId, field, value) => {
+    try {
+      await api.patch(`/accounts/${acctId}/`, { [field]: value })
+      refetchAccounts()
+    } catch (err) {
+      console.error('Failed to update account:', err)
+    }
+  }
+
+  const handleDeleteAccount = async (acctId, name) => {
+    if (!confirm(`Excluir conta "${name}"?`)) return
+    try {
+      await api.delete(`/accounts/${acctId}/`)
+      refetchAccounts()
+    } catch (err) {
+      console.error('Failed to delete account:', err)
+    }
+  }
+
+  // Rename rule handlers
+  const handleCreateRename = async (e) => {
+    e.preventDefault()
+    if (!newRenameKeyword.trim() || !newRenameDisplay.trim()) return
+    setNewRenameSaving(true)
+    try {
+      await api.post('/renames/', {
+        keyword: newRenameKeyword.trim(),
+        display_name: newRenameDisplay.trim(),
+        is_active: true,
+      })
+      refetchRenames()
+      setShowNewRenameForm(false)
+      setNewRenameKeyword('')
+      setNewRenameDisplay('')
+    } catch (err) {
+      console.error('Failed to create rename rule:', err)
+    } finally {
+      setNewRenameSaving(false)
+    }
+  }
+
+  const handleUpdateRename = async (renameId, field, value) => {
+    try {
+      await api.patch(`/renames/${renameId}/`, { [field]: value })
+      refetchRenames()
+    } catch (err) {
+      console.error('Failed to update rename rule:', err)
+    }
+  }
+
+  const handleDeleteRename = async (renameId, keyword) => {
+    if (!confirm(`Desativar regra de renomeação "${keyword}"?`)) return
+    try {
+      await api.patch(`/renames/${renameId}/`, { is_active: false })
+      refetchRenames()
+    } catch (err) {
+      console.error('Failed to deactivate rename rule:', err)
+    }
+  }
 
   const handleFiles = useCallback(async (files) => {
     if (!files.length) return
@@ -376,11 +595,302 @@ function Settings() {
     Investimento: 'INVESTIMENTOS',
   }
 
+  const ACCT_TYPE_MAP = {
+    checking: { label: 'Corrente', cls: styles.acctTypeChecking },
+    credit_card: { label: 'Cartão', cls: styles.acctTypeCredit },
+    manual: { label: 'Manual', cls: styles.acctTypeManual },
+  }
+
+  const BUDGET_STRATEGY_OPTIONS = [
+    { value: 'percentual', label: 'Percentual da Renda' },
+    { value: 'fixo', label: 'Valores Fixos' },
+    { value: 'inteligente', label: 'Inteligente (baseado em extratos)' },
+  ]
+
+  // Budget summary: total income from templates vs total allocated budgets
+  const totalIncome = useMemo(() => {
+    if (!templatesData?.templates) return 0
+    return templatesData.templates
+      .filter(t => t.template_type === 'Income')
+      .reduce((s, t) => s + parseFloat(t.default_limit || 0), 0)
+  }, [templatesData])
+
+  const totalAllocated = useMemo(() => {
+    return taxonomyCategories.reduce((s, c) => s + parseFloat(c.default_limit || 0), 0)
+  }, [taxonomyCategories])
+
   return (
     <div className={styles.container}>
 
       {/* ============================================================ */}
-      {/* SECTION 1: RECURRING TEMPLATES                               */}
+      {/* SECTION 1: PROFILE SETTINGS (PERFIL)                         */}
+      {/* ============================================================ */}
+      <div className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <div className={styles.sectionIcon}>👤</div>
+          <div>
+            <h2 className={styles.sectionTitle}>Perfil</h2>
+            <p className={styles.sectionDesc}>
+              Configurações gerais do perfil: metas de poupança, investimentos e estratégia de orçamento.
+            </p>
+          </div>
+        </div>
+
+        <div className={styles.sectionBody}>
+          <div className={styles.profileFields}>
+            <div className={styles.profileField}>
+              <span className={styles.profileFieldLabel}>Meta de Poupança (%)</span>
+              <div className={styles.profileFieldValue}>
+                <InlineEdit
+                  value={profileData?.savings_target_pct ?? 0}
+                  onSave={(val) => handleUpdateProfile('savings_target_pct', val)}
+                  prefix=""
+                  format="currency"
+                  color="var(--color-accent)"
+                  placeholder="0"
+                />
+              </div>
+              <span className={styles.profileFieldHint}>% da renda bruta</span>
+            </div>
+
+            <div className={styles.profileField}>
+              <span className={styles.profileFieldLabel}>Meta de Investimento (%)</span>
+              <div className={styles.profileFieldValue}>
+                <InlineEdit
+                  value={profileData?.investment_target_pct ?? 0}
+                  onSave={(val) => handleUpdateProfile('investment_target_pct', val)}
+                  prefix=""
+                  format="currency"
+                  color="var(--color-accent)"
+                  placeholder="0"
+                />
+              </div>
+              <span className={styles.profileFieldHint}>% da renda bruta</span>
+            </div>
+
+            <div className={styles.profileField}>
+              <span className={styles.profileFieldLabel}>Estratégia de Orçamento</span>
+              <div className={styles.profileFieldValue}>
+                <select
+                  className={styles.formSelect}
+                  value={profileData?.budget_strategy || 'percentual'}
+                  onChange={(e) => handleUpdateProfile('budget_strategy', e.target.value)}
+                >
+                  {BUDGET_STRATEGY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className={styles.profileField}>
+              <span className={styles.profileFieldLabel}>Exibição Cartão de Crédito</span>
+              <div className={styles.profileFieldValue}>
+                <div className={styles.toggleSwitch}>
+                  <button
+                    className={`${styles.toggleOption} ${(profileData?.cc_display_mode || 'invoice') === 'invoice' ? styles.toggleOptionActive : ''}`}
+                    onClick={() => handleUpdateProfile('cc_display_mode', 'invoice')}
+                  >
+                    Fatura
+                  </button>
+                  <button
+                    className={`${styles.toggleOption} ${profileData?.cc_display_mode === 'transaction' ? styles.toggleOptionActive : ''}`}
+                    onClick={() => handleUpdateProfile('cc_display_mode', 'transaction')}
+                  >
+                    Compra
+                  </button>
+                </div>
+              </div>
+              <span className={styles.profileFieldHint}>
+                Fatura = mês de pagamento · Compra = mês da transação
+              </span>
+            </div>
+
+            {/* Investment Allocation */}
+            <div className={styles.profileField} style={{ alignItems: 'flex-start' }}>
+              <span className={styles.profileFieldLabel}>Alocação de Investimentos</span>
+              <div className={styles.profileFieldValue}>
+                <div className={styles.itemList}>
+                  {investmentAllocation.map((item, idx) => (
+                    <div key={idx} className={styles.allocationRow}>
+                      <span className={styles.allocationName}>{item.name}</span>
+                      <div className={styles.allocationBar}>
+                        <div
+                          className={styles.allocationBarFill}
+                          style={{ width: `${Math.min(item.pct, 100)}%` }}
+                        />
+                      </div>
+                      <span className={styles.allocationPct}>{item.pct}%</span>
+                      <button
+                        className={styles.deleteBtn}
+                        onClick={() => handleRemoveAllocation(idx)}
+                        title="Remover"
+                      >
+                        {'\u00d7'}
+                      </button>
+                    </div>
+                  ))}
+                  {investmentAllocation.length === 0 && (
+                    <div className={styles.emptyState}>Nenhuma alocação definida</div>
+                  )}
+                </div>
+                <div className={styles.allocationAddRow}>
+                  <input
+                    className={styles.allocationInput}
+                    type="text"
+                    placeholder="Nome (ex: Renda Fixa)"
+                    value={allocName}
+                    onChange={(e) => setAllocName(e.target.value)}
+                  />
+                  <input
+                    className={styles.allocationPctInput}
+                    type="number"
+                    placeholder="%"
+                    value={allocPct}
+                    onChange={(e) => setAllocPct(e.target.value)}
+                    min="0"
+                    max="100"
+                  />
+                  <button
+                    className={styles.formSaveBtn}
+                    onClick={handleAddAllocation}
+                    disabled={allocSaving || !allocName.trim() || !allocPct}
+                    style={{ padding: '4px 12px', fontSize: '0.72rem' }}
+                  >
+                    {allocSaving ? '...' : '+'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ============================================================ */}
+      {/* SECTION 2: ACCOUNT MANAGEMENT (CONTAS BANCÁRIAS)             */}
+      {/* ============================================================ */}
+      <div className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <div className={styles.sectionIcon}>🏦</div>
+          <div>
+            <h2 className={styles.sectionTitle}>Contas Bancárias</h2>
+            <p className={styles.sectionDesc}>
+              Gerenciamento de contas: corrente, cartão de crédito e manual.
+            </p>
+          </div>
+          <button
+            className={styles.sectionAction}
+            onClick={() => setShowNewAcctForm(!showNewAcctForm)}
+          >
+            {showNewAcctForm ? 'Cancelar' : '+ Nova'}
+          </button>
+        </div>
+
+        {/* New account form */}
+        {showNewAcctForm && (
+          <form className={styles.inlineForm} onSubmit={handleCreateAccount}>
+            <input
+              className={styles.formInput}
+              type="text"
+              placeholder="Nome da conta"
+              value={newAcctName}
+              onChange={(e) => setNewAcctName(e.target.value)}
+              autoFocus
+            />
+            <select
+              className={styles.formSelect}
+              value={newAcctType}
+              onChange={(e) => setNewAcctType(e.target.value)}
+            >
+              <option value="checking">Corrente</option>
+              <option value="credit_card">Cartão de Crédito</option>
+              <option value="manual">Manual</option>
+            </select>
+            <input
+              className={styles.dayInput}
+              type="number"
+              placeholder="Fech."
+              title="Dia de fechamento"
+              value={newAcctClosingDay}
+              onChange={(e) => setNewAcctClosingDay(e.target.value)}
+              min="1"
+              max="31"
+            />
+            <input
+              className={styles.dayInput}
+              type="number"
+              placeholder="Venc."
+              title="Dia de vencimento"
+              value={newAcctDueDay}
+              onChange={(e) => setNewAcctDueDay(e.target.value)}
+              min="1"
+              max="31"
+            />
+            <button
+              className={styles.formSaveBtn}
+              type="submit"
+              disabled={newAcctSaving || !newAcctName.trim()}
+            >
+              {newAcctSaving ? '...' : 'Criar'}
+            </button>
+          </form>
+        )}
+
+        <div className={styles.sectionBody}>
+          <span className={styles.sectionCount}>
+            {allAccounts.length} contas cadastradas
+          </span>
+
+          <div className={styles.itemList}>
+            {allAccounts.map((acct) => {
+              const typeInfo = ACCT_TYPE_MAP[acct.account_type] || { label: acct.account_type, cls: '' }
+              return (
+                <div key={acct.id} className={styles.acctRow}>
+                  <span className={styles.acctName}>{acct.name}</span>
+                  <span className={`${styles.accountTypeBadge} ${typeInfo.cls}`}>
+                    {typeInfo.label}
+                  </span>
+                  <span className={styles.acctDetail}>
+                    <span className={styles.acctDetailLabel}>Fech.</span>
+                    <InlineEdit
+                      value={acct.closing_day}
+                      onSave={(val) => handleUpdateAccount(acct.id, 'closing_day', val)}
+                      format="currency"
+                      prefix=""
+                      placeholder={'\u2014'}
+                      color="var(--color-text-secondary)"
+                    />
+                  </span>
+                  <span className={styles.acctDetail}>
+                    <span className={styles.acctDetailLabel}>Venc.</span>
+                    <InlineEdit
+                      value={acct.due_day}
+                      onSave={(val) => handleUpdateAccount(acct.id, 'due_day', val)}
+                      format="currency"
+                      prefix=""
+                      placeholder={'\u2014'}
+                      color="var(--color-text-secondary)"
+                    />
+                  </span>
+                  <button
+                    className={styles.deleteBtn}
+                    onClick={() => handleDeleteAccount(acct.id, acct.name)}
+                    title="Excluir conta"
+                  >
+                    {'\u00d7'}
+                  </button>
+                </div>
+              )
+            })}
+            {allAccounts.length === 0 && (
+              <div className={styles.emptyState}>Nenhuma conta cadastrada</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ============================================================ */}
+      {/* SECTION 3: RECURRING TEMPLATES                               */}
       {/* ============================================================ */}
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
@@ -525,7 +1035,7 @@ function Settings() {
       </div>
 
       {/* ============================================================ */}
-      {/* SECTION 2: CATEGORIES & SUBCATEGORIES (taxonomy only)        */}
+      {/* SECTION 4: CATEGORIES & SUBCATEGORIES (taxonomy only)        */}
       {/* ============================================================ */}
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
@@ -656,7 +1166,92 @@ function Settings() {
       </div>
 
       {/* ============================================================ */}
-      {/* SECTION 3: CATEGORIZATION RULES                              */}
+      {/* SECTION 5: BUDGET & INVESTMENTS (ORÇAMENTO & INVESTIMENTOS)  */}
+      {/* ============================================================ */}
+      <div className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <div className={styles.sectionIcon}>💰</div>
+          <div>
+            <h2 className={styles.sectionTitle}>Orçamento & Investimentos</h2>
+            <p className={styles.sectionDesc}>
+              Resumo de orçamento alocado vs renda, limites por categoria e alocação de investimentos.
+            </p>
+          </div>
+        </div>
+
+        <div className={styles.sectionBody}>
+          {/* Budget summary cards */}
+          <div className={styles.budgetSummary}>
+            <div className={styles.budgetCard}>
+              <span className={styles.budgetCardValue} style={{ color: 'var(--color-green)' }}>
+                R$ {Math.abs(totalIncome).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
+              </span>
+              <span className={styles.budgetCardLabel}>Renda Detectada</span>
+            </div>
+            <div className={styles.budgetCard}>
+              <span className={styles.budgetCardValue} style={{ color: 'var(--color-accent)' }}>
+                R$ {totalAllocated.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
+              </span>
+              <span className={styles.budgetCardLabel}>Orçamento Alocado</span>
+            </div>
+            <div className={styles.budgetCard}>
+              <span
+                className={styles.budgetCardValue}
+                style={{ color: totalIncome - totalAllocated >= 0 ? 'var(--color-green)' : 'var(--color-red)' }}
+              >
+                R$ {Math.abs(totalIncome - totalAllocated).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
+              </span>
+              <span className={styles.budgetCardLabel}>
+                {totalIncome - totalAllocated >= 0 ? 'Disponível' : 'Acima do Orçamento'}
+              </span>
+            </div>
+          </div>
+
+          {/* Category budget limits */}
+          <h4 className={styles.subheading}>Limites por Categoria (Variável)</h4>
+          <div className={styles.itemList}>
+            {taxonomyCategories.map((cat) => (
+              <div key={cat.id} className={styles.budgetTableRow}>
+                <span className={styles.budgetCatName}>{cat.name}</span>
+                <span className={styles.budgetLimit}>
+                  <InlineEdit
+                    value={cat.default_limit || 0}
+                    onSave={(val) => handleUpdateCategory(cat.id, 'default_limit', val)}
+                    color="var(--color-text)"
+                  />
+                </span>
+              </div>
+            ))}
+            {taxonomyCategories.length === 0 && (
+              <div className={styles.emptyState}>Nenhuma categoria variável</div>
+            )}
+          </div>
+
+          {/* Investment allocation visualization */}
+          {investmentAllocation.length > 0 && (
+            <>
+              <h4 className={styles.subheading}>Alocação de Investimentos</h4>
+              <div className={styles.itemList}>
+                {investmentAllocation.map((item, idx) => (
+                  <div key={idx} className={styles.allocationRow}>
+                    <span className={styles.allocationName}>{item.name}</span>
+                    <div className={styles.allocationBar}>
+                      <div
+                        className={styles.allocationBarFill}
+                        style={{ width: `${Math.min(item.pct, 100)}%` }}
+                      />
+                    </div>
+                    <span className={styles.allocationPct}>{item.pct}%</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ============================================================ */}
+      {/* SECTION 6: CATEGORIZATION RULES                              */}
       {/* ============================================================ */}
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
@@ -762,7 +1357,111 @@ function Settings() {
       </div>
 
       {/* ============================================================ */}
-      {/* SECTION 4: IMPORT                                            */}
+      {/* SECTION 7: RENAME RULES (REGRAS DE RENOMEAÇÃO)               */}
+      {/* ============================================================ */}
+      <div className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <div className={styles.sectionIcon}>✏️</div>
+          <div>
+            <h2 className={styles.sectionTitle}>Regras de Renomeação</h2>
+            <p className={styles.sectionDesc}>
+              Regras para renomear descrições de transações automaticamente. Quando a descrição contém a palavra-chave, o nome é substituído.
+            </p>
+          </div>
+          <button
+            className={styles.sectionAction}
+            onClick={() => setShowNewRenameForm(!showNewRenameForm)}
+          >
+            {showNewRenameForm ? 'Cancelar' : '+ Nova'}
+          </button>
+        </div>
+
+        {/* New rename rule form */}
+        {showNewRenameForm && (
+          <form className={styles.inlineForm} onSubmit={handleCreateRename}>
+            <input
+              className={styles.formInput}
+              type="text"
+              placeholder="Palavra-chave (ex: PIX JOAO)"
+              value={newRenameKeyword}
+              onChange={(e) => setNewRenameKeyword(e.target.value)}
+              autoFocus
+            />
+            <input
+              className={styles.formInput}
+              type="text"
+              placeholder="Nome exibido (ex: João — Aluguel)"
+              value={newRenameDisplay}
+              onChange={(e) => setNewRenameDisplay(e.target.value)}
+            />
+            <button
+              className={styles.formSaveBtn}
+              type="submit"
+              disabled={newRenameSaving || !newRenameKeyword.trim() || !newRenameDisplay.trim()}
+            >
+              {newRenameSaving ? '...' : 'Criar'}
+            </button>
+          </form>
+        )}
+
+        <div className={styles.sectionBody}>
+          {/* Search + count */}
+          <div className={styles.ruleToolbar}>
+            <input
+              className={styles.ruleSearchInput}
+              type="text"
+              placeholder="Buscar regras de renomeação..."
+              value={renameSearch}
+              onChange={(e) => setRenameSearch(e.target.value)}
+            />
+            <span className={styles.sectionCount}>
+              {filteredRenames.length} ativas
+            </span>
+          </div>
+
+          {/* Rename rules list */}
+          <div className={styles.ruleList}>
+            {filteredRenames.map((rule) => (
+              <div key={rule.id} className={styles.renameRow}>
+                <span className={styles.renameKeyword}>
+                  <InlineEdit
+                    value={rule.keyword}
+                    onSave={(val) => handleUpdateRename(rule.id, 'keyword', val)}
+                    format="text"
+                    prefix=""
+                    color="var(--color-accent)"
+                  />
+                </span>
+                <span className={styles.renameArrow}>&rarr;</span>
+                <span className={styles.renameDisplay}>
+                  <InlineEdit
+                    value={rule.display_name}
+                    onSave={(val) => handleUpdateRename(rule.id, 'display_name', val)}
+                    format="text"
+                    prefix=""
+                    color="var(--color-text)"
+                  />
+                </span>
+                <button
+                  className={styles.deleteBtn}
+                  onClick={() => handleDeleteRename(rule.id, rule.keyword)}
+                  title="Desativar regra"
+                >
+                  {'\u00d7'}
+                </button>
+              </div>
+            ))}
+            {filteredRenames.length === 0 && (
+              <div className={styles.emptyState}>
+                {renameSearch ? 'Nenhuma regra encontrada' : 'Nenhuma regra de renomeação cadastrada'}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ============================================================ */}
+      {/* SECTION 8: IMPORT                                            */}
       {/* ============================================================ */}
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
@@ -776,53 +1475,78 @@ function Settings() {
         </div>
 
         <div className={styles.sectionBody}>
-          {/* Instructions */}
+          {/* Instructions — dynamic from bank templates or fallback */}
           <div className={styles.instructions}>
             <h3>Formatos Aceitos</h3>
-            <div className={styles.formatGrid}>
-              <div className={styles.formatCard}>
-                <div className={styles.formatBadge} data-type="best">RECOMENDADO</div>
-                <h4>Conta Corrente — OFX</h4>
-                <p>Exportar do Itau: Extrato &rarr; Exportar &rarr; OFX/Money</p>
-                <code>Extrato Conta Corrente-*.ofx</code>
-                <ul>
-                  <li>Formato estruturado, sem ambiguidade</li>
-                  <li>Valores com sinal correto (+/-)</li>
-                  <li>Melhor cobertura de dados</li>
-                </ul>
+            {bankTemplates.length > 0 ? (
+              Object.entries(groupedBankTemplates).map(([bankName, templates]) => (
+                <div key={bankName} className={styles.bankGroup}>
+                  <div className={styles.bankGroupTitle}>{bankName}</div>
+                  <div className={styles.formatGrid}>
+                    {templates.map((tpl) => (
+                      <div key={tpl.id} className={styles.formatCard}>
+                        {tpl.is_recommended && (
+                          <div className={styles.formatBadge} data-type="best">RECOMENDADO</div>
+                        )}
+                        {!tpl.is_recommended && (
+                          <div className={styles.formatBadge} data-type="ok">ALTERNATIVA</div>
+                        )}
+                        <h4>{tpl.name}</h4>
+                        {tpl.import_instructions && (
+                          <div className={styles.bankInstructions}>{tpl.import_instructions}</div>
+                        )}
+                        {tpl.file_pattern && <code>{tpl.file_pattern}</code>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className={styles.formatGrid}>
+                <div className={styles.formatCard}>
+                  <div className={styles.formatBadge} data-type="best">RECOMENDADO</div>
+                  <h4>Conta Corrente — OFX</h4>
+                  <p>Exportar do Itau: Extrato &rarr; Exportar &rarr; OFX/Money</p>
+                  <code>Extrato Conta Corrente-*.ofx</code>
+                  <ul>
+                    <li>Formato estruturado, sem ambiguidade</li>
+                    <li>Valores com sinal correto (+/-)</li>
+                    <li>Melhor cobertura de dados</li>
+                  </ul>
+                </div>
+                <div className={styles.formatCard}>
+                  <div className={styles.formatBadge} data-type="ok">ALTERNATIVA</div>
+                  <h4>Conta Corrente — TXT</h4>
+                  <p>Exportar do Itau: Extrato &rarr; Exportar &rarr; TXT</p>
+                  <code>Extrato Conta Corrente-*.txt</code>
+                  <ul>
+                    <li>Funciona, mas menos preciso que OFX</li>
+                    <li>Ignorado automaticamente se OFX existir</li>
+                  </ul>
+                </div>
+                <div className={styles.formatCard}>
+                  <div className={styles.formatBadge} data-type="ok">ALTERNATIVA</div>
+                  <h4>Conta Corrente — PDF</h4>
+                  <p>Exportar do Itau: Extrato &rarr; Salvar como PDF</p>
+                  <ul>
+                    <li className={styles.warn}>Nao suportado para import automatico</li>
+                    <li>Use apenas para conferencia manual</li>
+                  </ul>
+                </div>
+                <div className={styles.formatCard}>
+                  <div className={styles.formatBadge} data-type="best">RECOMENDADO</div>
+                  <h4>Cartao de Credito — CSV</h4>
+                  <p>Exportar do Itau: Fatura &rarr; Baixar CSV</p>
+                  <code>itau-master-YYYYMMDD.csv</code>
+                  <code>itau-visa-YYYYMMDD.csv</code>
+                  <ul>
+                    <li>Renomear com prefixo <strong>itau-master-</strong> ou <strong>itau-visa-</strong></li>
+                    <li>O sistema converte automaticamente para o formato interno</li>
+                    <li>Formato: data, lancamento, valor (3 colunas)</li>
+                  </ul>
+                </div>
               </div>
-              <div className={styles.formatCard}>
-                <div className={styles.formatBadge} data-type="ok">ALTERNATIVA</div>
-                <h4>Conta Corrente — TXT</h4>
-                <p>Exportar do Itau: Extrato &rarr; Exportar &rarr; TXT</p>
-                <code>Extrato Conta Corrente-*.txt</code>
-                <ul>
-                  <li>Funciona, mas menos preciso que OFX</li>
-                  <li>Ignorado automaticamente se OFX existir</li>
-                </ul>
-              </div>
-              <div className={styles.formatCard}>
-                <div className={styles.formatBadge} data-type="ok">ALTERNATIVA</div>
-                <h4>Conta Corrente — PDF</h4>
-                <p>Exportar do Itau: Extrato &rarr; Salvar como PDF</p>
-                <ul>
-                  <li className={styles.warn}>Nao suportado para import automatico</li>
-                  <li>Use apenas para conferencia manual</li>
-                </ul>
-              </div>
-              <div className={styles.formatCard}>
-                <div className={styles.formatBadge} data-type="best">RECOMENDADO</div>
-                <h4>Cartao de Credito — CSV</h4>
-                <p>Exportar do Itau: Fatura &rarr; Baixar CSV</p>
-                <code>itau-master-YYYYMMDD.csv</code>
-                <code>itau-visa-YYYYMMDD.csv</code>
-                <ul>
-                  <li>Renomear com prefixo <strong>itau-master-</strong> ou <strong>itau-visa-</strong></li>
-                  <li>O sistema converte automaticamente para o formato interno</li>
-                  <li>Formato: data, lancamento, valor (3 colunas)</li>
-                </ul>
-              </div>
-            </div>
+            )}
           </div>
 
           {/* Upload zone */}
@@ -897,7 +1621,7 @@ function Settings() {
       </div>
 
       {/* ============================================================ */}
-      {/* SECTION 5: STATUS                                            */}
+      {/* SECTION 9: STATUS                                            */}
       {/* ============================================================ */}
       {status && (
         <div className={styles.section}>

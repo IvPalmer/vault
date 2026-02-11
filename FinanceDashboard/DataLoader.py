@@ -128,7 +128,8 @@ class DataLoader:
 
                 for source in self.transactions['account'].unique():
                     source_df = self.transactions[self.transactions['account'] == source].copy()
-                    normalized_df = self.normalizer.normalize(source_df, source)
+                    is_nubank = source.startswith('NuBank')
+                    normalized_df = self.normalizer.normalize(source_df, source, is_nubank=is_nubank)
                     normalized_dfs.append(normalized_df)
 
                 self.transactions = pd.concat(normalized_dfs, ignore_index=True)
@@ -681,6 +682,35 @@ class DataLoader:
                 df['description'] = df['description'].apply(self.engine.apply_renames)
                 # Ensure date is not null
                 df = df.dropna(subset=['date'])
+
+                # INVOICE METADATA for NuBank credit card OFX files
+                # Filename pattern: Nubank_YYYY-MM-DD.ofx where date = closing date
+                # Extract invoice_month as YYYY-MM from the filename closing date
+                if 'Cartão' in account or 'Cartao' in account:
+                    filename = os.path.basename(path)
+                    nubank_date_match = re.search(r'Nubank_(\d{4})-(\d{2})-(\d{2})\.ofx', filename, re.IGNORECASE)
+                    if nubank_date_match:
+                        inv_year = int(nubank_date_match.group(1))
+                        inv_month = int(nubank_date_match.group(2))
+                        inv_day = int(nubank_date_match.group(3))
+
+                        df['invoice_month'] = f'{inv_year}-{inv_month:02d}'
+
+                        # Close date = the date in the filename
+                        df['invoice_close_date'] = pd.Timestamp(year=inv_year, month=inv_month, day=inv_day)
+
+                        # Payment date: use due_day (7) of the NEXT month after closing
+                        # e.g. closing 2026-01-22 -> payment 2026-02-07
+                        if inv_month == 12:
+                            pay_year = inv_year + 1
+                            pay_month = 1
+                        else:
+                            pay_year = inv_year
+                            pay_month = inv_month + 1
+                        df['invoice_payment_date'] = pd.Timestamp(year=pay_year, month=pay_month, day=7)
+
+                        print(f"   [Invoice Period] {filename}: Invoice {inv_year}-{inv_month:02d} | Close: {inv_year}-{inv_month:02d}-{inv_day:02d} | Payment: {pay_year}-{pay_month:02d}-07")
+
                 return df
             else:
                  return pd.DataFrame()

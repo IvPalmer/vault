@@ -864,6 +864,380 @@
   opacity: 0.6;
 }
 
+/* ============================================================ */
+/* PROFILE SETTINGS                                            */
+/* ============================================================ */
+.profileFields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.profileField {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: 6px var(--space-sm);
+  border-bottom: 1px solid rgba(226, 217, 208, 0.4);
+  font-size: 0.8rem;
+}
+
+.profileField:last-child {
+  border-bottom: none;
+}
+
+.profileFieldLabel {
+  width: 180px;
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.profileFieldValue {
+  flex: 1;
+  min-width: 0;
+}
+
+.profileFieldHint {
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+  opacity: 0.7;
+  margin-left: var(--space-sm);
+}
+
+/* Toggle switch for CC display mode */
+.toggleSwitch {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.toggleOption {
+  padding: 5px 12px;
+  background: transparent;
+  border: none;
+  font-size: 0.72rem;
+  font-family: var(--font-sans);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.toggleOption:not(:last-child) {
+  border-right: 1px solid var(--color-border);
+}
+
+.toggleOptionActive {
+  background: var(--color-accent);
+  color: white;
+  font-weight: 600;
+}
+
+/* Investment allocation rows */
+.allocationRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 4px var(--space-sm);
+  border-bottom: 1px solid rgba(226, 217, 208, 0.4);
+  font-size: 0.8rem;
+}
+
+.allocationRow:last-child {
+  border-bottom: none;
+}
+
+.allocationRow:hover {
+  background: var(--color-surface-hover);
+}
+
+.allocationName {
+  flex: 1;
+  min-width: 80px;
+}
+
+.allocationPct {
+  width: 60px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  text-align: right;
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.allocationBar {
+  width: 80px;
+  height: 6px;
+  background: var(--color-bg);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.allocationBarFill {
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+.allocationAddRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px var(--space-sm);
+}
+
+.allocationInput {
+  flex: 1;
+  padding: 4px 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.78rem;
+  font-family: var(--font-sans);
+}
+
+.allocationInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.allocationPctInput {
+  width: 60px;
+  padding: 4px 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+.allocationPctInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.allocationPctInput::-webkit-inner-spin-button,
+.allocationPctInput::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.allocationPctInput { -moz-appearance: textfield; }
+
+/* ============================================================ */
+/* ACCOUNT MANAGEMENT                                           */
+/* ============================================================ */
+.acctRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px var(--space-sm);
+  border-bottom: 1px solid rgba(226, 217, 208, 0.4);
+  font-size: 0.8rem;
+}
+
+.acctRow:last-child {
+  border-bottom: none;
+}
+
+.acctRow:hover {
+  background: var(--color-surface-hover);
+}
+
+.acctName {
+  flex: 2;
+  min-width: 100px;
+  font-weight: 500;
+}
+
+.accountTypeBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.acctTypeChecking {
+  background: rgba(74, 127, 181, 0.08);
+  color: var(--color-blue);
+}
+
+.acctTypeCredit {
+  background: rgba(128, 90, 164, 0.08);
+  color: #805aa4;
+}
+
+.acctTypeManual {
+  background: rgba(150, 150, 150, 0.08);
+  color: var(--color-text-secondary);
+}
+
+.acctDetail {
+  width: 70px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.acctDetailLabel {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  display: block;
+  color: var(--color-text-secondary);
+  opacity: 0.7;
+}
+
+/* ============================================================ */
+/* BUDGET & INVESTMENTS                                         */
+/* ============================================================ */
+.budgetSummary {
+  display: flex;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.budgetCard {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-md);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.budgetCardValue {
+  font-size: 1.1rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+.budgetCardLabel {
+  font-size: 0.65rem;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+.budgetTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.budgetTableRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 5px var(--space-sm);
+  border-bottom: 1px solid rgba(226, 217, 208, 0.4);
+  font-size: 0.8rem;
+}
+
+.budgetTableRow:last-child {
+  border-bottom: none;
+}
+
+.budgetTableRow:hover {
+  background: var(--color-surface-hover);
+}
+
+.budgetCatName {
+  flex: 2;
+  min-width: 100px;
+}
+
+.budgetLimit {
+  width: 100px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+/* Rename rules section (mirrors categorization rules) */
+.renameRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px var(--space-md);
+  border-bottom: 1px solid rgba(226, 217, 208, 0.3);
+  font-size: 0.8rem;
+}
+
+.renameRow:last-child {
+  border-bottom: none;
+}
+
+.renameRow:hover {
+  background: var(--color-surface-hover);
+}
+
+.renameKeyword {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-accent);
+  min-width: 80px;
+}
+
+.renameArrow {
+  color: var(--color-text-secondary);
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+
+.renameDisplay {
+  flex: 1;
+  font-size: 0.78rem;
+  color: var(--color-text);
+  text-align: right;
+  min-width: 80px;
+}
+
+/* Bank template instructions */
+.bankGroup {
+  margin-bottom: var(--space-md);
+}
+
+.bankGroup:last-child {
+  margin-bottom: 0;
+}
+
+.bankGroupTitle {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+}
+
+.bankInstructions {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  padding: var(--space-sm);
+  white-space: pre-line;
+}
+
 /* ===== Responsive ===== */
 @media (max-width: 768px) {
   .formatGrid {
@@ -878,8 +1252,19 @@
   }
   .tplRow,
   .catRow,
-  .ruleRow {
+  .ruleRow,
+  .acctRow,
+  .renameRow,
+  .profileField,
+  .allocationRow,
+  .budgetTableRow {
     flex-wrap: wrap;
+  }
+  .budgetSummary {
+    flex-direction: column;
+  }
+  .profileFieldLabel {
+    width: 100%;
   }
   .sectionHeader {
     flex-wrap: wrap;

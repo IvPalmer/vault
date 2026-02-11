@@ -15,13 +15,14 @@ class DataNormalizer:
     def __init__(self, category_engine):
         self.engine = category_engine
 
-    def normalize(self, df, source_account):
+    def normalize(self, df, source_account, is_nubank=False):
         """
         Apply full normalization to a dataframe from any source
 
         Args:
             df: Raw dataframe with at least date, description, amount
             source_account: String like "Checking", "Mastercard Black", etc.
+            is_nubank: If True, apply Nubank-specific installment normalization
 
         Returns:
             Normalized dataframe with all standard columns
@@ -46,6 +47,16 @@ class DataNormalizer:
         df[['is_installment', 'installment_info']] = df['description_original'].apply(
             lambda x: pd.Series(self._detect_installment(x))
         )
+
+        # 3.5. Normalize Nubank installment descriptions (before cleaning)
+        # Nubank changes installment descriptions between first and subsequent months:
+        #   Month 1: "Cea Bsc 700 Ecpc - Parcela 1/7"
+        #   Month 2+: "Cea  - Parcela 2/7"
+        # Normalize to consistent base name so cross-month dedup works.
+        if is_nubank:
+            df['description_original'] = df['description_original'].apply(
+                self._normalize_nubank_installment
+            )
 
         # 4. Clean description (after detecting installment, to preserve original)
         df['description'] = df['description_original'].apply(self._clean_description)
@@ -102,6 +113,54 @@ class DataNormalizer:
                 return True, match.group(0)
 
         return False, None
+
+    def _normalize_nubank_installment(self, description):
+        """
+        Normalize Nubank installment descriptions for cross-month consistency.
+
+        Nubank varies the description between the first and subsequent installments:
+            Month 1:  "Cea Bsc 700 Ecpc - Parcela 1/7"
+            Month 2+: "Cea  - Parcela 2/7"
+
+        This strips common location/e-commerce suffixes from the base name so both
+        months resolve to: "Cea - Parcela N/7"
+
+        Non-installment descriptions are returned as-is.
+
+        Examples:
+            "Cea Bsc 700 Ecpc - Parcela 1/7"  → "Cea - Parcela 1/7"
+            "Mlp*Meliuz - Parcela 3/12"        → "Meliuz - Parcela 3/12"
+            "The North Face - Parcela 1/6"     → "The North Face - Parcela 1/6"
+            "Regular purchase"                  → "Regular purchase"
+        """
+        desc = str(description)
+
+        # Match "Name - Parcela N/M" pattern
+        m = re.match(r'^(.+?)\s*-\s*(Parcela\s+\d{1,2}/\d{1,2})(.*)$', desc, re.IGNORECASE)
+        if not m:
+            return desc
+
+        name_part = m.group(1).strip()
+        parcela_part = m.group(2).strip()
+        trailing = m.group(3).strip()
+
+        # Remove Nubank location suffixes from name:
+        # "Bsc 700", "Sp 009", etc. — uppercase 2-4 letter code followed by digits
+        name_part = re.sub(r'\s+[A-Z][A-Za-z]{1,3}\s+\d{2,4}', '', name_part)
+        # Remove e-commerce suffix "Ecpc"
+        name_part = re.sub(r'\s+Ecpc\b', '', name_part, flags=re.IGNORECASE)
+        # Remove asterisk-prefixed patterns like "Mlp*" at the start
+        name_part = re.sub(r'^[A-Za-z]+\*\s*', '', name_part)
+        # Collapse multiple spaces
+        name_part = ' '.join(name_part.split())
+
+        if not name_part:
+            return desc
+
+        result = f'{name_part} - {parcela_part}'
+        if trailing:
+            result = f'{result} {trailing}'
+        return result
 
     def _clean_description(self, original):
         """

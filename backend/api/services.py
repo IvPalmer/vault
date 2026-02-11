@@ -20,6 +20,42 @@ from .models import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _extract_base_desc(description):
+    """Extract base description from installment description, handling both Itau and Nubank formats."""
+    desc = description.strip()
+    # Nubank format: "Store Name - Parcela 1/6"
+    cleaned = re.sub(r'\s*-\s*Parcela\s*\d{1,2}/\d{1,2}\s*$', '', desc, flags=re.IGNORECASE).strip()
+    if cleaned != desc:
+        return cleaned
+    # Itau format: "STORE NAME 01/06"
+    cleaned = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', desc).strip()
+    return cleaned
+
+
+def _cc_month_field(profile):
+    """Return DB field name for CC month filtering based on profile preference."""
+    if profile and hasattr(profile, 'cc_display_mode') and profile.cc_display_mode == 'transaction':
+        return 'month_str'
+    return 'invoice_month'
+
+
+def _cc_month_q(month_str, profile, account_type_field='account__account_type'):
+    """Return Q filter for CC transactions by configured month mode.
+
+    In invoice mode: filter by invoice_month with month_str fallback for legacy data.
+    In transaction mode: filter by month_str only.
+    """
+    field = _cc_month_field(profile)
+    if field == 'month_str':
+        return Q(month_str=month_str, **{account_type_field: 'credit_card'})
+    else:
+        # Invoice mode: primary filter + fallback for legacy data with empty invoice_month
+        return (
+            Q(invoice_month=month_str, **{account_type_field: 'credit_card'}) |
+            Q(month_str=month_str, invoice_month='', **{account_type_field: 'credit_card'})
+        )
+
+
 def _get_expected_amount(template, month_str, profile=None):
     """
     Return the expected amount for a recurring template in a month.
@@ -892,19 +928,30 @@ def get_metricas(month_str, _cascade=True, profile=None):
     # =====================================================================
     # 7. FATURA MASTER — Mastercard Black + Mastercard - Rafa combined
     # =====================================================================
+    _met_cc_field = _cc_month_field(profile)
+    if _met_cc_field == 'month_str':
+        _fatura_master_q = Q(month_str=month_str, account__name__icontains='Mastercard', profile=profile)
+    else:
+        _fatura_master_q = (
+            Q(invoice_month=month_str, account__name__icontains='Mastercard', profile=profile) |
+            Q(month_str=month_str, invoice_month='', account__name__icontains='Mastercard', profile=profile)
+        )
     fatura_master = abs(Transaction.objects.filter(
-        invoice_month=month_str,
-        account__name__icontains='Mastercard',
-        profile=profile,
+        _fatura_master_q
     ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
 
     # =====================================================================
     # 8. FATURA VISA — Visa Infinite
     # =====================================================================
+    if _met_cc_field == 'month_str':
+        _fatura_visa_q = Q(month_str=month_str, account__name__icontains='Visa', profile=profile)
+    else:
+        _fatura_visa_q = (
+            Q(invoice_month=month_str, account__name__icontains='Visa', profile=profile) |
+            Q(month_str=month_str, invoice_month='', account__name__icontains='Visa', profile=profile)
+        )
     fatura_visa = abs(Transaction.objects.filter(
-        invoice_month=month_str,
-        account__name__icontains='Visa',
-        profile=profile,
+        _fatura_visa_q
     ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
 
     # =====================================================================
@@ -1593,20 +1640,29 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
     """
     import re
 
-    # Prefer invoice_month; fall back to month_str for older imports without it
-    qs = Transaction.objects.filter(
-        invoice_month=month_str,
-        account__account_type='credit_card',
-        profile=profile,
-    ).select_related('account', 'category', 'subcategory').order_by('-date')
-
-    if not qs.exists():
+    # Filter by configured CC display mode (invoice_month or month_str)
+    cc_field = _cc_month_field(profile)
+    if cc_field == 'month_str':
         qs = Transaction.objects.filter(
             month_str=month_str,
-            invoice_month='',
             account__account_type='credit_card',
             profile=profile,
         ).select_related('account', 'category', 'subcategory').order_by('-date')
+    else:
+        # Invoice mode: prefer invoice_month; fall back to month_str for legacy data
+        qs = Transaction.objects.filter(
+            invoice_month=month_str,
+            account__account_type='credit_card',
+            profile=profile,
+        ).select_related('account', 'category', 'subcategory').order_by('-date')
+
+        if not qs.exists():
+            qs = Transaction.objects.filter(
+                month_str=month_str,
+                invoice_month='',
+                account__account_type='credit_card',
+                profile=profile,
+            ).select_related('account', 'category', 'subcategory').order_by('-date')
 
     if account_filter:
         qs = qs.filter(account__name__icontains=account_filter)
@@ -1666,22 +1722,32 @@ def get_installment_details(month_str, profile=None):
     items, count, and total.
     """
     # Check if this month has real installment data
-    # Prefer invoice_month; fall back to month_str for older imports
-    real_installments = Transaction.objects.filter(
-        invoice_month=month_str,
-        is_installment=True,
-        amount__lt=0,
-        profile=profile,
-    ).select_related('account', 'category', 'subcategory')
-
-    if not real_installments.exists():
+    # Filter by configured CC display mode (invoice_month or month_str)
+    cc_field = _cc_month_field(profile)
+    if cc_field == 'month_str':
         real_installments = Transaction.objects.filter(
             month_str=month_str,
-            invoice_month='',
             is_installment=True,
             amount__lt=0,
             profile=profile,
         ).select_related('account', 'category', 'subcategory')
+    else:
+        # Invoice mode: prefer invoice_month; fall back to month_str for legacy data
+        real_installments = Transaction.objects.filter(
+            invoice_month=month_str,
+            is_installment=True,
+            amount__lt=0,
+            profile=profile,
+        ).select_related('account', 'category', 'subcategory')
+
+        if not real_installments.exists():
+            real_installments = Transaction.objects.filter(
+                month_str=month_str,
+                invoice_month='',
+                is_installment=True,
+                amount__lt=0,
+                profile=profile,
+            ).select_related('account', 'category', 'subcategory')
 
     if real_installments.exists():
         # Group by purchase identity, keep only the lowest position per group
@@ -1696,13 +1762,14 @@ def get_installment_details(month_str, profile=None):
             if m_match:
                 current = int(m_match.group(1))
                 total_inst = int(m_match.group(2))
-                base_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', txn.description).strip()
+                base_desc = _extract_base_desc(txn.description)
                 acct = txn.account.name if txn.account else ''
                 amt = round(float(abs(txn.amount)), 2)
+                amt_group = round(float(abs(txn.amount)), 1)
 
-                group_key = (base_desc, acct, amt, total_inst)
+                group_key = (base_desc, acct, amt_group, total_inst)
                 if group_key not in purchase_groups or current < purchase_groups[group_key][0]:
-                    purchase_groups[group_key] = (current, total_inst, txn)
+                    purchase_groups[group_key] = (current, total_inst, txn, amt)
             else:
                 # Flagged as installment but no parseable N/M — include as-is
                 non_parseable_items.append({
@@ -1721,7 +1788,7 @@ def get_installment_details(month_str, profile=None):
 
         # Build items from deduplicated purchase groups (lowest position only)
         items = []
-        for (base_desc, acct, amt, total_inst), (current, _, txn) in purchase_groups.items():
+        for (base_desc, acct, amt_group, total_inst), (current, _, txn, amt) in purchase_groups.items():
             parcela_str = f'{current}/{total_inst}'
             items.append({
                 'id': str(txn.id),
@@ -1771,31 +1838,47 @@ def get_installment_details(month_str, profile=None):
     items = []
     seen = set()  # (base_desc, account, amount, total_inst) — one entry per purchase
 
-    # Batch fetch all lookback months' installment transactions (2 queries)
+    # Batch fetch all lookback months' installment transactions
     lookback_months_list = [_month_str_add(month_str, -i) for i in range(1, 13)]
-    _lb_invoice_txns = list(Transaction.objects.filter(
-        invoice_month__in=lookback_months_list,
-        is_installment=True,
-        amount__lt=0,
-        profile=profile,
-    ).select_related('account', 'category', 'subcategory'))
-    _lb_by_invoice = {}
-    for txn in _lb_invoice_txns:
-        _lb_by_invoice.setdefault(txn.invoice_month, []).append(txn)
-
-    _lb_months_with_invoice = set(_lb_by_invoice.keys())
-    _lb_months_needing_fallback = set(lookback_months_list) - _lb_months_with_invoice
-    _lb_by_fallback = {}
-    if _lb_months_needing_fallback:
-        _lb_fallback_txns = list(Transaction.objects.filter(
-            month_str__in=_lb_months_needing_fallback,
-            invoice_month='',
+    _lb_cc_field = _cc_month_field(profile)
+    if _lb_cc_field == 'month_str':
+        # Transaction mode: single query by month_str
+        _lb_txns = list(Transaction.objects.filter(
+            month_str__in=lookback_months_list,
             is_installment=True,
             amount__lt=0,
             profile=profile,
         ).select_related('account', 'category', 'subcategory'))
-        for txn in _lb_fallback_txns:
-            _lb_by_fallback.setdefault(txn.month_str, []).append(txn)
+        _lb_by_month = {}
+        for txn in _lb_txns:
+            _lb_by_month.setdefault(txn.month_str, []).append(txn)
+        _lb_by_invoice = _lb_by_month
+        _lb_by_fallback = {}
+    else:
+        # Invoice mode: prefer invoice_month with month_str fallback
+        _lb_invoice_txns = list(Transaction.objects.filter(
+            invoice_month__in=lookback_months_list,
+            is_installment=True,
+            amount__lt=0,
+            profile=profile,
+        ).select_related('account', 'category', 'subcategory'))
+        _lb_by_invoice = {}
+        for txn in _lb_invoice_txns:
+            _lb_by_invoice.setdefault(txn.invoice_month, []).append(txn)
+
+        _lb_months_with_invoice = set(_lb_by_invoice.keys())
+        _lb_months_needing_fallback = set(lookback_months_list) - _lb_months_with_invoice
+        _lb_by_fallback = {}
+        if _lb_months_needing_fallback:
+            _lb_fallback_txns = list(Transaction.objects.filter(
+                month_str__in=_lb_months_needing_fallback,
+                invoice_month='',
+                is_installment=True,
+                amount__lt=0,
+                profile=profile,
+            ).select_related('account', 'category', 'subcategory'))
+            for txn in _lb_fallback_txns:
+                _lb_by_fallback.setdefault(txn.month_str, []).append(txn)
 
     for lookback in range(1, 13):
         source_month = lookback_months_list[lookback - 1]
@@ -1817,25 +1900,26 @@ def get_installment_details(month_str, profile=None):
 
             current = int(m_match.group(1))
             total_inst = int(m_match.group(2))
-            base_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', txn.description).strip()
+            base_desc = _extract_base_desc(txn.description)
             acct = txn.account.name if txn.account else ''
             amt = round(float(abs(txn.amount)), 2)
+            amt_group = round(float(abs(txn.amount)), 1)
 
-            group_key = (base_desc, acct, amt, total_inst)
+            group_key = (base_desc, acct, amt_group, total_inst)
 
             if group_key not in purchase_groups or current < purchase_groups[group_key][0]:
-                purchase_groups[group_key] = (current, total_inst, txn)
+                purchase_groups[group_key] = (current, total_inst, txn, amt)
 
         # Step 2: Project each purchase's lowest position to the target month
-        for group_key, (current, total_inst, txn) in purchase_groups.items():
-            base_desc, acct, amt, _ = group_key
+        for group_key, (current, total_inst, txn, amt) in purchase_groups.items():
+            base_desc, acct, amt_group, _ = group_key
             position = current + lookback
 
             if position > total_inst:
                 continue  # This purchase is fully paid off by target month
 
             # Step 3: Deduplicate across source months
-            purchase_id = (base_desc, acct, amt, total_inst)
+            purchase_id = (base_desc, acct, amt_group, total_inst)
             if purchase_id in seen:
                 continue  # Already projected from a more recent source month
             seen.add(purchase_id)
@@ -1910,11 +1994,11 @@ def categorize_installment_siblings(transaction_id, category_id, subcategory_id=
         return {'updated': 1, 'sibling_ids': [str(transaction_id)]}
 
     total_installments = int(m_match.group(2))
-    base_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', txn.description).strip()
+    base_desc = _extract_base_desc(txn.description)
     acct_id = txn.account_id
-    amt = round(float(abs(txn.amount)), 2)
+    amt_group = round(float(abs(txn.amount)), 1)
 
-    # Find all siblings: same base description, same account, same |amount|,
+    # Find all siblings: same base description, same account, similar |amount|,
     # is_installment=True, and installment count matches total
     candidates = Transaction.objects.filter(
         account_id=acct_id,
@@ -1924,11 +2008,11 @@ def categorize_installment_siblings(transaction_id, category_id, subcategory_id=
 
     sibling_ids = []
     for candidate in candidates:
-        # Check amount matches (exact match after rounding)
-        if round(float(abs(candidate.amount)), 2) != amt:
+        # Check amount matches (fuzzy — round to 1 decimal to tolerate Nubank rounding)
+        if round(float(abs(candidate.amount)), 1) != amt_group:
             continue
         # Check base description matches
-        cand_base = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', candidate.description).strip()
+        cand_base = _extract_base_desc(candidate.description)
         if cand_base != base_desc:
             continue
         # Check total installments match
@@ -2022,14 +2106,14 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile
 
     # Three separate pools:
     # 1. Checking transactions: month_str = target month (bank transactions in Feb)
-    # 2. CC transactions: invoice_month = target month (credit card bill for Feb)
-    #    OR month_str = target month (purchases made in Feb, even if on next invoice)
+    # 2. CC transactions: by configured display mode + month_str purchases
     # 3. Prior month: checking/manual from previous month (for cross-month linking)
     from django.db.models import Q
+    _cand_cc_q = _cc_month_q(month_str, profile)
     qs = Transaction.objects.filter(
         Q(month_str=month_str, account__account_type='checking') |
         Q(month_str=month_str, account__account_type='manual') |
-        Q(invoice_month=month_str, account__account_type='credit_card') |
+        _cand_cc_q |
         Q(month_str=month_str, account__account_type='credit_card'),
         profile=profile,
     ).select_related('account', 'category').order_by('-date').distinct()
@@ -2370,39 +2454,50 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
     lookback_months = [_month_str_add(target_month_str, -i) for i in range(1, 13)]
     all_months = set(target_months + lookback_months)
 
-    # Batch fetch ALL installment transactions across all relevant months (2 queries total)
-    # Query 1: invoice_month-based
-    invoice_txns = list(Transaction.objects.filter(
-        invoice_month__in=all_months,
-        is_installment=True,
-        amount__lt=0,
-        profile=profile,
-    ).select_related('account'))
-
-    # Group by invoice_month
-    txns_by_invoice_month = {}
-    for txn in invoice_txns:
-        txns_by_invoice_month.setdefault(txn.invoice_month, []).append(txn)
-
-    # Query 2: month_str fallback for months without invoice_month data
-    months_with_invoice = set(txns_by_invoice_month.keys())
-    months_needing_fallback = all_months - months_with_invoice
-    if months_needing_fallback:
-        fallback_txns = list(Transaction.objects.filter(
-            month_str__in=months_needing_fallback,
-            invoice_month='',
+    # Batch fetch ALL installment transactions across all relevant months
+    _sched_cc_field = _cc_month_field(profile)
+    if _sched_cc_field == 'month_str':
+        # Transaction mode: single query by month_str
+        all_txns = list(Transaction.objects.filter(
+            month_str__in=all_months,
             is_installment=True,
             amount__lt=0,
             profile=profile,
         ).select_related('account'))
+        txns_by_invoice_month = {}
+        for txn in all_txns:
+            txns_by_invoice_month.setdefault(txn.month_str, []).append(txn)
         txns_by_fallback_month = {}
-        for txn in fallback_txns:
-            txns_by_fallback_month.setdefault(txn.month_str, []).append(txn)
     else:
-        txns_by_fallback_month = {}
+        # Invoice mode: prefer invoice_month with month_str fallback
+        invoice_txns = list(Transaction.objects.filter(
+            invoice_month__in=all_months,
+            is_installment=True,
+            amount__lt=0,
+            profile=profile,
+        ).select_related('account'))
+        txns_by_invoice_month = {}
+        for txn in invoice_txns:
+            txns_by_invoice_month.setdefault(txn.invoice_month, []).append(txn)
+
+        months_with_invoice = set(txns_by_invoice_month.keys())
+        months_needing_fallback = all_months - months_with_invoice
+        if months_needing_fallback:
+            fallback_txns = list(Transaction.objects.filter(
+                month_str__in=months_needing_fallback,
+                invoice_month='',
+                is_installment=True,
+                amount__lt=0,
+                profile=profile,
+            ).select_related('account'))
+            txns_by_fallback_month = {}
+            for txn in fallback_txns:
+                txns_by_fallback_month.setdefault(txn.month_str, []).append(txn)
+        else:
+            txns_by_fallback_month = {}
 
     def _get_txns_for_month(month):
-        """Get installment transactions for a month (invoice_month preferred)."""
+        """Get installment transactions for a month (configured mode preferred)."""
         return txns_by_invoice_month.get(month) or txns_by_fallback_month.get(month) or []
 
     def _parse_installment(txn):
@@ -2432,15 +2527,16 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
 
             current = int(m_match.group(1))
             total_inst = int(m_match.group(2))
-            base_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', txn.description).strip()
+            base_desc = _extract_base_desc(txn.description)
             acct = txn.account.name if txn.account else ''
             amt = round(float(abs(txn.amount)), 2)
+            amt_group = round(float(abs(txn.amount)), 1)
 
-            group_key = (base_desc, acct, amt, total_inst)
-            if group_key not in purchase_groups or current < purchase_groups[group_key]:
-                purchase_groups[group_key] = current
+            group_key = (base_desc, acct, amt_group, total_inst)
+            if group_key not in purchase_groups or current < purchase_groups[group_key][0]:
+                purchase_groups[group_key] = (current, amt)
 
-        deduped_total = sum(amt for (_, _, amt, _) in purchase_groups.keys())
+        deduped_total = sum(amt for (_, amt) in purchase_groups.values())
         real_total = deduped_total + non_parseable_total
         if real_total > 0:
             schedule[check_month] = real_total
@@ -2464,15 +2560,16 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
             current = int(m_match.group(1))
             total_inst = int(m_match.group(2))
             amt = round(float(abs(txn.amount)), 2)
-            base_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', txn.description).strip()
+            amt_group = round(float(abs(txn.amount)), 1)
+            base_desc = _extract_base_desc(txn.description)
             acct = txn.account.name if txn.account else ''
 
-            group_key = (base_desc, acct, amt, total_inst)
-            if group_key not in purchase_groups or current < purchase_groups[group_key]:
-                purchase_groups[group_key] = current
+            group_key = (base_desc, acct, amt_group, total_inst)
+            if group_key not in purchase_groups or current < purchase_groups[group_key][0]:
+                purchase_groups[group_key] = (current, amt)
 
-        for (base_desc, acct, amt, total_inst), current in purchase_groups.items():
-            purchase_id = (base_desc, acct, amt, total_inst)
+        for (base_desc, acct, amt_group, total_inst), (current, amt) in purchase_groups.items():
+            purchase_id = (base_desc, acct, amt_group, total_inst)
 
             for target_offset in range(num_future_months + 1):
                 check_month = target_months[target_offset]
@@ -2509,10 +2606,14 @@ def get_last_installment_month(profile=None):
     )
 
     # Group by (source_month, base_desc, acct, amt, total) → lowest position
-    # Prefer invoice_month; fall back to month_str for older imports without it
+    # Use configured CC display mode to pick month field
+    _last_cc_field = _cc_month_field(profile)
     purchase_groups = {}  # (source_month, base_desc, acct, amt, total) -> lowest_current
     for inv_month, txn_month, inst_info, desc, amount, acct_name in inst_txns:
-        month_str = inv_month if inv_month else txn_month
+        if _last_cc_field == 'month_str':
+            month_str = txn_month
+        else:
+            month_str = inv_month if inv_month else txn_month
         if not month_str:
             continue
         info = inst_info or ''
@@ -2526,16 +2627,16 @@ def get_last_installment_month(profile=None):
 
         current = int(m.group(1))
         total = int(m.group(2))
-        base_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', desc).strip()
+        base_desc = _extract_base_desc(desc)
         acct = acct_name or ''
-        amt = round(float(abs(amount)), 2)
+        amt_group = round(float(abs(amount)), 1)
 
-        key = (month_str, base_desc, acct, amt, total)
+        key = (month_str, base_desc, acct, amt_group, total)
         if key not in purchase_groups or current < purchase_groups[key]:
             purchase_groups[key] = current
 
     furthest = None
-    for (month_str, base_desc, acct, amt, total), current in purchase_groups.items():
+    for (month_str, base_desc, acct, amt_group, total), current in purchase_groups.items():
         remaining = total - current
         if remaining > 0:
             end_month = _month_str_add(month_str, remaining)
@@ -2856,8 +2957,7 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
 
     # ── Get uncategorized transactions ──
     # When filtering by month, include both month_str matches AND
-    # credit card transactions whose invoice_month matches (they appear
-    # in that month's card view even though month_str is the billing cycle).
+    # credit card transactions by configured display mode.
     qs = Transaction.objects.filter(
         category=nao_cat,
         is_internal_transfer=False,
@@ -2865,9 +2965,13 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
     ).select_related('account', 'category')
     if month_str:
         from django.db.models import Q
-        qs = qs.filter(
-            Q(month_str=month_str) | Q(invoice_month=month_str)
-        )
+        _sc_cc_field = _cc_month_field(profile)
+        if _sc_cc_field == 'month_str':
+            qs = qs.filter(Q(month_str=month_str))
+        else:
+            qs = qs.filter(
+                Q(month_str=month_str) | Q(invoice_month=month_str)
+            )
 
     uncategorized = list(qs)
     if not uncategorized:
@@ -3830,9 +3934,10 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     budget_adherence.sort(key=lambda x: x['pct'], reverse=True)
 
     # -- 6. Card analysis (spending by card/account per month) ---------------
-    # Credit cards: use invoice_month for accurate billing alignment
+    # Credit cards: use configured CC display mode for billing alignment
+    _trends_cc_field = _cc_month_field(profile)
     cc_qs = Transaction.objects.filter(
-        invoice_month__in=month_list,
+        **{f'{_trends_cc_field}__in': month_list},
         account__account_type='credit_card',
         is_internal_transfer=False,
         amount__lt=0,
@@ -3844,16 +3949,16 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     # Mastercard totals by month
     master_by_month = dict(
         cc_qs.filter(account__name__icontains='Mastercard')
-        .values('invoice_month')
+        .values(_trends_cc_field)
         .annotate(total=Sum('amount'))
-        .values_list('invoice_month', 'total')
+        .values_list(_trends_cc_field, 'total')
     )
     # Visa totals by month
     visa_by_month = dict(
         cc_qs.filter(account__name__icontains='Visa')
-        .values('invoice_month')
+        .values(_trends_cc_field)
         .annotate(total=Sum('amount'))
-        .values_list('invoice_month', 'total')
+        .values_list(_trends_cc_field, 'total')
     )
     # Checking totals by month (uses month_str)
     checking_qs = Transaction.objects.filter(
@@ -4404,4 +4509,151 @@ def get_spending_insights(profile=None):
         'summary': summary,
         'months_analyzed': len(all_months),
         'latest_month': latest,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Setup Wizard — Statement Analysis
+# ---------------------------------------------------------------------------
+
+def analyze_statements_for_setup(profile):
+    """
+    Analyze imported transactions to generate smart setup suggestions.
+    Scans last 6 months of data to detect:
+    - Recurring charges (same description, similar amount, 3+ months)
+    - Income sources (positive transactions, regular cadence)
+    - Category spending averages for budget limit suggestions
+    - Investment patterns
+    """
+    from collections import defaultdict
+    from decimal import Decimal
+
+    # Get last 6 months of transactions
+    all_txns = Transaction.objects.filter(profile=profile).order_by('-date')
+    if not all_txns.exists():
+        return {
+            'suggested_recurring': [],
+            'suggested_categories': [],
+            'suggested_budget_limits': [],
+            'detected_income': Decimal('0.00'),
+            'detected_investments': Decimal('0.00'),
+            'suggested_savings_target': 20,
+            'suggested_investment_target': 10,
+            'months_analyzed': 0,
+        }
+
+    # Find month range
+    months = set(all_txns.values_list('month_str', flat=True).distinct())
+    month_list = sorted(months, reverse=True)[:6]
+    num_months = len(month_list)
+
+    txns_in_range = all_txns.filter(month_str__in=month_list)
+
+    # --- 1. Detect recurring charges ---
+    # Group by normalized description + approximate amount
+    desc_groups = defaultdict(lambda: {'months': set(), 'amounts': [], 'category': None, 'account_type': None})
+
+    for txn in txns_in_range.select_related('category', 'account'):
+        desc_key = txn.description.strip().lower()
+        amt = float(abs(txn.amount))
+        group = desc_groups[desc_key]
+        group['months'].add(txn.month_str)
+        group['amounts'].append(amt)
+        if txn.category:
+            group['category'] = txn.category.name
+        if txn.account:
+            group['account_type'] = txn.account.account_type
+
+    suggested_recurring = []
+    for desc, info in desc_groups.items():
+        if len(info['months']) >= 3:  # Appears in 3+ months
+            avg_amount = sum(info['amounts']) / len(info['amounts'])
+            stddev = (sum((a - avg_amount) ** 2 for a in info['amounts']) / len(info['amounts'])) ** 0.5
+            # Low variance = likely recurring
+            is_low_variance = (stddev / avg_amount < 0.15) if avg_amount > 0 else True
+            if is_low_variance:
+                # Determine type
+                if avg_amount > 0:
+                    rec_type = 'Income'
+                elif info.get('category') and 'invest' in (info['category'] or '').lower():
+                    rec_type = 'Investimento'
+                else:
+                    rec_type = 'Fixo'
+
+                suggested_recurring.append({
+                    'name': desc.title(),
+                    'type': rec_type,
+                    'avg_amount': round(avg_amount, 2),
+                    'frequency': len(info['months']),
+                    'months_found': len(info['months']),
+                    'confidence': min(100, int(len(info['months']) / num_months * 100)),
+                    'category': info.get('category'),
+                })
+
+    # Sort by frequency and amount
+    suggested_recurring.sort(key=lambda x: (-x['frequency'], -x['avg_amount']))
+
+    # --- 2. Detect income ---
+    income_txns = txns_in_range.filter(amount__gt=0)
+    total_income = float(income_txns.aggregate(total=Sum('amount'))['total'] or 0)
+    avg_monthly_income = total_income / num_months if num_months > 0 else 0
+
+    # --- 3. Category spending analysis ---
+    category_spending = defaultdict(lambda: {'total': 0, 'months': set(), 'amounts': []})
+
+    for txn in txns_in_range.filter(amount__lt=0).select_related('category'):
+        cat_name = txn.category.name if txn.category else 'Nao categorizado'
+        cat_data = category_spending[cat_name]
+        cat_data['total'] += float(abs(txn.amount))
+        cat_data['months'].add(txn.month_str)
+        cat_data['amounts'].append(float(abs(txn.amount)))
+
+    suggested_budget_limits = []
+    for cat_name, data in category_spending.items():
+        avg_spend = data['total'] / num_months
+
+        # Suggest limit at 110% of average (buffer room)
+        suggested_limit = round(avg_spend * 1.1, 0)
+
+        suggested_budget_limits.append({
+            'category': cat_name,
+            'avg_monthly': round(avg_spend, 2),
+            'suggested_limit': suggested_limit,
+            'months_active': len(data['months']),
+            'total_spent': round(data['total'], 2),
+        })
+
+    suggested_budget_limits.sort(key=lambda x: -x['avg_monthly'])
+
+    # --- 4. Detect investments ---
+    invest_txns = txns_in_range.filter(
+        Q(category__name__icontains='invest') |
+        Q(description__icontains='invest') |
+        Q(category__category_type='Investimento')
+    ).filter(amount__lt=0)
+    total_investments = float(abs(invest_txns.aggregate(total=Sum('amount'))['total'] or 0))
+    avg_monthly_investments = total_investments / num_months if num_months > 0 else 0
+
+    # --- 5. Suggest targets ---
+    total_expenses = float(abs(txns_in_range.filter(amount__lt=0).aggregate(total=Sum('amount'))['total'] or 0))
+    avg_monthly_expenses = total_expenses / num_months if num_months > 0 else 0
+
+    if avg_monthly_income > 0:
+        current_savings_rate = ((avg_monthly_income - avg_monthly_expenses) / avg_monthly_income) * 100
+        suggested_savings = max(10, min(30, round(current_savings_rate + 5)))  # Current rate + 5%, clamped
+        suggested_investment = max(5, min(20, round(avg_monthly_investments / avg_monthly_income * 100))) if avg_monthly_income > 0 else 10
+    else:
+        suggested_savings = 20
+        suggested_investment = 10
+
+    return {
+        'suggested_recurring': suggested_recurring[:30],  # Top 30
+        'suggested_categories': list(category_spending.keys()),
+        'suggested_budget_limits': suggested_budget_limits[:20],
+        'detected_income': round(avg_monthly_income, 2),
+        'detected_investments': round(avg_monthly_investments, 2),
+        'detected_expenses': round(avg_monthly_expenses, 2),
+        'suggested_savings_target': suggested_savings,
+        'suggested_investment_target': suggested_investment,
+        'months_analyzed': num_months,
     }

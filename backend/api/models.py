@@ -28,6 +28,31 @@ class Profile(models.Model):
         max_digits=5, decimal_places=2, default=20.00,
         help_text='Target savings percentage of income (e.g. 20 means 20%)',
     )
+    cc_display_mode = models.CharField(
+        max_length=20,
+        choices=[('invoice', 'Invoice Month'), ('transaction', 'Transaction Month')],
+        default='invoice',
+        help_text='How CC transactions are grouped in monthly view',
+    )
+    investment_target_pct = models.DecimalField(
+        max_digits=5, decimal_places=2, default=10.00,
+        help_text='Target investment percentage of income',
+    )
+    investment_allocation = models.JSONField(
+        default=dict, blank=True,
+        help_text='Investment allocation breakdown, e.g. {"Renda Fixa": 40, "Renda Variavel": 40, "Crypto": 20}',
+    )
+    budget_strategy = models.CharField(
+        max_length=30,
+        choices=[
+            ('percentage', 'Percentage of Income'),
+            ('fixed', 'Fixed Amounts'),
+            ('smart', 'Smart (Statement-based)'),
+        ],
+        default='percentage',
+        help_text='How budget limits are calculated',
+    )
+    setup_completed = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -38,9 +63,49 @@ class Profile(models.Model):
         return self.name
 
 
+class BankTemplate(models.Model):
+    """
+    Reusable bank configuration template. System-wide, not per-profile.
+    Stores parsing config, file patterns, and display defaults.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bank_name = models.CharField(max_length=100)
+    account_type = models.CharField(max_length=20, choices=[
+        ('checking', 'Checking'),
+        ('credit_card', 'Credit Card'),
+        ('manual', 'Manual'),
+    ])
+    display_name = models.CharField(max_length=100)
+    file_patterns = models.JSONField(default=list, help_text='Glob patterns for file detection, e.g. ["master-*.csv"]')
+    file_format = models.CharField(max_length=20, choices=[
+        ('csv', 'CSV'),
+        ('ofx', 'OFX'),
+        ('txt', 'TXT'),
+    ], default='csv')
+    sign_inversion = models.BooleanField(default=False, help_text='Negate amounts on import (for CC CSVs)')
+    encoding = models.CharField(max_length=20, default='utf-8')
+    payment_filter_patterns = models.JSONField(default=list, help_text='Regex patterns to filter payment entries')
+    description_cleaner = models.CharField(max_length=100, blank=True, help_text='Cleaner function: "nubank", "itau", ""')
+    default_closing_day = models.IntegerField(null=True, blank=True)
+    default_due_day = models.IntegerField(null=True, blank=True)
+    import_instructions = models.TextField(blank=True, help_text='User-facing import instructions (markdown)')
+    is_builtin = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['bank_name', 'account_type', 'display_name']
+
+    def __str__(self):
+        return f"{self.bank_name} - {self.display_name}"
+
+
 class Account(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='accounts', null=True, blank=True)
+    bank_template = models.ForeignKey(
+        'BankTemplate', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='accounts', help_text='Bank template this account was created from',
+    )
     name = models.CharField(max_length=100)
     account_type = models.CharField(max_length=20, choices=[
         ('checking', 'Checking'),

@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    ProfileViewSet,
+    ProfileViewSet, BankTemplateViewSet,
     AccountViewSet, CategoryViewSet, SubcategoryViewSet,
     CategorizationRuleViewSet, RenameRuleViewSet,
     TransactionViewSet, RecurringMappingViewSet,
@@ -24,10 +24,13 @@ from .views import (
     TransactionRenameView,
     TransactionSimilarView,
     CategorizeInstallmentView,
+    AnalyzeSetupView,
+    ProfileSetupView,
 )
 
 router = DefaultRouter()
 router.register(r'profiles', ProfileViewSet, basename='profile')
+router.register(r'bank-templates', BankTemplateViewSet, basename='banktemplate')
 router.register(r'accounts', AccountViewSet, basename='account')
 router.register(r'categories', CategoryViewSet, basename='category')
 router.register(r'subcategories', SubcategoryViewSet, basename='subcategory')
@@ -83,4 +86,7 @@ urlpatterns = [
     path('analytics/recurring/auto-link/', AutoLinkRecurringView.as_view(), name='auto-link-recurring'),
     path('analytics/recurring/reorder/', RecurringReorderView.as_view(), name='recurring-reorder'),
     path('import/', ImportStatementsView.as_view(), name='import-statements'),
+    # Setup wizard
+    path('profiles/<uuid:pk>/setup/', ProfileSetupView.as_view(), name='profile-setup'),
+    path('analytics/analyze-setup/', AnalyzeSetupView.as_view(), name='analyze-setup'),
 ]
