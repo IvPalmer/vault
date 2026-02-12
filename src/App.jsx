@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
+import Home from './components/Home'
 import MonthlyOverview from './components/MonthlyOverview'
 import Analytics from './components/Analytics'
 import Settings from './components/Settings'
@@ -35,6 +36,9 @@ function App() {
     <>
       <Layout>
         <Routes>
+          {/* Shared home (no profile slug) */}
+          <Route path="/home" element={<Home />} />
+
           {/* Profile-scoped routes */}
           <Route path="/:profileSlug/overview" element={<MonthlyOverview />} />
           <Route path="/:profileSlug/analytics" element={<Analytics />} />
@@ -45,8 +49,8 @@ function App() {
           <Route path="/analytics" element={profileSlug ? <Navigate to={`/${profileSlug}/analytics`} replace /> : null} />
           <Route path="/settings" element={profileSlug ? <Navigate to={`/${profileSlug}/settings`} replace /> : null} />
 
-          {/* Root redirect */}
-          <Route path="/" element={profileSlug ? <Navigate to={`/${profileSlug}/overview`} replace /> : null} />
+          {/* Root redirect — now goes to /home */}
+          <Route path="/" element={<Navigate to="/home" replace />} />
         </Routes>
       </Layout>
       {showWizard && (

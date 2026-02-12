@@ -1,0 +1,615 @@
+/* ─── Home Screen ─────────────────────────────────────────
+   Family hub dashboard with warm earthy aesthetic.
+   Matches Vault's design language: burnt orange accent,
+   beige surfaces, subtle shadows, Inter font.
+   ───────────────────────────────────────────────────────── */
+
+.home {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  padding-bottom: var(--space-xl);
+}
+
+/* ─── Greeting ─────────────────────────────────────────── */
+
+.greeting {
+  padding: var(--space-sm) 0 0;
+}
+
+.greetingTitle {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--color-text);
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.greetingDate {
+  font-size: 0.82rem;
+  color: var(--color-text-secondary);
+  margin: 4px 0 0;
+  text-transform: capitalize;
+}
+
+/* ─── Module Cards ─────────────────────────────────────── */
+
+.modules {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-md);
+}
+
+.moduleCard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  text-decoration: none;
+  color: var(--color-text);
+  transition: all 0.2s ease;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.moduleCard::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3px;
+  height: 100%;
+  background: var(--color-accent);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.moduleCard:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--color-accent);
+  transform: translateY(-1px);
+  text-decoration: none;
+}
+
+.moduleCard:hover::before {
+  opacity: 1;
+}
+
+.moduleDisabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+.moduleDisabled::before {
+  display: none;
+}
+
+.moduleIconWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.moduleDisabled .moduleIconWrap {
+  background: rgba(140, 126, 116, 0.08);
+  color: var(--color-text-secondary);
+}
+
+.moduleInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.moduleLabel {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.moduleDesc {
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.moduleArrow {
+  margin-left: auto;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: all 0.2s;
+}
+
+.moduleCard:hover .moduleArrow {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* ─── Dashboard Grid (Reminders + Notes) ─────────────── */
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-lg);
+  align-items: start;
+}
+
+/* ─── Shared Widget Chrome ───────────────────────────── */
+
+.widget {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.widgetHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.widgetTitle {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--color-text-secondary);
+  margin: 0;
+  padding-left: var(--space-sm);
+  border-left: 3px solid var(--color-accent);
+}
+
+.badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: var(--color-accent);
+  color: white;
+  min-width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  padding: 0 6px;
+}
+
+.widgetHeaderBtn {
+  padding: 4px 12px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-accent);
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.widgetHeaderBtn:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-light);
+}
+
+/* ─── Reminders: List Tabs ───────────────────────────── */
+
+.listTabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.listTab {
+  flex: 1;
+  padding: 8px 0;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
+}
+
+.listTab:hover {
+  color: var(--color-text);
+  background: rgba(184, 101, 48, 0.04);
+}
+
+.listTabActive {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+/* ─── Reminders: Add Row ─────────────────────────────── */
+
+.addRow {
+  display: flex;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.addInput {
+  flex: 1;
+  padding: 7px 10px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.8rem;
+  font-family: var(--font-sans);
+  transition: border-color 0.15s;
+}
+
+.addInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.addInput::placeholder {
+  color: var(--color-text-secondary);
+  opacity: 0.7;
+}
+
+.addBtn {
+  width: 32px;
+  height: 32px;
+  background: var(--color-accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: white;
+  font-size: 1.15rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+
+.addBtn:hover {
+  opacity: 0.9;
+}
+
+.addBtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ─── Reminders: List ────────────────────────────────── */
+
+.remindersList {
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.reminderItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px var(--space-md);
+  border-bottom: 1px solid rgba(226, 217, 208, 0.35);
+  transition: background 0.15s;
+}
+
+.reminderItem:last-child {
+  border-bottom: none;
+}
+
+.reminderItem:hover {
+  background: var(--color-surface-hover);
+}
+
+.checkBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-border);
+  flex-shrink: 0;
+  margin-top: 1px;
+  transition: color 0.15s;
+  display: flex;
+}
+
+.checkBtn:hover {
+  color: var(--color-green);
+}
+
+.reminderContent {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.reminderName {
+  font-size: 0.82rem;
+  color: var(--color-text);
+  line-height: 1.35;
+}
+
+.reminderDue {
+  font-size: 0.65rem;
+  color: var(--color-orange);
+  font-weight: 500;
+}
+
+.reminderNotes {
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+  line-height: 1.3;
+}
+
+/* ─── Notes: Form ────────────────────────────────────── */
+
+.noteForm {
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+  background: rgba(184, 101, 48, 0.03);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.noteInput {
+  padding: 7px 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.8rem;
+  font-family: var(--font-sans);
+  transition: border-color 0.15s;
+}
+
+.noteInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.noteInput::placeholder,
+.noteTextarea::placeholder {
+  color: var(--color-text-secondary);
+  opacity: 0.7;
+}
+
+.noteTextarea {
+  padding: 8px 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.8rem;
+  font-family: var(--font-sans);
+  resize: vertical;
+  min-height: 60px;
+  line-height: 1.5;
+  transition: border-color 0.15s;
+}
+
+.noteTextarea:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.noteSaveBtn {
+  align-self: flex-end;
+  padding: 6px 18px;
+  background: var(--color-accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: white;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.noteSaveBtn:hover {
+  opacity: 0.9;
+}
+
+.noteSaveBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ─── Notes: List ────────────────────────────────────── */
+
+.notesList {
+  padding: var(--space-sm) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  max-height: 460px;
+  overflow-y: auto;
+}
+
+.noteCard {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-md);
+  transition: box-shadow 0.15s;
+}
+
+.noteCard:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.notePinned {
+  border-left: 3px solid var(--color-accent);
+  background: rgba(184, 101, 48, 0.03);
+}
+
+.noteTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.noteAuthorRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.noteAuthor {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-accent);
+}
+
+.noteTime {
+  font-size: 0.62rem;
+  color: var(--color-text-secondary);
+}
+
+.noteActions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.noteCard:hover .noteActions {
+  opacity: 1;
+}
+
+.noteActionBtn {
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  transition: all 0.15s;
+}
+
+.noteActionBtn:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.noteTitle {
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin: 0 0 4px;
+  color: var(--color-text);
+}
+
+.noteBody {
+  font-size: 0.8rem;
+  color: var(--color-text);
+  line-height: 1.55;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.noteEditWrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* ─── Shared States ──────────────────────────────────── */
+
+.emptyState {
+  padding: var(--space-xl) var(--space-md);
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.emptyAction {
+  padding: 6px 16px;
+  background: transparent;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  color: var(--color-accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.emptyAction:hover {
+  background: var(--color-accent);
+  color: white;
+}
+
+.spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ─── Responsive ─────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .modules {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .modules {
+    grid-template-columns: 1fr;
+  }
+  .greetingTitle {
+    font-size: 1.2rem;
+  }
+}

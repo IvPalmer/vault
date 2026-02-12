@@ -48,6 +48,9 @@ export function ProfileProvider({ children }) {
   useEffect(() => {
     if (isLoading || !profileList.length) return
 
+    // /home is shared (not profile-scoped) — skip redirect logic
+    if (location.pathname === '/home' || location.pathname.startsWith('/home/')) return
+
     const urlSlug = getSlugFromPath(location.pathname)
 
     if (urlSlug) {

@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import (
     Profile, Account, Category, Subcategory, CategorizationRule,
     RenameRule, RecurringTemplate, Transaction, RecurringMapping,
-    BudgetConfig, BalanceOverride, BankTemplate, SetupTemplate,
+    BudgetConfig, BalanceOverride, BankTemplate, SetupTemplate, FamilyNote,
 )
 
 
@@ -111,4 +111,10 @@ class BankTemplateSerializer(serializers.ModelSerializer):
 class SetupTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = SetupTemplate
+        fields = '__all__'
+
+
+class FamilyNoteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FamilyNote
         fields = '__all__'

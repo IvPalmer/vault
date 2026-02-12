@@ -454,3 +454,26 @@ class SetupTemplate(models.Model):
 
     def __str__(self):
         return f'{self.name} ({self.profile.name if self.profile else "Global"})'
+
+
+class FamilyNote(models.Model):
+    """
+    Shared family bulletin board note. Not profile-scoped —
+    visible to all household members.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title = models.CharField(max_length=200, blank=True)
+    content = models.TextField()
+    author_name = models.CharField(
+        max_length=100,
+        help_text='Free-text author name, e.g. "Palmer" or "Rafa"',
+    )
+    pinned = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-pinned', '-updated_at']
+
+    def __str__(self):
+        return f"{self.author_name}: {self.title or self.content[:40]}"

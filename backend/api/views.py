@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import subprocess
 
 from django.db import models
 from rest_framework import viewsets, status
@@ -31,6 +32,7 @@ from .models import (
     Account, Category, Subcategory, CategorizationRule,
     RenameRule, Transaction, RecurringMapping, RecurringTemplate,
     BudgetConfig, BalanceOverride, Profile, BankTemplate, SetupTemplate,
+    FamilyNote,
 )
 from .serializers import (
     AccountSerializer, CategorySerializer, SubcategorySerializer,
@@ -39,6 +41,7 @@ from .serializers import (
     RecurringMappingSerializer, RecurringTemplateSerializer,
     BudgetConfigSerializer, BalanceOverrideSerializer,
     ProfileSerializer, BankTemplateSerializer, SetupTemplateSerializer,
+    FamilyNoteSerializer,
 )
 from .services import (
     get_metricas,
@@ -1688,3 +1691,208 @@ class ProfileSetupStateView(APIView):
             'budget_strategy': profile.budget_strategy,
             'metricas_config': metricas_config,
         })
+
+
+class FamilyNoteViewSet(viewsets.ModelViewSet):
+    """Shared family notes — not profile-scoped."""
+    queryset = FamilyNote.objects.all()
+    serializer_class = FamilyNoteSerializer
+    pagination_class = None
+
+
+REMINDER_LISTS = ["R&R Tarefas", "R&R Casa", "R&R Compras"]
+
+
+class RemindersView(APIView):
+    """GET /api/home/reminders/?list=R&R Tarefas"""
+
+    def get(self, request):
+        list_name = request.query_params.get('list', 'R&R Tarefas')
+        if list_name not in REMINDER_LISTS:
+            return Response(
+                {'error': f'Invalid list: {list_name}. Must be one of {REMINDER_LISTS}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        script = f'''tell application "Reminders"
+    set output to ""
+    set theList to list "{list_name}"
+    set theReminders to (reminders of theList whose completed is false)
+    repeat with r in theReminders
+        set rName to name of r
+        set rDue to ""
+        try
+            set rDue to due date of r as text
+        end try
+        set rPriority to priority of r
+        set rNotes to ""
+        try
+            set rNotes to body of r
+        end try
+        set output to output & rName & "||" & rDue & "||" & rPriority & "||" & rNotes & "\\n"
+    end repeat
+    return output
+end tell'''
+
+        try:
+            result = subprocess.run(
+                ['osascript', '-e', script],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                return Response(
+                    {'error': result.stderr.strip()},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            reminders = []
+            raw = result.stdout.strip()
+            if raw:
+                for line in raw.split('\\n'):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split('||')
+                    reminders.append({
+                        'name': parts[0] if len(parts) > 0 else '',
+                        'due_date': parts[1] if len(parts) > 1 else '',
+                        'priority': parts[2] if len(parts) > 2 else '',
+                        'notes': parts[3] if len(parts) > 3 else '',
+                    })
+
+            return Response({
+                'list': list_name,
+                'reminders': reminders,
+                'count': len(reminders),
+            })
+        except subprocess.TimeoutExpired:
+            return Response(
+                {'error': 'Reminders request timed out'},
+                status=status.HTTP_504_GATEWAY_TIMEOUT,
+            )
+        except Exception as e:
+            logger.exception('RemindersView error')
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class RemindersListsView(APIView):
+    """GET /api/home/reminders/lists/ — Return available reminder list names."""
+
+    def get(self, request):
+        script = '''tell application "Reminders"
+    set listNames to {}
+    repeat with l in lists
+        set end of listNames to name of l
+    end repeat
+    return listNames
+end tell'''
+
+        try:
+            result = subprocess.run(
+                ['osascript', '-e', script],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                return Response(
+                    {'error': result.stderr.strip()},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            raw = result.stdout.strip()
+            lists = [name.strip() for name in raw.split(',') if name.strip()]
+            return Response({'lists': lists})
+        except subprocess.TimeoutExpired:
+            return Response(
+                {'error': 'Reminders request timed out'},
+                status=status.HTTP_504_GATEWAY_TIMEOUT,
+            )
+        except Exception as e:
+            logger.exception('RemindersListsView error')
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class RemindersAddView(APIView):
+    """POST /api/home/reminders/add/ — Create a new reminder."""
+
+    def post(self, request):
+        name = request.data.get('name')
+        list_name = request.data.get('list', 'R&R Tarefas')
+        if not name:
+            return Response({'error': 'name required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        escaped_name = name.replace('"', '\\"')
+        script = f'''tell application "Reminders"
+    tell list "{list_name}"
+        make new reminder with properties {{name:"{escaped_name}"}}
+    end tell
+    return "ok"
+end tell'''
+
+        try:
+            result = subprocess.run(
+                ['osascript', '-e', script],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                return Response(
+                    {'error': result.stderr.strip()},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            return Response({'status': 'ok', 'name': name, 'list': list_name})
+        except subprocess.TimeoutExpired:
+            return Response(
+                {'error': 'Reminders request timed out'},
+                status=status.HTTP_504_GATEWAY_TIMEOUT,
+            )
+        except Exception as e:
+            logger.exception('RemindersAddView error')
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class RemindersCompleteView(APIView):
+    """POST /api/home/reminders/complete/ — Mark a reminder as complete."""
+
+    def post(self, request):
+        reminder_name = request.data.get('reminder_name')
+        list_name = request.data.get('list', 'R&R Tarefas')
+        if not reminder_name:
+            return Response({'error': 'reminder_name required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        escaped_name = reminder_name.replace('"', '\\"')
+        script = f'''tell application "Reminders"
+    set theList to list "{list_name}"
+    set theReminders to (reminders of theList whose name is "{escaped_name}" and completed is false)
+    if (count of theReminders) > 0 then
+        set completed of item 1 of theReminders to true
+        return "ok"
+    else
+        return "not_found"
+    end if
+end tell'''
+
+        try:
+            result = subprocess.run(
+                ['osascript', '-e', script],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                return Response(
+                    {'error': result.stderr.strip()},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            output = result.stdout.strip()
+            if output == 'not_found':
+                return Response(
+                    {'error': f'Reminder "{reminder_name}" not found in "{list_name}"'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            return Response({'status': 'ok', 'reminder_name': reminder_name, 'list': list_name})
+        except subprocess.TimeoutExpired:
+            return Response(
+                {'error': 'Reminders request timed out'},
+                status=status.HTTP_504_GATEWAY_TIMEOUT,
+            )
+        except Exception as e:
+            logger.exception('RemindersCompleteView error')
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

@@ -29,6 +29,8 @@ from .views import (
     SetupTemplateViewSet,
     ExportSetupView,
     ProfileSetupStateView,
+    FamilyNoteViewSet,
+    RemindersView, RemindersAddView, RemindersCompleteView, RemindersListsView,
 )
 
 router = DefaultRouter()
@@ -44,6 +46,7 @@ router.register(r'recurring-mappings', RecurringMappingViewSet, basename='recurr
 router.register(r'budget-configs', BudgetConfigViewSet, basename='budgetconfig')
 router.register(r'balance-overrides', BalanceOverrideViewSet, basename='balanceoverride')
 router.register(r'setup-templates', SetupTemplateViewSet, basename='setuptemplate')
+router.register(r'home/notes', FamilyNoteViewSet, basename='familynote')
 
 urlpatterns = [
     # Transaction rename + similar must be BEFORE router include
@@ -95,4 +98,9 @@ urlpatterns = [
     path('profiles/<uuid:pk>/export-setup/', ExportSetupView.as_view(), name='export-setup'),
     path('profiles/<uuid:pk>/setup-state/', ProfileSetupStateView.as_view(), name='profile-setup-state'),
     path('analytics/analyze-setup/', AnalyzeSetupView.as_view(), name='analyze-setup'),
+    # Home / Family Hub
+    path('home/reminders/', RemindersView.as_view(), name='home-reminders'),
+    path('home/reminders/lists/', RemindersListsView.as_view(), name='home-reminders-lists'),
+    path('home/reminders/add/', RemindersAddView.as_view(), name='home-reminders-add'),
+    path('home/reminders/complete/', RemindersCompleteView.as_view(), name='home-reminders-complete'),
 ]
