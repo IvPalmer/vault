@@ -106,23 +106,48 @@ def start_auth_flow(redirect_uri=None):
 
     auth_url, state = flow.authorization_url(
         access_type='offline',
-        include_granted_scopes='true',
         prompt='consent',
     )
     return auth_url, None
 
 
 def complete_auth_flow(code, redirect_uri=None):
-    """Exchange auth code for tokens."""
+    """Exchange auth code for tokens.
+
+    Uses requests directly to avoid scope-mismatch errors when the Google
+    project has many scopes already granted (e.g. clawdbot with Gmail,
+    Drive, Classroom, etc.).
+    """
+    import requests as _requests
+
     uri = redirect_uri or DEFAULT_REDIRECT_URI
 
-    flow = Flow.from_client_secrets_file(
-        CREDENTIALS_FILE,
+    # Read client credentials
+    with open(CREDENTIALS_FILE) as f:
+        cred_data = json.load(f)
+
+    cred_type = 'web' if 'web' in cred_data else 'installed'
+    client_info = cred_data[cred_type]
+
+    # Exchange auth code for tokens directly (avoids scope validation)
+    token_resp = _requests.post(client_info['token_uri'], data={
+        'code': code,
+        'client_id': client_info['client_id'],
+        'client_secret': client_info['client_secret'],
+        'redirect_uri': uri,
+        'grant_type': 'authorization_code',
+    })
+    token_resp.raise_for_status()
+    token_data = token_resp.json()
+
+    creds = Credentials(
+        token=token_data['access_token'],
+        refresh_token=token_data.get('refresh_token'),
+        token_uri=client_info['token_uri'],
+        client_id=client_info['client_id'],
+        client_secret=client_info['client_secret'],
         scopes=SCOPES,
-        redirect_uri=uri,
     )
-    flow.fetch_token(code=code)
-    creds = flow.credentials
     _save_token(creds)
     return creds
 
