@@ -4,10 +4,11 @@
  * Shared dashboard (not profile-scoped) with:
  *   - Greeting + date
  *   - Module cards (Financeiro active, others "Em breve")
- *   - Apple Reminders widget (3 lists: R&R Tarefas, R&R Casa, R&R Compras)
- *   - Family notes bulletin board
+ *   - Apple Reminders widget (3 lists via host sidecar + EventKit)
+ *   - Family notes bulletin board (Django backend)
+ *   - Google Calendar month view (R&R shared calendar via Google Calendar API)
  */
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { useProfile } from '../context/ProfileContext'
@@ -454,6 +455,321 @@ function NotesBoard() {
   )
 }
 
+/* ── Calendar Widget (Month View) ────────────────────────── */
+
+const WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab']
+const MONTH_NAMES = [
+  'Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+]
+
+function buildCalendarDays(year, month) {
+  const firstDay = new Date(year, month, 1)
+  const lastDay = new Date(year, month + 1, 0)
+  const startDow = firstDay.getDay()       // 0=Sun
+  const daysInMonth = lastDay.getDate()
+
+  const days = []
+
+  // Leading days from previous month
+  const prevLast = new Date(year, month, 0).getDate()
+  for (let i = startDow - 1; i >= 0; i--) {
+    days.push({ day: prevLast - i, month: month - 1, outside: true })
+  }
+
+  // Current month days
+  for (let d = 1; d <= daysInMonth; d++) {
+    days.push({ day: d, month, outside: false })
+  }
+
+  // Trailing days to fill 6 rows (42 cells) or at least complete last row
+  const trailing = days.length <= 35 ? 35 - days.length : 42 - days.length
+  for (let d = 1; d <= trailing; d++) {
+    days.push({ day: d, month: month + 1, outside: true })
+  }
+
+  return days
+}
+
+function CalendarWidget() {
+  const queryClient = useQueryClient()
+  const now = new Date()
+  const [viewYear, setViewYear] = useState(now.getFullYear())
+  const [viewMonth, setViewMonth] = useState(now.getMonth())
+  const [selectedDate, setSelectedDate] = useState(null)
+  const [showForm, setShowForm] = useState(false)
+  const [title, setTitle] = useState('')
+  const [startTime, setStartTime] = useState('')
+  const [endTime, setEndTime] = useState('')
+
+  // ── Check Google Calendar auth status ──
+  const { data: authStatus, isLoading: authLoading } = useQuery({
+    queryKey: ['home-calendar-status'],
+    queryFn: () => api.get('/home/calendar/status/'),
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  })
+
+  const isAuthenticated = authStatus?.authenticated === true
+  const calendarId = authStatus?.calendar_id || null
+
+  // ── Fetch events for current month view (with buffer) ──
+  const timeMin = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-01`
+  const lastDay = new Date(viewYear, viewMonth + 2, 0).getDate()
+  const nextM = viewMonth + 2 > 12 ? 1 : viewMonth + 2
+  const nextY = viewMonth + 2 > 12 ? viewYear + 1 : viewYear
+  const timeMax = `${nextY}-${String(nextM).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['home-calendar-events', viewYear, viewMonth, calendarId],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (calendarId) params.set('calendar_id', calendarId)
+      params.set('time_min', timeMin)
+      params.set('time_max', timeMax)
+      return api.get(`/home/calendar/events/?${params}`)
+    },
+    enabled: isAuthenticated,
+    refetchInterval: 60000,
+  })
+
+  const addMutation = useMutation({
+    mutationFn: (evt) => api.post('/home/calendar/add-event/', evt),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['home-calendar-events'] })
+      setShowForm(false)
+      setTitle('')
+      setStartTime('')
+      setEndTime('')
+    },
+  })
+
+  // Build event lookup by YYYY-MM-DD
+  const eventsByDate = useMemo(() => {
+    const map = {}
+    ;(data?.events || []).forEach((evt) => {
+      // Handle both dateTime and date-only formats
+      const startStr = evt.start
+      const key = startStr.includes('T')
+        ? startStr.slice(0, 10)
+        : startStr
+      if (!map[key]) map[key] = []
+      map[key].push(evt)
+    })
+    return map
+  }, [data])
+
+  const days = useMemo(() => buildCalendarDays(viewYear, viewMonth), [viewYear, viewMonth])
+
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+
+  const dateKey = (d) => {
+    const m = d.month
+    const y = m < 0 ? viewYear - 1 : m > 11 ? viewYear + 1 : viewYear
+    const mm = ((m % 12) + 12) % 12
+    return `${y}-${String(mm + 1).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`
+  }
+
+  const prevMonth = () => {
+    if (viewMonth === 0) { setViewYear(viewYear - 1); setViewMonth(11) }
+    else setViewMonth(viewMonth - 1)
+    setSelectedDate(null)
+  }
+  const nextMonth = () => {
+    if (viewMonth === 11) { setViewYear(viewYear + 1); setViewMonth(0) }
+    else setViewMonth(viewMonth + 1)
+    setSelectedDate(null)
+  }
+  const goToday = () => {
+    setViewYear(now.getFullYear())
+    setViewMonth(now.getMonth())
+    setSelectedDate(todayKey)
+  }
+
+  const selectedEvents = selectedDate ? (eventsByDate[selectedDate] || []) : []
+
+  const formatTime = (iso) => {
+    const d = new Date(iso)
+    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  }
+
+  const handleAdd = (e) => {
+    e.preventDefault()
+    if (!title.trim() || !selectedDate || !startTime) return
+    const start = `${selectedDate}T${startTime}:00`
+    const end = endTime ? `${selectedDate}T${endTime}:00` : `${selectedDate}T${startTime}:00`
+    addMutation.mutate({
+      calendar_id: calendarId,
+      title: title.trim(),
+      start,
+      end,
+    })
+  }
+
+  const selectedDateLabel = selectedDate
+    ? new Date(selectedDate + 'T12:00:00').toLocaleDateString('pt-BR', {
+        weekday: 'long', day: 'numeric', month: 'long',
+      })
+    : null
+
+  // ── Not authenticated: show connect prompt ──
+  if (!authLoading && !isAuthenticated) {
+    return (
+      <div className={styles.calWidget}>
+        <div className={styles.calHeader}>
+          <h3 className={styles.calTitle}>Calendario</h3>
+        </div>
+        <div className={styles.calAuthPrompt}>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-secondary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+            <line x1="16" y1="2" x2="16" y2="6" />
+            <line x1="8" y1="2" x2="8" y2="6" />
+            <line x1="3" y1="10" x2="21" y2="10" />
+          </svg>
+          {authStatus?.error ? (
+            <>
+              <p className={styles.calAuthText}>{authStatus.error}</p>
+              <p className={styles.calAuthHint}>
+                Baixe as credenciais OAuth do Google Cloud Console e salve como
+                <code> backend/credentials.json</code>
+              </p>
+            </>
+          ) : authStatus?.auth_url ? (
+            <>
+              <p className={styles.calAuthText}>Conecte seu Google Calendar para ver seus eventos</p>
+              <a
+                href={authStatus.auth_url}
+                className={styles.calAuthBtn}
+              >
+                Conectar Google Calendar
+              </a>
+            </>
+          ) : (
+            <p className={styles.calAuthText}>Carregando...</p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className={styles.calWidget}>
+      {/* ── Header: nav + month/year ── */}
+      <div className={styles.calHeader}>
+        <div className={styles.calNav}>
+          <button className={styles.calNavBtn} onClick={prevMonth} title="Mes anterior">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+          </button>
+          <h3 className={styles.calTitle}>
+            {MONTH_NAMES[viewMonth]} {viewYear}
+          </h3>
+          <button className={styles.calNavBtn} onClick={nextMonth} title="Proximo mes">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+          </button>
+        </div>
+        <button className={styles.calTodayBtn} onClick={goToday}>Hoje</button>
+      </div>
+
+      {/* ── Weekday headers ── */}
+      <div className={styles.calGrid}>
+        {WEEKDAYS.map((wd) => (
+          <div key={wd} className={styles.calWeekday}>{wd}</div>
+        ))}
+
+        {/* ── Day cells ── */}
+        {days.map((d, i) => {
+          const key = dateKey(d)
+          const isToday = key === todayKey
+          const isSelected = key === selectedDate
+          const hasEvents = !!eventsByDate[key]
+          return (
+            <button
+              key={i}
+              className={[
+                styles.calDay,
+                d.outside ? styles.calDayOutside : '',
+                isToday ? styles.calDayToday : '',
+                isSelected ? styles.calDaySelected : '',
+              ].filter(Boolean).join(' ')}
+              onClick={() => setSelectedDate(key === selectedDate ? null : key)}
+            >
+              <span className={styles.calDayNum}>{d.day}</span>
+              {hasEvents && <span className={styles.calDot} />}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* ── Loading indicator ── */}
+      {isLoading && (
+        <div className={styles.calEmpty} style={{ padding: '8px 0' }}>
+          <span className={styles.spinner} /> Carregando eventos...
+        </div>
+      )}
+
+      {/* ── Selected day detail panel ── */}
+      {selectedDate && (
+        <div className={styles.calDetail}>
+          <div className={styles.calDetailHeader}>
+            <span className={styles.calDetailDate}>{selectedDateLabel}</span>
+            <button
+              className={styles.widgetHeaderBtn}
+              onClick={() => setShowForm(!showForm)}
+            >
+              {showForm ? 'Cancelar' : '+ Evento'}
+            </button>
+          </div>
+
+          {showForm && (
+            <form onSubmit={handleAdd} className={styles.calForm}>
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Nome do evento"
+                className={styles.noteInput}
+                autoFocus
+              />
+              <div className={styles.calFormRow}>
+                <div className={styles.calFormGroup}>
+                  <label className={styles.calFormLabel}>Inicio</label>
+                  <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className={styles.calFormInput} />
+                </div>
+                <div className={styles.calFormGroup}>
+                  <label className={styles.calFormLabel}>Fim</label>
+                  <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className={styles.calFormInput} />
+                </div>
+              </div>
+              <button type="submit" className={styles.noteSaveBtn} disabled={!title.trim() || !startTime || addMutation.isPending}>
+                Salvar
+              </button>
+            </form>
+          )}
+
+          {selectedEvents.length > 0 ? (
+            <div className={styles.calEventsList}>
+              {selectedEvents.map((evt, i) => (
+                <div key={i} className={styles.calEvent}>
+                  <div className={styles.calEventDot} />
+                  <div className={styles.calEventInfo}>
+                    <span className={styles.calEventTitle}>{evt.title}</span>
+                    <span className={styles.calEventTime}>
+                      {evt.all_day ? 'Dia todo' : `${formatTime(evt.start)} — ${formatTime(evt.end)}`}
+                    </span>
+                    {evt.location && <span className={styles.calEventLoc}>{evt.location}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : !showForm ? (
+            <div className={styles.calEmpty}>Sem eventos neste dia</div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ── Main Home Component ─────────────────────────────────── */
 
 export default function Home() {
@@ -472,11 +788,14 @@ export default function Home() {
       {/* Quick-access module cards */}
       <ModuleCards profileSlug={profileSlug} />
 
-      {/* Two-column: Reminders + Notes */}
+      {/* Widgets: Reminders + Notes side by side */}
       <div className={styles.grid}>
         <RemindersWidget />
         <NotesBoard />
       </div>
+
+      {/* Full-width calendar below */}
+      <CalendarWidget />
     </div>
   )
 }

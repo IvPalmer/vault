@@ -44,5 +44,9 @@ backend/db.sqlite3
 # Compiled binaries
 reminders-helper
 
+# Google OAuth credentials (sensitive)
+backend/credentials.json
+backend/token.json
+
 # Docker
 postgres_data/

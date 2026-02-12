@@ -1896,3 +1896,128 @@ end tell'''
         except Exception as e:
             logger.exception('RemindersCompleteView error')
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ═══════════════════════════════════════════════════════════
+# Google Calendar
+# ═══════════════════════════════════════════════════════════
+
+from . import google_calendar as gcal
+
+
+def _get_redirect_uri(request):
+    """Build the OAuth redirect URI from the incoming request."""
+    return 'http://localhost:8001/api/home/calendar/oauth-callback/'
+
+
+class GoogleCalendarStatusView(APIView):
+    """GET /api/home/calendar/status/ — Check if Google Calendar is authenticated."""
+
+    def get(self, request):
+        creds = gcal.get_credentials()
+        if creds:
+            # If authenticated, also find the R&R calendar ID
+            cal_id = gcal.find_calendar_id('R&R')
+            return Response({
+                'authenticated': True,
+                'calendar_id': cal_id,
+            })
+
+        redirect_uri = _get_redirect_uri(request)
+        auth_url, err = gcal.start_auth_flow(redirect_uri=redirect_uri)
+        if err:
+            return Response({'authenticated': False, 'error': err})
+        return Response({'authenticated': False, 'auth_url': auth_url})
+
+
+class GoogleCalendarAuthView(APIView):
+    """GET /api/home/calendar/auth/ — Start OAuth flow, return auth URL."""
+
+    def get(self, request):
+        redirect_uri = _get_redirect_uri(request)
+        auth_url, err = gcal.start_auth_flow(redirect_uri=redirect_uri)
+        if err:
+            return Response({'error': err}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({'auth_url': auth_url})
+
+
+class GoogleCalendarCallbackView(APIView):
+    """GET /api/home/calendar/oauth-callback/ — Handle OAuth callback."""
+
+    def get(self, request):
+        code = request.query_params.get('code')
+        if not code:
+            return Response({'error': 'No code provided'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            redirect_uri = _get_redirect_uri(request)
+            gcal.complete_auth_flow(code, redirect_uri=redirect_uri)
+            # Redirect to home page after successful auth
+            from django.shortcuts import redirect
+            return redirect('http://localhost:5175/home')
+        except Exception as e:
+            logger.exception('Google Calendar OAuth callback error')
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class GoogleCalendarListView(APIView):
+    """GET /api/home/calendar/calendars/ — List user's calendars."""
+
+    def get(self, request):
+        calendars = gcal.list_calendars()
+        if calendars is None:
+            return Response(
+                {'error': 'Not authenticated', 'authenticated': False},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        return Response({'calendars': calendars})
+
+
+class GoogleCalendarEventsView(APIView):
+    """GET /api/home/calendar/events/?calendar_id=...&time_min=...&time_max=..."""
+
+    def get(self, request):
+        calendar_id = request.query_params.get('calendar_id', None)
+        days = int(request.query_params.get('days', 62))
+        time_min = request.query_params.get('time_min', None)
+        time_max = request.query_params.get('time_max', None)
+
+        result = gcal.get_events(
+            calendar_id=calendar_id, days=days,
+            time_min=time_min, time_max=time_max,
+        )
+        if result is None:
+            return Response(
+                {'error': 'Not authenticated', 'authenticated': False},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        return Response(result)
+
+
+class GoogleCalendarAddEventView(APIView):
+    """POST /api/home/calendar/add-event/"""
+
+    def post(self, request):
+        title = request.data.get('title', '').strip()
+        start = request.data.get('start', '').strip()
+        end = request.data.get('end', '').strip()
+        calendar_id = request.data.get('calendar_id', None)
+        location = request.data.get('location', '').strip()
+
+        if not title or not start:
+            return Response(
+                {'error': 'title and start are required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        result = gcal.add_event(
+            calendar_id=calendar_id,
+            title=title, start=start, end=end or start,
+            location=location,
+        )
+        if result is None:
+            return Response(
+                {'error': 'Not authenticated', 'authenticated': False},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        return Response(result, status=status.HTTP_201_CREATED)

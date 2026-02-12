@@ -594,6 +594,361 @@
   to { transform: rotate(360deg); }
 }
 
+/* ═══════════════════════════════════════════════════════
+   Calendar Widget — macOS-inspired month view
+   ═══════════════════════════════════════════════════════ */
+
+.calWidget {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+/* ─── Calendar Header (nav + month/year) ─────────────── */
+
+.calHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.calNav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.calNavBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.calNavBtn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-light);
+}
+
+.calTitle {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+  min-width: 180px;
+  text-align: center;
+  letter-spacing: -0.01em;
+}
+
+.calTodayBtn {
+  padding: 5px 14px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.calTodayBtn:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-light);
+}
+
+/* ─── Calendar Grid (7-column) ───────────────────────── */
+
+.calGrid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  padding: 0 var(--space-sm);
+}
+
+.calWeekday {
+  padding: 10px 0;
+  text-align: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* ─── Day Cells ──────────────────────────────────────── */
+
+.calDay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 4px;
+  min-height: 52px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(226, 217, 208, 0.25);
+  cursor: pointer;
+  transition: all 0.12s;
+  font-family: var(--font-sans);
+  position: relative;
+}
+
+.calDay:hover {
+  background: var(--color-surface-hover);
+}
+
+.calDayNum {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--color-text);
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.12s;
+}
+
+.calDayOutside .calDayNum {
+  color: var(--color-text-secondary);
+  opacity: 0.35;
+}
+
+/* Today: accent ring */
+.calDayToday .calDayNum {
+  background: var(--color-accent);
+  color: white;
+  font-weight: 700;
+}
+
+/* Selected: subtle highlight */
+.calDaySelected {
+  background: var(--color-accent-light);
+}
+
+.calDaySelected .calDayNum {
+  font-weight: 700;
+  color: var(--color-accent);
+}
+
+/* Today + Selected combo */
+.calDayToday.calDaySelected .calDayNum {
+  background: var(--color-accent);
+  color: white;
+  box-shadow: 0 0 0 3px var(--color-accent-light);
+}
+
+/* Event dot indicator */
+.calDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+
+.calDayOutside .calDot {
+  opacity: 0.3;
+}
+
+/* ─── Detail Panel (selected day events) ─────────────── */
+
+.calDetail {
+  border-top: 2px solid var(--color-accent);
+  background: rgba(184, 101, 48, 0.02);
+}
+
+.calDetailHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.calDetailDate {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text);
+  text-transform: capitalize;
+}
+
+/* ─── Calendar Add-Event Form ────────────────────────── */
+
+.calForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.calFormRow {
+  display: flex;
+  gap: var(--space-lg);
+}
+
+.calFormGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 1;
+}
+
+.calFormLabel {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-secondary);
+  min-width: 40px;
+}
+
+.calFormInput {
+  padding: 5px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  background: var(--color-surface);
+  flex: 1;
+}
+
+.calFormInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+/* ─── Calendar Events List ───────────────────────────── */
+
+.calEventsList {
+  padding: var(--space-sm) var(--space-lg);
+}
+
+.calEvent {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: 8px 0;
+}
+
+.calEvent + .calEvent {
+  border-top: 1px solid rgba(226, 217, 208, 0.35);
+}
+
+.calEventDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+
+.calEventInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.calEventTitle {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.calEventTime {
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+}
+
+.calEventLoc {
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.calEmpty {
+  padding: var(--space-lg) var(--space-lg);
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+}
+
+/* ─── Calendar: Auth Prompt ─────────────────────────── */
+
+.calAuthPrompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-xxl) var(--space-lg);
+  text-align: center;
+}
+
+.calAuthText {
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+  max-width: 360px;
+}
+
+.calAuthHint {
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+  opacity: 0.7;
+  max-width: 360px;
+}
+
+.calAuthHint code {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.75rem;
+}
+
+.calAuthBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: var(--color-accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  transition: opacity 0.15s;
+}
+
+.calAuthBtn:hover {
+  opacity: 0.9;
+}
+
 /* ─── Responsive ─────────────────────────────────────── */
 
 @media (max-width: 900px) {
@@ -611,5 +966,18 @@
   }
   .greetingTitle {
     font-size: 1.2rem;
+  }
+  .calTitle {
+    font-size: 0.88rem;
+    min-width: 140px;
+  }
+  .calDay {
+    min-height: 44px;
+    padding: 6px 2px;
+  }
+  .calDayNum {
+    width: 26px;
+    height: 26px;
+    font-size: 0.75rem;
   }
 }

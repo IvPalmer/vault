@@ -10,12 +10,12 @@ export default defineConfig({
     open: false,
     allowedHosts: ['.local'],
     proxy: {
-      // Reminders → host-side sidecar (needs macOS osascript)
+      // Apple Reminders → host-side sidecar (needs macOS EventKit)
       '/api/home/reminders': {
         target: 'http://127.0.0.1:5176',
         changeOrigin: true,
       },
-      // Everything else → Django in Docker
+      // Everything else (incl. Google Calendar) → Django in Docker
       '/api': {
         target: 'http://127.0.0.1:8001',
         changeOrigin: true,

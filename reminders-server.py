@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Lightweight host-side reminders server.
-Runs OUTSIDE Docker on macOS — uses a compiled Swift EventKit helper
-to access Apple Reminders (including lists inside folder groups).
+Host-side sidecar server for Apple Reminders.
+Runs OUTSIDE Docker on macOS — uses a compiled Swift EventKit helper.
 
-Vite proxies /api/home/reminders/* to this server on port 5176.
+Vite proxies:
+  /api/home/reminders/*  → this server on port 5176
+
+Calendar is now handled by Google Calendar API via Django.
 
 Usage:
     python3 reminders-server.py
@@ -39,7 +41,7 @@ def run_helper(*args, timeout=15):
     return json.loads(result.stdout)
 
 
-class RemindersHandler(BaseHTTPRequestHandler):
+class SidecarHandler(BaseHTTPRequestHandler):
 
     def _cors(self):
         self.send_header('Access-Control-Allow-Origin', '*')
@@ -83,12 +85,13 @@ class RemindersHandler(BaseHTTPRequestHandler):
         else:
             self._json_response({'error': 'Not found'}, 404)
 
-    # ── GET /api/home/reminders/?list=... ──────────────────
+    # ═══════════════════════════════════════════════════════
+    # REMINDERS
+    # ═══════════════════════════════════════════════════════
 
     def _get_reminders(self, parsed):
         params = parse_qs(parsed.query)
         list_name = params.get('list', ['R&R Tarefas'])[0]
-
         try:
             data = run_helper('get', list_name)
             if 'error' in data:
@@ -100,23 +103,17 @@ class RemindersHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._json_response({'error': str(e)}, 500)
 
-    # ── GET /api/home/reminders/lists/ ─────────────────────
-
     def _get_lists(self):
         try:
             data = run_helper('lists')
             if 'error' in data:
                 self._json_response(data, 500)
                 return
-            # Filter to only show the home-relevant lists
             all_lists = data.get('lists', [])
             filtered = [l for l in HOME_LISTS if l in all_lists]
-            # If none of the home lists exist, show all
             self._json_response({'lists': filtered if filtered else all_lists})
         except Exception as e:
             self._json_response({'error': str(e)}, 500)
-
-    # ── POST /api/home/reminders/add/ ──────────────────────
 
     def _add_reminder(self, body):
         list_name = body.get('list', 'R&R Tarefas')
@@ -124,7 +121,6 @@ class RemindersHandler(BaseHTTPRequestHandler):
         if not name:
             self._json_response({'error': 'name is required'}, 400)
             return
-
         try:
             data = run_helper('add', list_name, name)
             if 'error' in data:
@@ -134,15 +130,12 @@ class RemindersHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._json_response({'error': str(e)}, 500)
 
-    # ── POST /api/home/reminders/complete/ ─────────────────
-
     def _complete_reminder(self, body):
         list_name = body.get('list', 'R&R Tarefas')
         name = body.get('name', '').strip()
         if not name:
             self._json_response({'error': 'name is required'}, 400)
             return
-
         try:
             data = run_helper('complete', list_name, name)
             if 'error' in data:
@@ -154,7 +147,7 @@ class RemindersHandler(BaseHTTPRequestHandler):
             self._json_response({'error': str(e)}, 500)
 
     def log_message(self, format, *args):
-        print(f'[reminders] {args[0]}')
+        print(f'[sidecar] {args[0]}')
 
 
 if __name__ == '__main__':
@@ -163,10 +156,10 @@ if __name__ == '__main__':
         print(f'Compile it first: swiftc -O reminders-helper.swift -o reminders-helper')
         sys.exit(1)
 
-    server = HTTPServer(('127.0.0.1', PORT), RemindersHandler)
-    print(f'Reminders server running on http://127.0.0.1:{PORT}')
+    server = HTTPServer(('127.0.0.1', PORT), SidecarHandler)
+    print(f'Reminders sidecar running on http://127.0.0.1:{PORT}')
     print(f'Using EventKit helper: {HELPER}')
-    print(f'Home lists: {", ".join(HOME_LISTS)}')
+    print(f'Lists: {", ".join(HOME_LISTS)}')
     try:
         server.serve_forever()
     except KeyboardInterrupt:
