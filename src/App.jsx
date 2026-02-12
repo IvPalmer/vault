@@ -9,27 +9,52 @@ import { useProfile } from './context/ProfileContext'
 import './App.css'
 
 function App() {
-  const { currentProfile, isLoading } = useProfile()
+  const { currentProfile, isLoading, profileSlug } = useProfile()
   const [showWizard, setShowWizard] = useState(false)
+  const [wizardEditMode, setWizardEditMode] = useState(false)
 
   // Auto-open wizard when profile hasn't completed setup
   useEffect(() => {
     if (!isLoading && currentProfile && currentProfile.setup_completed === false) {
+      setWizardEditMode(false)
       setShowWizard(true)
     }
   }, [currentProfile, isLoading])
+
+  const handleOpenWizardFromSettings = () => {
+    setWizardEditMode(true)
+    setShowWizard(true)
+  }
+
+  const handleCloseWizard = () => {
+    setShowWizard(false)
+    setWizardEditMode(false)
+  }
 
   return (
     <>
       <Layout>
         <Routes>
-          <Route path="/" element={<Navigate to="/overview" replace />} />
-          <Route path="/overview" element={<MonthlyOverview />} />
-          <Route path="/analytics" element={<Analytics />} />
-          <Route path="/settings" element={<Settings onOpenWizard={() => setShowWizard(true)} />} />
+          {/* Profile-scoped routes */}
+          <Route path="/:profileSlug/overview" element={<MonthlyOverview />} />
+          <Route path="/:profileSlug/analytics" element={<Analytics />} />
+          <Route path="/:profileSlug/settings" element={<Settings onOpenWizard={handleOpenWizardFromSettings} />} />
+
+          {/* Legacy routes — redirect to profile-scoped versions */}
+          <Route path="/overview" element={profileSlug ? <Navigate to={`/${profileSlug}/overview`} replace /> : null} />
+          <Route path="/analytics" element={profileSlug ? <Navigate to={`/${profileSlug}/analytics`} replace /> : null} />
+          <Route path="/settings" element={profileSlug ? <Navigate to={`/${profileSlug}/settings`} replace /> : null} />
+
+          {/* Root redirect */}
+          <Route path="/" element={profileSlug ? <Navigate to={`/${profileSlug}/overview`} replace /> : null} />
         </Routes>
       </Layout>
-      {showWizard && <SetupWizard onClose={() => setShowWizard(false)} />}
+      {showWizard && (
+        <SetupWizard
+          onClose={handleCloseWizard}
+          editMode={wizardEditMode}
+        />
+      )}
     </>
   )
 }

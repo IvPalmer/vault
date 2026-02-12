@@ -26,6 +26,9 @@ from .views import (
     CategorizeInstallmentView,
     AnalyzeSetupView,
     ProfileSetupView,
+    SetupTemplateViewSet,
+    ExportSetupView,
+    ProfileSetupStateView,
 )
 
 router = DefaultRouter()
@@ -40,6 +43,7 @@ router.register(r'transactions', TransactionViewSet, basename='transaction')
 router.register(r'recurring-mappings', RecurringMappingViewSet, basename='recurringmapping')
 router.register(r'budget-configs', BudgetConfigViewSet, basename='budgetconfig')
 router.register(r'balance-overrides', BalanceOverrideViewSet, basename='balanceoverride')
+router.register(r'setup-templates', SetupTemplateViewSet, basename='setuptemplate')
 
 urlpatterns = [
     # Transaction rename + similar must be BEFORE router include
@@ -88,5 +92,7 @@ urlpatterns = [
     path('import/', ImportStatementsView.as_view(), name='import-statements'),
     # Setup wizard
     path('profiles/<uuid:pk>/setup/', ProfileSetupView.as_view(), name='profile-setup'),
+    path('profiles/<uuid:pk>/export-setup/', ExportSetupView.as_view(), name='export-setup'),
+    path('profiles/<uuid:pk>/setup-state/', ProfileSetupStateView.as_view(), name='profile-setup-state'),
     path('analytics/analyze-setup/', AnalyzeSetupView.as_view(), name='analyze-setup'),
 ]

@@ -425,3 +425,32 @@ class CustomMetric(models.Model):
 
     def __str__(self):
         return f"CustomMetric: {self.label} ({self.metric_type})"
+
+
+class SetupTemplate(models.Model):
+    """
+    Reusable setup configuration template. Can be saved from a wizard run
+    and restored later to quickly reconfigure a profile.
+    profile=null means it's a global/shared template.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(
+        Profile, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='setup_templates',
+        help_text='Owner profile. Null for global templates.',
+    )
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True)
+    template_data = models.JSONField(
+        default=dict,
+        help_text='Full wizard state snapshot (bank_accounts, categories, recurring, rules, metricas, targets, etc.)',
+    )
+    is_builtin = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f'{self.name} ({self.profile.name if self.profile else "Global"})'

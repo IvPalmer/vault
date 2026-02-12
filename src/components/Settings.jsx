@@ -53,7 +53,7 @@ function TemplateTypeSelector({ value, onChange }) {
 }
 
 
-function Settings() {
+function Settings({ onOpenWizard }) {
   const queryClient = useQueryClient()
   const fileRef = useRef(null)
   const [uploading, setUploading] = useState(false)
@@ -621,6 +621,29 @@ function Settings() {
 
   return (
     <div className={styles.container}>
+
+      {/* ============================================================ */}
+      {/* SETUP WIZARD BUTTON                                          */}
+      {/* ============================================================ */}
+      {onOpenWizard && (
+        <div className={styles.section}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.sectionIcon}>&#9881;</div>
+            <div style={{ flex: 1 }}>
+              <h2 className={styles.sectionTitle}>Assistente de Configuracao</h2>
+              <p className={styles.sectionDesc}>
+                Execute o assistente guiado para reconfigurar seu perfil, ou salve/restaure templates de configuracao.
+              </p>
+            </div>
+            <button
+              className={styles.wizardBtn}
+              onClick={onOpenWizard}
+            >
+              Abrir Assistente
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ============================================================ */}
       {/* SECTION 1: PROFILE SETTINGS (PERFIL)                         */}

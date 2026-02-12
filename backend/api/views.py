@@ -2,6 +2,7 @@ import logging
 import os
 import re
 
+from django.db import models
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -29,7 +30,7 @@ def _validate_month_str(month_str):
 from .models import (
     Account, Category, Subcategory, CategorizationRule,
     RenameRule, Transaction, RecurringMapping, RecurringTemplate,
-    BudgetConfig, BalanceOverride, Profile, BankTemplate,
+    BudgetConfig, BalanceOverride, Profile, BankTemplate, SetupTemplate,
 )
 from .serializers import (
     AccountSerializer, CategorySerializer, SubcategorySerializer,
@@ -37,7 +38,7 @@ from .serializers import (
     TransactionSerializer, TransactionListSerializer,
     RecurringMappingSerializer, RecurringTemplateSerializer,
     BudgetConfigSerializer, BalanceOverrideSerializer,
-    ProfileSerializer, BankTemplateSerializer,
+    ProfileSerializer, BankTemplateSerializer, SetupTemplateSerializer,
 )
 from .services import (
     get_metricas,
@@ -1307,7 +1308,217 @@ class AnalyzeSetupView(APIView):
 
 
 class ProfileSetupView(APIView):
-    """Execute full profile setup from wizard selections."""
+    """Execute full profile setup from wizard selections (atomic)."""
+
+    def post(self, request, pk):
+        from django.db import transaction
+        from django.utils import timezone
+
+        try:
+            profile = Profile.objects.get(pk=pk)
+        except Profile.DoesNotExist:
+            return Response({'error': 'Profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        data = request.data
+        counts = {'accounts': 0, 'categories': 0, 'recurring': 0, 'rename_rules': 0, 'categorization_rules': 0}
+
+        try:
+            with transaction.atomic():
+                # --- Reset mode: wipe existing profile data ---
+                if data.get('reset_mode'):
+                    RecurringMapping.objects.filter(profile=profile).delete()
+                    RecurringTemplate.objects.filter(profile=profile).delete()
+                    CategorizationRule.objects.filter(profile=profile).delete()
+                    RenameRule.objects.filter(profile=profile).delete()
+                    BudgetConfig.objects.filter(profile=profile).delete()
+                    MetricasOrderConfig.objects.filter(profile=profile).delete()
+                    CustomMetric.objects.filter(profile=profile).delete()
+                    Category.objects.filter(profile=profile).delete()
+                    Account.objects.filter(profile=profile).delete()
+
+                # --- 1. Update profile fields ---
+                if 'name' in data and data['name']:
+                    profile.name = data['name']
+                if 'savings_target_pct' in data:
+                    profile.savings_target_pct = data['savings_target_pct']
+                if 'investment_target_pct' in data:
+                    profile.investment_target_pct = data['investment_target_pct']
+                if 'investment_allocation' in data:
+                    profile.investment_allocation = data['investment_allocation']
+                if 'budget_strategy' in data:
+                    profile.budget_strategy = data['budget_strategy']
+                if 'cc_display_mode' in data:
+                    profile.cc_display_mode = data['cc_display_mode']
+
+                profile.setup_completed = True
+                profile.save()
+
+                # --- 2. Create accounts from bank templates ---
+                if 'bank_accounts' in data:
+                    for acct_data in data['bank_accounts']:
+                        template = None
+                        if acct_data.get('bank_template_id'):
+                            try:
+                                template = BankTemplate.objects.get(pk=acct_data['bank_template_id'])
+                            except BankTemplate.DoesNotExist:
+                                pass
+
+                        display_name = acct_data.get('display_name') or (template.display_name if template else 'Account')
+                        acct_type = acct_data.get('account_type') or (template.account_type if template else 'checking')
+
+                        _, created = Account.objects.get_or_create(
+                            profile=profile,
+                            name=display_name,
+                            defaults={
+                                'account_type': acct_type,
+                                'closing_day': acct_data.get('closing_day') or (template.default_closing_day if template else None),
+                                'due_day': acct_data.get('due_day') or (template.default_due_day if template else None),
+                                'credit_limit': acct_data.get('credit_limit') or None,
+                                'bank_template': template,
+                            }
+                        )
+                        if created:
+                            counts['accounts'] += 1
+
+                # --- 3. Create categories ---
+                category_map = {}  # name -> Category for rule linking
+                if 'categories' in data:
+                    for cat_data in data['categories']:
+                        cat_name = cat_data.get('name', '') if isinstance(cat_data, dict) else str(cat_data)
+                        if not cat_name:
+                            continue
+                        cat_type = cat_data.get('type', 'Variavel') if isinstance(cat_data, dict) else 'Variavel'
+                        cat_limit = cat_data.get('limit', 0) if isinstance(cat_data, dict) else 0
+                        cat_due = cat_data.get('due_day') if isinstance(cat_data, dict) else None
+
+                        cat, created = Category.objects.get_or_create(
+                            profile=profile,
+                            name=cat_name,
+                            defaults={
+                                'category_type': cat_type,
+                                'default_limit': cat_limit,
+                                'due_day': cat_due,
+                            }
+                        )
+                        category_map[cat_name] = cat
+                        if created:
+                            counts['categories'] += 1
+
+                # Also map existing categories for rule linking
+                for cat in Category.objects.filter(profile=profile):
+                    if cat.name not in category_map:
+                        category_map[cat.name] = cat
+
+                # --- 4. Create recurring templates ---
+                if 'recurring_templates' in data:
+                    for tpl_data in data['recurring_templates']:
+                        if not tpl_data.get('name'):
+                            continue
+                        _, created = RecurringTemplate.objects.get_or_create(
+                            profile=profile,
+                            name=tpl_data['name'],
+                            defaults={
+                                'template_type': tpl_data.get('type', 'Fixo'),
+                                'default_limit': tpl_data.get('amount', 0),
+                                'due_day': tpl_data.get('due_day'),
+                            }
+                        )
+                        if created:
+                            counts['recurring'] += 1
+
+                # --- 5. Create rename rules ---
+                if 'rename_rules' in data:
+                    for rule_data in data['rename_rules']:
+                        if not rule_data.get('keyword') or not rule_data.get('display_name'):
+                            continue
+                        _, created = RenameRule.objects.get_or_create(
+                            profile=profile,
+                            keyword=rule_data['keyword'],
+                            defaults={'display_name': rule_data['display_name']}
+                        )
+                        if created:
+                            counts['rename_rules'] += 1
+
+                # --- 6. Create categorization rules ---
+                if 'categorization_rules' in data:
+                    for rule_data in data['categorization_rules']:
+                        cat_name = rule_data.get('category_name', '')
+                        cat = category_map.get(cat_name)
+                        if not cat or not rule_data.get('keyword'):
+                            continue
+                        _, created = CategorizationRule.objects.get_or_create(
+                            profile=profile,
+                            keyword=rule_data['keyword'],
+                            defaults={
+                                'category': cat,
+                                'priority': rule_data.get('priority', 0),
+                            }
+                        )
+                        if created:
+                            counts['categorization_rules'] += 1
+
+                # --- 7. Set metricas order ---
+                if 'metricas_config' in data:
+                    mc = data['metricas_config']
+                    MetricasOrderConfig.objects.update_or_create(
+                        profile=profile,
+                        month_str='__default__',
+                        defaults={
+                            'card_order': mc.get('card_order', []),
+                            'hidden_cards': mc.get('hidden_cards', []),
+                        }
+                    )
+
+                # --- 8. Initialize recurring mappings for current month ---
+                now = timezone.now()
+                current_month = now.strftime('%Y-%m')
+                templates_qs = RecurringTemplate.objects.filter(profile=profile, is_active=True)
+                for tmpl in templates_qs:
+                    RecurringMapping.objects.get_or_create(
+                        profile=profile,
+                        template=tmpl,
+                        month_str=current_month,
+                        defaults={
+                            'status': 'missing',
+                            'expected_amount': tmpl.default_limit,
+                            'display_order': tmpl.display_order,
+                        }
+                    )
+
+        except Exception as e:
+            logger.exception('ProfileSetupView error')
+            return Response(
+                {'error': f'Setup failed: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        serializer = ProfileSerializer(profile)
+        return Response({
+            'profile': serializer.data,
+            'counts': counts,
+        }, status=status.HTTP_200_OK)
+
+
+class SetupTemplateViewSet(viewsets.ModelViewSet):
+    """CRUD for saved setup templates."""
+    serializer_class = SetupTemplateSerializer
+
+    def get_queryset(self):
+        profile = getattr(self.request, 'profile', None)
+        if profile:
+            # Return templates owned by this profile + global templates
+            return SetupTemplate.objects.filter(
+                models.Q(profile=profile) | models.Q(profile__isnull=True)
+            )
+        return SetupTemplate.objects.filter(profile__isnull=True)
+
+    def perform_create(self, serializer):
+        profile = getattr(self.request, 'profile', None)
+        serializer.save(profile=profile)
+
+
+class ExportSetupView(APIView):
+    """Export current profile configuration as a SetupTemplate."""
 
     def post(self, request, pk):
         try:
@@ -1315,96 +1526,165 @@ class ProfileSetupView(APIView):
         except Profile.DoesNotExist:
             return Response({'error': 'Profile not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        data = request.data
+        # Gather all profile config into template_data
+        accounts_data = []
+        for acct in Account.objects.filter(profile=profile, is_active=True):
+            accounts_data.append({
+                'bank_template_id': str(acct.bank_template_id) if acct.bank_template_id else None,
+                'display_name': acct.name,
+                'account_type': acct.account_type,
+                'closing_day': acct.closing_day,
+                'due_day': acct.due_day,
+                'credit_limit': float(acct.credit_limit) if acct.credit_limit else None,
+            })
 
-        # 1. Update profile fields
-        if 'savings_target_pct' in data:
-            profile.savings_target_pct = data['savings_target_pct']
-        if 'investment_target_pct' in data:
-            profile.investment_target_pct = data['investment_target_pct']
-        if 'investment_allocation' in data:
-            profile.investment_allocation = data['investment_allocation']
-        if 'budget_strategy' in data:
-            profile.budget_strategy = data['budget_strategy']
-        if 'cc_display_mode' in data:
-            profile.cc_display_mode = data['cc_display_mode']
-        if 'name' in data:
-            profile.name = data['name']
+        categories_data = []
+        for cat in Category.objects.filter(profile=profile, is_active=True):
+            categories_data.append({
+                'name': cat.name,
+                'type': cat.category_type,
+                'limit': float(cat.default_limit) if cat.default_limit else 0,
+                'due_day': cat.due_day,
+            })
 
-        profile.setup_completed = True
-        profile.save()
+        recurring_data = []
+        for tmpl in RecurringTemplate.objects.filter(profile=profile, is_active=True):
+            recurring_data.append({
+                'name': tmpl.name,
+                'type': tmpl.template_type,
+                'amount': float(tmpl.default_limit) if tmpl.default_limit else 0,
+                'due_day': tmpl.due_day,
+            })
 
-        # 2. Create accounts from bank templates
-        if 'bank_accounts' in data:
-            from .models import BankTemplate
-            for acct_data in data['bank_accounts']:
-                template = None
-                if 'bank_template_id' in acct_data:
-                    try:
-                        template = BankTemplate.objects.get(pk=acct_data['bank_template_id'])
-                    except BankTemplate.DoesNotExist:
-                        pass
+        rename_rules_data = []
+        for rule in RenameRule.objects.filter(profile=profile, is_active=True):
+            rename_rules_data.append({
+                'keyword': rule.keyword,
+                'display_name': rule.display_name,
+            })
 
-                Account.objects.get_or_create(
-                    profile=profile,
-                    name=acct_data.get('display_name', template.display_name if template else 'Account'),
-                    defaults={
-                        'account_type': acct_data.get('account_type', template.account_type if template else 'checking'),
-                        'closing_day': acct_data.get('closing_day', template.default_closing_day if template else None),
-                        'due_day': acct_data.get('due_day', template.default_due_day if template else None),
-                        'credit_limit': acct_data.get('credit_limit'),
-                        'bank_template': template,
-                    }
-                )
+        categorization_rules_data = []
+        for rule in CategorizationRule.objects.filter(profile=profile, is_active=True):
+            categorization_rules_data.append({
+                'keyword': rule.keyword,
+                'category_name': rule.category.name if rule.category else '',
+                'priority': rule.priority,
+            })
 
-        # 3. Create categories from selections
-        if 'categories' in data:
-            for cat_data in data['categories']:
-                Category.objects.get_or_create(
-                    profile=profile,
-                    name=cat_data['name'],
-                    defaults={
-                        'category_type': cat_data.get('type', 'Variavel'),
-                        'default_limit': cat_data.get('limit', 0),
-                        'due_day': cat_data.get('due_day'),
-                    }
-                )
+        # Get metricas config
+        metricas_config = {}
+        try:
+            moc = MetricasOrderConfig.objects.get(profile=profile, month_str='__default__')
+            metricas_config = {
+                'card_order': moc.card_order or [],
+                'hidden_cards': moc.hidden_cards or [],
+            }
+        except MetricasOrderConfig.DoesNotExist:
+            pass
 
-        # 4. Create recurring templates from selections
-        if 'recurring_templates' in data:
-            for tpl_data in data['recurring_templates']:
-                RecurringTemplate.objects.get_or_create(
-                    profile=profile,
-                    name=tpl_data['name'],
-                    defaults={
-                        'template_type': tpl_data.get('type', 'Fixo'),
-                        'default_limit': tpl_data.get('amount', 0),
-                        'due_day': tpl_data.get('due_day'),
-                    }
-                )
+        template_data = {
+            'bank_accounts': accounts_data,
+            'categories': categories_data,
+            'recurring_templates': recurring_data,
+            'rename_rules': rename_rules_data,
+            'categorization_rules': categorization_rules_data,
+            'cc_display_mode': profile.cc_display_mode,
+            'savings_target_pct': float(profile.savings_target_pct),
+            'investment_target_pct': float(profile.investment_target_pct),
+            'investment_allocation': profile.investment_allocation,
+            'budget_strategy': profile.budget_strategy,
+            'metricas_config': metricas_config,
+        }
 
-        # 5. Create categorization rules
-        if 'rules' in data:
-            for rule_data in data['rules']:
-                cat = Category.objects.filter(profile=profile, name=rule_data.get('category_name', '')).first()
-                if cat:
-                    CategorizationRule.objects.get_or_create(
-                        profile=profile,
-                        keyword=rule_data['keyword'],
-                        defaults={'category': cat}
-                    )
+        # Create the template
+        name = request.data.get('name', f'{profile.name} - Config')
+        description = request.data.get('description', f'Exported from {profile.name}')
 
-        # 6. Set metricas order
-        if 'metricas_config' in data:
-            mc = data['metricas_config']
-            MetricasOrderConfig.objects.update_or_create(
-                profile=profile,
-                month_str='__default__',
-                defaults={
-                    'card_order': mc.get('card_order', []),
-                    'hidden_cards': mc.get('hidden_cards', []),
-                }
-            )
+        template = SetupTemplate.objects.create(
+            profile=profile,
+            name=name,
+            description=description,
+            template_data=template_data,
+        )
 
-        serializer = ProfileSerializer(profile)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(SetupTemplateSerializer(template).data, status=status.HTTP_201_CREATED)
+
+
+class ProfileSetupStateView(APIView):
+    """Get current profile's full config for pre-filling the wizard in edit mode."""
+
+    def get(self, request, pk):
+        try:
+            profile = Profile.objects.get(pk=pk)
+        except Profile.DoesNotExist:
+            return Response({'error': 'Profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Build same structure as template_data
+        accounts_data = []
+        for acct in Account.objects.filter(profile=profile, is_active=True):
+            accounts_data.append({
+                'bank_template_id': str(acct.bank_template_id) if acct.bank_template_id else None,
+                'display_name': acct.name,
+                'account_type': acct.account_type,
+                'closing_day': acct.closing_day,
+                'due_day': acct.due_day,
+                'credit_limit': float(acct.credit_limit) if acct.credit_limit else None,
+            })
+
+        categories_data = []
+        for cat in Category.objects.filter(profile=profile, is_active=True):
+            categories_data.append({
+                'name': cat.name,
+                'type': cat.category_type,
+                'limit': float(cat.default_limit) if cat.default_limit else 0,
+                'due_day': cat.due_day,
+            })
+
+        recurring_data = []
+        for tmpl in RecurringTemplate.objects.filter(profile=profile, is_active=True):
+            recurring_data.append({
+                'name': tmpl.name,
+                'type': tmpl.template_type,
+                'amount': float(tmpl.default_limit) if tmpl.default_limit else 0,
+                'due_day': tmpl.due_day,
+            })
+
+        rename_rules_data = []
+        for rule in RenameRule.objects.filter(profile=profile, is_active=True):
+            rename_rules_data.append({
+                'keyword': rule.keyword,
+                'display_name': rule.display_name,
+            })
+
+        categorization_rules_data = []
+        for rule in CategorizationRule.objects.filter(profile=profile, is_active=True):
+            categorization_rules_data.append({
+                'keyword': rule.keyword,
+                'category_name': rule.category.name if rule.category else '',
+                'priority': rule.priority,
+            })
+
+        metricas_config = {}
+        try:
+            moc = MetricasOrderConfig.objects.get(profile=profile, month_str='__default__')
+            metricas_config = {
+                'card_order': moc.card_order or [],
+                'hidden_cards': moc.hidden_cards or [],
+            }
+        except MetricasOrderConfig.DoesNotExist:
+            pass
+
+        return Response({
+            'name': profile.name,
+            'bank_accounts': accounts_data,
+            'categories': categories_data,
+            'recurring_templates': recurring_data,
+            'rename_rules': rename_rules_data,
+            'categorization_rules': categorization_rules_data,
+            'cc_display_mode': profile.cc_display_mode,
+            'savings_target_pct': float(profile.savings_target_pct),
+            'investment_target_pct': float(profile.investment_target_pct),
+            'investment_allocation': profile.investment_allocation,
+            'budget_strategy': profile.budget_strategy,
+            'metricas_config': metricas_config,
+        })

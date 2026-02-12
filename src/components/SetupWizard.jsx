@@ -5,7 +5,7 @@ import { useProfile } from '../context/ProfileContext'
 import styles from './SetupWizard.module.css'
 
 // ── Constants ──────────────────────────────────────────────────
-const TOTAL_STEPS = 8
+const TOTAL_STEPS = 10
 
 const FALLBACK_ORDER = [
   'entradas_atuais', 'entradas_projetadas', 'a_entrar', 'a_pagar',
@@ -39,9 +39,25 @@ const ACCT_TYPE_LABELS = {
   credit_card: 'Cartao de Credito',
 }
 
+const STEP_TITLES = {
+  1: 'Dados do Perfil',
+  2: 'Selecionar Bancos',
+  3: 'Configurar Cartoes',
+  4: 'Modo de Visualizacao',
+  5: 'Itens Recorrentes',
+  6: 'Categorias & Orcamento',
+  7: 'Regras de Renomeacao',
+  8: 'Regras de Categorizacao',
+  9: 'Cartoes do Dashboard',
+  10: 'Revisao',
+}
+
 // ── Reducer ────────────────────────────────────────────────────
 const initialState = {
   step: 1,
+  wizardMode: 'new', // 'new' | 'edit' | 'template'
+  showModeSelection: false,
+  loadedTemplateId: null,
   profileName: '',
   selectedTemplates: [],
   cardConfigs: {},
@@ -54,6 +70,8 @@ const initialState = {
   savingsTarget: 20,
   investmentTarget: 10,
   investmentAllocation: [],
+  renameRules: [],
+  categorizationRules: [],
   cardOrder: [...FALLBACK_ORDER],
   hiddenCards: [],
 }
@@ -66,6 +84,10 @@ function reducer(state, action) {
       return { ...state, step: Math.min(state.step + 1, TOTAL_STEPS) }
     case 'PREV_STEP':
       return { ...state, step: Math.max(state.step - 1, 1) }
+    case 'SET_WIZARD_MODE':
+      return { ...state, wizardMode: action.payload }
+    case 'SET_SHOW_MODE_SELECTION':
+      return { ...state, showModeSelection: action.payload }
     case 'SET_PROFILE_NAME':
       return { ...state, profileName: action.payload }
     case 'TOGGLE_TEMPLATE': {
@@ -74,7 +96,6 @@ function reducer(state, action) {
       const selectedTemplates = exists
         ? state.selectedTemplates.filter(t => t.id !== tpl.id)
         : [...state.selectedTemplates, tpl]
-      // Auto-create card config when selecting a credit_card template
       const cardConfigs = { ...state.cardConfigs }
       if (!exists && tpl.account_type === 'credit_card') {
         cardConfigs[tpl.id] = {
@@ -151,6 +172,30 @@ function reducer(state, action) {
       )
       return { ...state, investmentAllocation: alloc }
     }
+    case 'SET_RENAME_RULES':
+      return { ...state, renameRules: action.payload }
+    case 'ADD_RENAME_RULE':
+      return { ...state, renameRules: [...state.renameRules, action.payload] }
+    case 'REMOVE_RENAME_RULE':
+      return { ...state, renameRules: state.renameRules.filter((_, i) => i !== action.payload) }
+    case 'UPDATE_RENAME_RULE': {
+      const rules = state.renameRules.map((r, i) =>
+        i === action.payload.index ? { ...r, ...action.payload.data } : r
+      )
+      return { ...state, renameRules: rules }
+    }
+    case 'SET_CATEGORIZATION_RULES':
+      return { ...state, categorizationRules: action.payload }
+    case 'ADD_CATEGORIZATION_RULE':
+      return { ...state, categorizationRules: [...state.categorizationRules, action.payload] }
+    case 'REMOVE_CATEGORIZATION_RULE':
+      return { ...state, categorizationRules: state.categorizationRules.filter((_, i) => i !== action.payload) }
+    case 'UPDATE_CATEGORIZATION_RULE': {
+      const rules = state.categorizationRules.map((r, i) =>
+        i === action.payload.index ? { ...r, ...action.payload.data } : r
+      )
+      return { ...state, categorizationRules: rules }
+    }
     case 'SET_CARD_ORDER':
       return { ...state, cardOrder: action.payload }
     case 'TOGGLE_HIDDEN_CARD': {
@@ -168,16 +213,143 @@ function reducer(state, action) {
       ;[order[index], order[newIndex]] = [order[newIndex], order[index]]
       return { ...state, cardOrder: order }
     }
+    case 'LOAD_TEMPLATE': {
+      // Load full wizard state from a SetupTemplate's template_data
+      const td = action.payload
+      return {
+        ...state,
+        wizardMode: 'template',
+        loadedTemplateId: td._templateId || null,
+        selectedTemplates: [], // Templates use bank_accounts, not selectedTemplates
+        cardConfigs: {},
+        ccDisplayMode: td.cc_display_mode || 'invoice',
+        recurringSource: td.recurring_templates?.length > 0 ? 'template' : null,
+        recurringItems: (td.recurring_templates || []).map(r => ({ ...r, included: true })),
+        categorySource: td.categories?.length > 0 ? 'template' : null,
+        categories: (td.categories || []).map(c => typeof c === 'string' ? c : c.name),
+        budgetLimits: (td.categories || []).filter(c => typeof c === 'object').map(c => ({
+          category: c.name,
+          avg_monthly: 0,
+          suggested_limit: c.limit || 0,
+        })),
+        savingsTarget: td.savings_target_pct || 20,
+        investmentTarget: td.investment_target_pct || 10,
+        investmentAllocation: Array.isArray(td.investment_allocation)
+          ? td.investment_allocation
+          : Object.entries(td.investment_allocation || {}).map(([name, percentage]) => ({ name, percentage })),
+        renameRules: td.rename_rules || [],
+        categorizationRules: td.categorization_rules || [],
+        cardOrder: td.metricas_config?.card_order || [...FALLBACK_ORDER],
+        hiddenCards: td.metricas_config?.hidden_cards || [],
+      }
+    }
+    case 'LOAD_EXISTING_CONFIG': {
+      // Load from ProfileSetupStateView response for edit mode
+      const cfg = action.payload
+      return {
+        ...state,
+        wizardMode: 'edit',
+        profileName: cfg.name || '',
+        selectedTemplates: [],
+        cardConfigs: {},
+        ccDisplayMode: cfg.cc_display_mode || 'invoice',
+        recurringSource: cfg.recurring_templates?.length > 0 ? 'existing' : null,
+        recurringItems: (cfg.recurring_templates || []).map(r => ({ ...r, included: true })),
+        categorySource: cfg.categories?.length > 0 ? 'existing' : null,
+        categories: (cfg.categories || []).map(c => typeof c === 'string' ? c : c.name),
+        budgetLimits: (cfg.categories || []).filter(c => typeof c === 'object').map(c => ({
+          category: c.name,
+          avg_monthly: 0,
+          suggested_limit: c.limit || 0,
+        })),
+        savingsTarget: cfg.savings_target_pct || 20,
+        investmentTarget: cfg.investment_target_pct || 10,
+        investmentAllocation: Array.isArray(cfg.investment_allocation)
+          ? cfg.investment_allocation
+          : Object.entries(cfg.investment_allocation || {}).map(([name, percentage]) => ({ name, percentage })),
+        renameRules: cfg.rename_rules || [],
+        categorizationRules: cfg.categorization_rules || [],
+        cardOrder: cfg.metricas_config?.card_order || [...FALLBACK_ORDER],
+        hiddenCards: cfg.metricas_config?.hidden_cards || [],
+      }
+    }
+    case 'RESET_STATE':
+      return { ...initialState, wizardMode: state.wizardMode, showModeSelection: false }
     default:
       return state
   }
 }
 
+// ── Helper: Build submission payload ──────────────────────────
+function buildPayload(state) {
+  // Transform frontend wizard state into backend-expected format
+  const bankAccounts = state.selectedTemplates.map(tpl => {
+    const config = state.cardConfigs[tpl.id] || {}
+    return {
+      bank_template_id: tpl.id,
+      display_name: config.display_name || tpl.display_name || tpl.bank_name,
+      account_type: tpl.account_type,
+      closing_day: config.closing_day || tpl.default_closing_day || null,
+      due_day: config.due_day || tpl.default_due_day || null,
+      credit_limit: config.credit_limit ? parseFloat(config.credit_limit) : null,
+    }
+  })
+
+  const recurringTemplates = state.recurringItems
+    .filter(r => r.included)
+    .map(r => ({
+      name: r.name,
+      type: r.type || r.template_type || 'Fixo',
+      amount: parseFloat(r.amount || r.default_limit || 0),
+      due_day: r.due_day || null,
+    }))
+
+  const categories = state.budgetLimits.length > 0
+    ? state.budgetLimits.map(b => ({
+        name: b.category || b.name,
+        type: b.type || 'Variavel',
+        limit: parseFloat(b.suggested_limit || 0),
+        due_day: b.due_day || null,
+      }))
+    : state.categories.map(c => ({
+        name: typeof c === 'string' ? c : c.name,
+        type: typeof c === 'object' ? (c.type || c.category_type || 'Variavel') : 'Variavel',
+        limit: typeof c === 'object' ? parseFloat(c.limit || c.default_limit || 0) : 0,
+        due_day: null,
+      }))
+
+  return {
+    reset_mode: state.wizardMode === 'edit',
+    name: state.profileName || undefined,
+    savings_target_pct: state.savingsTarget,
+    investment_target_pct: state.investmentTarget,
+    investment_allocation: state.investmentAllocation,
+    budget_strategy: 'percentage',
+    bank_accounts: bankAccounts,
+    cc_display_mode: state.ccDisplayMode,
+    recurring_templates: recurringTemplates,
+    categories,
+    rename_rules: state.renameRules.filter(r => r.keyword && r.display_name),
+    categorization_rules: state.categorizationRules.filter(r => r.keyword && r.category_name),
+    metricas_config: {
+      card_order: state.cardOrder,
+      hidden_cards: state.hiddenCards,
+    },
+  }
+}
+
 // ── Main Component ─────────────────────────────────────────────
-export default function SetupWizard({ onClose }) {
-  const [state, dispatch] = useReducer(reducer, initialState)
+export default function SetupWizard({ onClose, editMode = false }) {
+  const [state, dispatch] = useReducer(reducer, {
+    ...initialState,
+    showModeSelection: editMode,
+    wizardMode: editMode ? 'edit' : 'new',
+  })
   const queryClient = useQueryClient()
-  const { profiles, profileId } = useProfile()
+  const { profiles, profileId, currentProfile } = useProfile()
+  const [confirmReset, setConfirmReset] = useState(false)
+  const [saveTemplateName, setSaveTemplateName] = useState('')
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false)
 
   // ── API queries ──
   const { data: bankTemplates = [], isLoading: loadingTemplates } = useQuery({
@@ -193,6 +365,28 @@ export default function SetupWizard({ onClose }) {
     staleTime: 5 * 60 * 1000,
   })
 
+  const { data: setupTemplates = [] } = useQuery({
+    queryKey: ['setup-templates'],
+    queryFn: () => api.get('/setup-templates/'),
+    enabled: editMode,
+  })
+
+  // Load existing config when in edit mode
+  const { data: existingConfig } = useQuery({
+    queryKey: ['setup-state', profileId],
+    queryFn: () => api.get(`/profiles/${profileId}/setup-state/`),
+    enabled: editMode && state.wizardMode === 'edit',
+  })
+
+  // Pre-fill from existing config
+  const prevConfigRef = useRef(null)
+  useEffect(() => {
+    if (existingConfig && existingConfig !== prevConfigRef.current && state.wizardMode === 'edit' && !state.showModeSelection) {
+      prevConfigRef.current = existingConfig
+      dispatch({ type: 'LOAD_EXISTING_CONFIG', payload: existingConfig })
+    }
+  }, [existingConfig, state.wizardMode, state.showModeSelection])
+
   // ── Submit mutation ──
   const submitMutation = useMutation({
     mutationFn: (payload) => api.post(`/profiles/${profileId}/setup/`, payload),
@@ -200,7 +394,22 @@ export default function SetupWizard({ onClose }) {
       queryClient.invalidateQueries({ queryKey: ['profiles'] })
       queryClient.invalidateQueries({ queryKey: ['metricas'] })
       queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      queryClient.invalidateQueries({ queryKey: ['categories'] })
+      queryClient.invalidateQueries({ queryKey: ['recurring-templates'] })
+      queryClient.invalidateQueries({ queryKey: ['renames'] })
+      queryClient.invalidateQueries({ queryKey: ['rules'] })
       onClose()
+    },
+  })
+
+  // Save template mutation
+  const saveTemplateMutation = useMutation({
+    mutationFn: (payload) => api.post(`/profiles/${profileId}/export-setup/`, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['setup-templates'] })
+      setShowSaveTemplate(false)
+      setSaveTemplateName('')
     },
   })
 
@@ -216,7 +425,7 @@ export default function SetupWizard({ onClose }) {
     return groups
   }, [bankTemplates])
 
-  // ── Credit card templates from selection ──
+  // CC templates from selection
   const ccTemplates = useMemo(
     () => state.selectedTemplates.filter(t => t.account_type === 'credit_card'),
     [state.selectedTemplates]
@@ -224,9 +433,7 @@ export default function SetupWizard({ onClose }) {
 
   // ── Handlers ──
   const handleNext = useCallback(() => {
-    // Trigger analyze-setup when entering step 5 or 6 if smart source chosen later
     if (state.step === 4) {
-      // pre-fetch analyze data
       setAnalyzeTriggered(true)
     }
     dispatch({ type: 'NEXT_STEP' })
@@ -275,41 +482,130 @@ export default function SetupWizard({ onClose }) {
   }, [analyzeData, state.recurringSource, state.categorySource, state.recurringItems.length, state.budgetLimits.length, state.categories.length])
 
   const handleSubmit = useCallback(() => {
-    const payload = {
-      profile_name: state.profileName,
-      bank_templates: state.selectedTemplates.map(t => t.id),
-      card_configs: state.cardConfigs,
-      cc_display_mode: state.ccDisplayMode,
-      recurring_items: state.recurringItems.filter(r => r.included),
-      categories: state.categories,
-      budget_limits: state.budgetLimits,
-      savings_target: state.savingsTarget,
-      investment_target: state.investmentTarget,
-      investment_allocation: state.investmentAllocation,
-      card_order: state.cardOrder,
-      hidden_cards: state.hiddenCards,
-    }
+    const payload = buildPayload(state)
     submitMutation.mutate(payload)
   }, [state, submitMutation])
 
+  const handleSaveTemplate = useCallback(() => {
+    saveTemplateMutation.mutate({
+      name: saveTemplateName || `${currentProfile?.name || 'Profile'} Config`,
+      description: `Saved from wizard on ${new Date().toLocaleDateString('pt-BR')}`,
+    })
+  }, [saveTemplateName, currentProfile, saveTemplateMutation])
+
+  const handleLoadTemplate = useCallback((template) => {
+    dispatch({
+      type: 'LOAD_TEMPLATE',
+      payload: { ...template.template_data, _templateId: template.id },
+    })
+    dispatch({ type: 'SET_SHOW_MODE_SELECTION', payload: false })
+  }, [])
+
+  const handleStartEdit = useCallback(() => {
+    if (!confirmReset) {
+      setConfirmReset(true)
+      return
+    }
+    dispatch({ type: 'SET_WIZARD_MODE', payload: 'edit' })
+    dispatch({ type: 'SET_SHOW_MODE_SELECTION', payload: false })
+    setConfirmReset(false)
+  }, [confirmReset])
+
+  const handleStartNew = useCallback(() => {
+    dispatch({ type: 'SET_WIZARD_MODE', payload: 'new' })
+    dispatch({ type: 'SET_SHOW_MODE_SELECTION', payload: false })
+  }, [])
+
   const canNext = useMemo(() => {
     switch (state.step) {
-      case 1: return state.profileName.trim().length > 0
-      case 2: return state.selectedTemplates.length > 0
-      case 3: return true
-      case 4: return true
-      case 5: return true
-      case 6: return true
-      case 7: return true
-      case 8: return true
+      case 1: return state.profileName.trim().length > 0 || state.wizardMode === 'edit'
+      case 2: return state.selectedTemplates.length > 0 || state.wizardMode === 'edit' || state.wizardMode === 'template'
       default: return true
     }
-  }, [state.step, state.profileName, state.selectedTemplates])
+  }, [state.step, state.profileName, state.selectedTemplates, state.wizardMode])
 
-  // ── Render ──
+  // ── Mode Selection Screen ──
+  if (state.showModeSelection) {
+    const templateList = Array.isArray(setupTemplates) ? setupTemplates : setupTemplates?.results || []
+    return (
+      <div className={styles.overlay}>
+        <div className={styles.progressBar}>
+          <div className={styles.progressFill} style={{ width: '0%' }} />
+        </div>
+        <div className={styles.body}>
+          <div className={styles.content}>
+            <div className={styles.stepLabel}>Assistente de Configuracao</div>
+            <h1 className={styles.stepTitle}>Como deseja configurar?</h1>
+            <p className={styles.stepDesc}>
+              Escolha como deseja configurar seu perfil. Voce pode reconfigurar do zero,
+              carregar um template salvo, ou apenas revisar as configuracoes atuais.
+            </p>
+
+            <div className={styles.sourceGrid}>
+              <div
+                className={`${styles.sourceCard} ${confirmReset ? styles.sourceCardActive : ''}`}
+                onClick={handleStartEdit}
+              >
+                <div className={styles.sourceIcon}>&#128260;</div>
+                <div className={styles.sourceTitle}>Reconfigurar</div>
+                <div className={styles.sourceDesc}>
+                  {confirmReset
+                    ? 'Clique novamente para confirmar. Dados atuais serao substituidos.'
+                    : 'Reconfigura o perfil do zero com o assistente completo'}
+                </div>
+              </div>
+
+              <div className={styles.sourceCard} onClick={handleStartNew}>
+                <div className={styles.sourceIcon}>&#10024;</div>
+                <div className={styles.sourceTitle}>Configurar Novo</div>
+                <div className={styles.sourceDesc}>Inicia uma configuracao limpa sem afetar dados existentes</div>
+              </div>
+
+              <div className={styles.sourceCard} onClick={onClose}>
+                <div className={styles.sourceIcon}>&#128473;</div>
+                <div className={styles.sourceTitle}>Fechar</div>
+                <div className={styles.sourceDesc}>Voltar para as configuracoes sem alterar nada</div>
+              </div>
+            </div>
+
+            {/* Saved templates */}
+            {templateList.length > 0 && (
+              <>
+                <div className={styles.bankGroupTitle} style={{ marginTop: 32 }}>
+                  Templates Salvos
+                </div>
+                <div className={styles.cardGrid}>
+                  {templateList.map(tpl => (
+                    <div
+                      key={tpl.id}
+                      className={styles.selectCard}
+                      onClick={() => handleLoadTemplate(tpl)}
+                    >
+                      <div className={styles.cardName}>{tpl.name}</div>
+                      <div className={styles.cardSub}>{tpl.description || 'Sem descricao'}</div>
+                      <div className={styles.cardSub} style={{ marginTop: 4, fontSize: '0.68rem' }}>
+                        {new Date(tpl.updated_at || tpl.created_at).toLocaleDateString('pt-BR')}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className={styles.nav}>
+          <button className={styles.navBack} onClick={onClose}>Cancelar</button>
+          <div />
+          <div />
+        </div>
+      </div>
+    )
+  }
+
+  // ── Render Steps ──
   return (
     <div className={styles.overlay}>
-      {/* Progress bar */}
       <div className={styles.progressBar}>
         <div
           className={styles.progressFill}
@@ -317,7 +613,6 @@ export default function SetupWizard({ onClose }) {
         />
       </div>
 
-      {/* Body */}
       <div className={styles.body}>
         <div className={styles.content}>
           {state.step === 1 && <Step1 state={state} dispatch={dispatch} />}
@@ -350,13 +645,28 @@ export default function SetupWizard({ onClose }) {
               error={analyzeError}
             />
           )}
-          {state.step === 7 && <Step7 state={state} dispatch={dispatch} />}
+          {state.step === 7 && <Step7Rename state={state} dispatch={dispatch} />}
           {state.step === 8 && (
-            <Step8
+            <Step8Categorize
+              state={state}
+              dispatch={dispatch}
+              categories={state.categories}
+              budgetLimits={state.budgetLimits}
+            />
+          )}
+          {state.step === 9 && <Step9Cards state={state} dispatch={dispatch} />}
+          {state.step === 10 && (
+            <Step10Review
               state={state}
               onSubmit={handleSubmit}
               submitting={submitMutation.isPending}
               error={submitMutation.error}
+              onSaveTemplate={() => setShowSaveTemplate(true)}
+              showSaveTemplate={showSaveTemplate}
+              saveTemplateName={saveTemplateName}
+              onSaveTemplateNameChange={setSaveTemplateName}
+              onConfirmSaveTemplate={handleSaveTemplate}
+              savingTemplate={saveTemplateMutation.isPending}
             />
           )}
         </div>
@@ -366,10 +676,16 @@ export default function SetupWizard({ onClose }) {
       <div className={styles.nav}>
         <button
           className={styles.navBack}
-          onClick={() => dispatch({ type: 'PREV_STEP' })}
-          disabled={state.step === 1}
+          onClick={() => {
+            if (state.step === 1 && editMode) {
+              dispatch({ type: 'SET_SHOW_MODE_SELECTION', payload: true })
+            } else {
+              dispatch({ type: 'PREV_STEP' })
+            }
+          }}
+          disabled={state.step === 1 && !editMode}
         >
-          Voltar
+          {state.step === 1 && editMode ? 'Modos' : 'Voltar'}
         </button>
 
         <div className={styles.dots}>
@@ -384,7 +700,7 @@ export default function SetupWizard({ onClose }) {
         </div>
 
         <div className={styles.navRight}>
-          {state.step >= 5 && state.step <= 7 && (
+          {state.step >= 5 && state.step <= 8 && (
             <button className={styles.skipLink} onClick={handleNext}>
               Pular
             </button>
@@ -399,7 +715,7 @@ export default function SetupWizard({ onClose }) {
               onClick={handleSubmit}
               disabled={submitMutation.isPending}
             >
-              {submitMutation.isPending ? 'Criando...' : 'Criar Perfil'}
+              {submitMutation.isPending ? 'Salvando...' : (state.wizardMode === 'edit' ? 'Reconfigurar' : 'Criar Perfil')}
             </button>
           )}
         </div>
@@ -415,18 +731,21 @@ function Step1({ state, dispatch }) {
       <div className={styles.stepLabel}>Passo 1 de {TOTAL_STEPS}</div>
       <h1 className={styles.stepTitle}>Dados do Perfil</h1>
       <p className={styles.stepDesc}>
-        Comece dando um nome ao seu perfil financeiro.
+        {state.wizardMode === 'edit'
+          ? 'Confirme os dados do perfil. O nome nao sera alterado no modo edicao.'
+          : 'Comece dando um nome ao seu perfil financeiro.'}
       </p>
 
       <div className={styles.fieldGroup}>
         <label className={styles.fieldLabel}>Nome do Perfil</label>
         <input
-          className={styles.textInput}
+          className={`${styles.textInput} ${state.wizardMode === 'edit' ? styles.readOnly : ''}`}
           type="text"
           placeholder="Ex: Pessoal, Familia, Empresa..."
           value={state.profileName}
           onChange={e => dispatch({ type: 'SET_PROFILE_NAME', payload: e.target.value })}
-          autoFocus
+          readOnly={state.wizardMode === 'edit'}
+          autoFocus={state.wizardMode !== 'edit'}
         />
       </div>
 
@@ -465,7 +784,9 @@ function Step2({ state, dispatch, groupedTemplates, loading }) {
       <div className={styles.stepLabel}>Passo 2 de {TOTAL_STEPS}</div>
       <h1 className={styles.stepTitle}>Selecionar Bancos</h1>
       <p className={styles.stepDesc}>
-        Escolha os bancos e contas que deseja acompanhar neste perfil.
+        {state.wizardMode === 'edit'
+          ? 'Selecione os bancos para reconfigurar. Contas existentes serao recriadas.'
+          : 'Escolha os bancos e contas que deseja acompanhar neste perfil.'}
       </p>
 
       {Object.entries(groupedTemplates).map(([bank, templates]) => (
@@ -641,16 +962,13 @@ function Step4({ state, dispatch }) {
         </div>
       </div>
 
-      {/* Timeline diagram */}
       <div className={styles.timeline}>
         <div className={styles.timelineMonth}>
           <div className={styles.timelineLabel}>Janeiro</div>
           <div className={`${styles.timelineBox} ${!isInvoice ? styles.timelineBoxHighlight : ''}`}>
             Compras de Jan
           </div>
-          <div className={styles.timelineBox}>
-            Fatura de Dez
-          </div>
+          <div className={styles.timelineBox}>Fatura de Dez</div>
         </div>
         <div className={styles.timelineArrow}>&rarr;</div>
         <div className={styles.timelineMonth}>
@@ -726,16 +1044,18 @@ function Step5({ state, dispatch, profiles, onSmartSelect, loading, error }) {
         </div>
       </div>
 
-      {/* Clone source: profile selector */}
       {state.recurringSource === 'clone' && (
         <select
           className={styles.profileSelect}
           onChange={async (e) => {
             if (!e.target.value) return
             try {
-              const data = await api.get(`/profiles/${e.target.value}/recurring-templates/`)
-              const items = (Array.isArray(data) ? data : data?.results || []).map(r => ({
-                ...r,
+              const data = await api.get(`/analytics/recurring/templates/?source_profile=${e.target.value}`)
+              const items = (Array.isArray(data) ? data : data?.templates || data?.results || []).map(r => ({
+                name: r.name,
+                type: r.template_type || r.type || 'Fixo',
+                amount: parseFloat(r.default_limit || r.amount || 0),
+                due_day: r.due_day,
                 included: true,
               }))
               dispatch({ type: 'SET_RECURRING_ITEMS', payload: items })
@@ -750,7 +1070,6 @@ function Step5({ state, dispatch, profiles, onSmartSelect, loading, error }) {
         </select>
       )}
 
-      {/* Loading */}
       {loading && (
         <div className={styles.loadingWrap}>
           <div className={styles.spinner} />
@@ -758,14 +1077,12 @@ function Step5({ state, dispatch, profiles, onSmartSelect, loading, error }) {
         </div>
       )}
 
-      {/* Error */}
       {error && (
         <div className={styles.errorMsg}>
           Erro ao analisar dados: {error.message}
         </div>
       )}
 
-      {/* Recurring items table */}
       {state.recurringItems.length > 0 && !loading && (
         <div className={styles.dataTable}>
           <div className={styles.dataTableHead}>
@@ -821,7 +1138,7 @@ function Step5({ state, dispatch, profiles, onSmartSelect, loading, error }) {
         </div>
       )}
 
-      {state.recurringSource === 'blank' && (
+      {(state.recurringSource === 'blank' || (state.recurringSource === 'existing' && state.recurringItems.length === 0)) && (
         <p className={styles.emptyState}>
           Voce podera adicionar itens recorrentes nas configuracoes do perfil depois.
         </p>
@@ -884,7 +1201,6 @@ function Step6({ state, dispatch, onSmartSelect, loading, error }) {
         <div className={styles.errorMsg}>Erro ao analisar dados: {error.message}</div>
       )}
 
-      {/* Budget limits table */}
       {state.budgetLimits.length > 0 && !loading && (
         <div className={styles.dataTable}>
           <div className={styles.dataTableHead}>
@@ -917,7 +1233,6 @@ function Step6({ state, dispatch, onSmartSelect, loading, error }) {
         </div>
       )}
 
-      {/* Targets */}
       {state.categorySource && state.categorySource !== 'blank' && (
         <>
           <div className={styles.targetRow}>
@@ -947,7 +1262,6 @@ function Step6({ state, dispatch, onSmartSelect, loading, error }) {
             </div>
           </div>
 
-          {/* Investment allocation */}
           <div className={styles.allocSection}>
             <div className={styles.allocTitle}>Alocacao de Investimentos</div>
             {state.investmentAllocation.map((a, i) => (
@@ -1003,11 +1317,168 @@ function Step6({ state, dispatch, onSmartSelect, loading, error }) {
   )
 }
 
-// ── Step 7: Dashboard Cards ────────────────────────────────────
-function Step7({ state, dispatch }) {
+// ── Step 7: Rename Rules (NEW) ─────────────────────────────────
+function Step7Rename({ state, dispatch }) {
   return (
     <>
       <div className={styles.stepLabel}>Passo 7 de {TOTAL_STEPS}</div>
+      <h1 className={styles.stepTitle}>Regras de Renomeacao</h1>
+      <p className={styles.stepDesc}>
+        Defina regras para renomear descricoes de transacoes automaticamente.
+        Ex: "PIX ENVIADO CP" aparece como "PIX Enviado".
+      </p>
+
+      {state.renameRules.length > 0 && (
+        <div className={styles.dataTable}>
+          <div className={styles.dataTableHead}>
+            <span className={styles.dataColFlex}>Palavra-chave</span>
+            <span className={styles.dataColFlex}>Nome Exibido</span>
+            <span style={{ width: 32 }} />
+          </div>
+          {state.renameRules.map((rule, i) => (
+            <div key={i} className={styles.dataRow}>
+              <span className={styles.dataColFlex}>
+                <input
+                  className={styles.textInput}
+                  style={{ padding: '6px 10px', fontSize: '0.82rem' }}
+                  type="text"
+                  placeholder="Palavra-chave"
+                  value={rule.keyword || ''}
+                  onChange={e =>
+                    dispatch({ type: 'UPDATE_RENAME_RULE', payload: { index: i, data: { keyword: e.target.value } } })
+                  }
+                />
+              </span>
+              <span className={styles.dataColFlex}>
+                <input
+                  className={styles.textInput}
+                  style={{ padding: '6px 10px', fontSize: '0.82rem' }}
+                  type="text"
+                  placeholder="Nome exibido"
+                  value={rule.display_name || ''}
+                  onChange={e =>
+                    dispatch({ type: 'UPDATE_RENAME_RULE', payload: { index: i, data: { display_name: e.target.value } } })
+                  }
+                />
+              </span>
+              <button
+                className={styles.skipLink}
+                onClick={() => dispatch({ type: 'REMOVE_RENAME_RULE', payload: i })}
+                style={{ textDecoration: 'none', color: 'var(--color-red)', width: 32, textAlign: 'center' }}
+              >
+                &#10005;
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button
+        className={styles.allocAddBtn}
+        style={{ marginTop: 16 }}
+        onClick={() => dispatch({ type: 'ADD_RENAME_RULE', payload: { keyword: '', display_name: '' } })}
+      >
+        + Adicionar Regra
+      </button>
+
+      {state.renameRules.length === 0 && (
+        <p className={styles.emptyState}>
+          Nenhuma regra de renomeacao configurada. Voce pode adicionar agora ou depois nas configuracoes.
+        </p>
+      )}
+    </>
+  )
+}
+
+// ── Step 8: Categorization Rules (NEW) ─────────────────────────
+function Step8Categorize({ state, dispatch, categories, budgetLimits }) {
+  // Build category name list for dropdown
+  const categoryNames = useMemo(() => {
+    const names = new Set()
+    categories.forEach(c => names.add(typeof c === 'string' ? c : c.name))
+    budgetLimits.forEach(b => names.add(b.category || b.name))
+    return [...names].filter(Boolean).sort()
+  }, [categories, budgetLimits])
+
+  return (
+    <>
+      <div className={styles.stepLabel}>Passo 8 de {TOTAL_STEPS}</div>
+      <h1 className={styles.stepTitle}>Regras de Categorizacao</h1>
+      <p className={styles.stepDesc}>
+        Defina regras para categorizar transacoes automaticamente.
+        Ex: "UBER" vai para categoria "Transporte".
+      </p>
+
+      {state.categorizationRules.length > 0 && (
+        <div className={styles.dataTable}>
+          <div className={styles.dataTableHead}>
+            <span className={styles.dataColFlex}>Palavra-chave</span>
+            <span className={styles.dataColFlex}>Categoria</span>
+            <span style={{ width: 32 }} />
+          </div>
+          {state.categorizationRules.map((rule, i) => (
+            <div key={i} className={styles.dataRow}>
+              <span className={styles.dataColFlex}>
+                <input
+                  className={styles.textInput}
+                  style={{ padding: '6px 10px', fontSize: '0.82rem' }}
+                  type="text"
+                  placeholder="Palavra-chave"
+                  value={rule.keyword || ''}
+                  onChange={e =>
+                    dispatch({ type: 'UPDATE_CATEGORIZATION_RULE', payload: { index: i, data: { keyword: e.target.value } } })
+                  }
+                />
+              </span>
+              <span className={styles.dataColFlex}>
+                <select
+                  className={styles.profileSelect}
+                  style={{ marginBottom: 0 }}
+                  value={rule.category_name || ''}
+                  onChange={e =>
+                    dispatch({ type: 'UPDATE_CATEGORIZATION_RULE', payload: { index: i, data: { category_name: e.target.value } } })
+                  }
+                >
+                  <option value="">Selecione...</option>
+                  {categoryNames.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </span>
+              <button
+                className={styles.skipLink}
+                onClick={() => dispatch({ type: 'REMOVE_CATEGORIZATION_RULE', payload: i })}
+                style={{ textDecoration: 'none', color: 'var(--color-red)', width: 32, textAlign: 'center' }}
+              >
+                &#10005;
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button
+        className={styles.allocAddBtn}
+        style={{ marginTop: 16 }}
+        onClick={() => dispatch({ type: 'ADD_CATEGORIZATION_RULE', payload: { keyword: '', category_name: '', priority: 0 } })}
+      >
+        + Adicionar Regra
+      </button>
+
+      {state.categorizationRules.length === 0 && (
+        <p className={styles.emptyState}>
+          Nenhuma regra de categorizacao configurada. Voce pode adicionar agora ou depois nas configuracoes.
+        </p>
+      )}
+    </>
+  )
+}
+
+// ── Step 9: Dashboard Cards ────────────────────────────────────
+function Step9Cards({ state, dispatch }) {
+  return (
+    <>
+      <div className={styles.stepLabel}>Passo 9 de {TOTAL_STEPS}</div>
       <h1 className={styles.stepTitle}>Cartoes do Dashboard</h1>
       <p className={styles.stepDesc}>
         Escolha quais metricas aparecem no dashboard e a ordem de exibicao.
@@ -1051,18 +1522,26 @@ function Step7({ state, dispatch }) {
   )
 }
 
-// ── Step 8: Review & Confirm ───────────────────────────────────
-function Step8({ state, onSubmit, submitting, error }) {
+// ── Step 10: Review & Confirm ──────────────────────────────────
+function Step10Review({
+  state, onSubmit, submitting, error,
+  onSaveTemplate, showSaveTemplate, saveTemplateName,
+  onSaveTemplateNameChange, onConfirmSaveTemplate, savingTemplate,
+}) {
   const ccCount = Object.keys(state.cardConfigs).length
   const activeRecurring = state.recurringItems.filter(r => r.included).length
   const activeCards = state.cardOrder.filter(c => !state.hiddenCards.includes(c)).length
+  const validRenames = state.renameRules.filter(r => r.keyword && r.display_name).length
+  const validCatRules = state.categorizationRules.filter(r => r.keyword && r.category_name).length
 
   return (
     <>
-      <div className={styles.stepLabel}>Passo 8 de {TOTAL_STEPS}</div>
+      <div className={styles.stepLabel}>Passo 10 de {TOTAL_STEPS}</div>
       <h1 className={styles.stepTitle}>Revisao</h1>
       <p className={styles.stepDesc}>
-        Confira as configuracoes antes de criar o perfil.
+        {state.wizardMode === 'edit'
+          ? 'Confira as configuracoes antes de reconfigurar o perfil. Dados existentes serao substituidos.'
+          : 'Confira as configuracoes antes de criar o perfil.'}
       </p>
 
       <div className={styles.reviewSection}>
@@ -1076,6 +1555,12 @@ function Step8({ state, onSubmit, submitting, error }) {
             <span className={styles.reviewLabel}>Moeda</span>
             <span className={styles.reviewValue}>BRL</span>
           </div>
+          {state.wizardMode === 'edit' && (
+            <div className={styles.reviewRow}>
+              <span className={styles.reviewLabel}>Modo</span>
+              <span className={styles.reviewValue} style={{ color: 'var(--color-orange)' }}>Reconfigurar</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1124,11 +1609,17 @@ function Step8({ state, onSubmit, submitting, error }) {
           </div>
           <div className={styles.reviewRow}>
             <span className={styles.reviewLabel}>Categorias</span>
-            <span className={styles.reviewValueAccent}>{state.categories.length}</span>
+            <span className={styles.reviewValueAccent}>
+              {state.budgetLimits.length || state.categories.length}
+            </span>
           </div>
           <div className={styles.reviewRow}>
-            <span className={styles.reviewLabel}>Limites de orcamento</span>
-            <span className={styles.reviewValueAccent}>{state.budgetLimits.length}</span>
+            <span className={styles.reviewLabel}>Regras de renomeacao</span>
+            <span className={styles.reviewValueAccent}>{validRenames}</span>
+          </div>
+          <div className={styles.reviewRow}>
+            <span className={styles.reviewLabel}>Regras de categorizacao</span>
+            <span className={styles.reviewValueAccent}>{validCatRules}</span>
           </div>
           <div className={styles.reviewRow}>
             <span className={styles.reviewLabel}>Meta poupanca</span>
@@ -1151,9 +1642,45 @@ function Step8({ state, onSubmit, submitting, error }) {
         </div>
       </div>
 
+      {/* Save as template */}
+      <div className={styles.reviewSection}>
+        <div className={styles.reviewTitle}>Template</div>
+        <div className={styles.reviewCard}>
+          {!showSaveTemplate ? (
+            <button
+              className={styles.allocAddBtn}
+              style={{ width: '100%' }}
+              onClick={onSaveTemplate}
+            >
+              Salvar Configuracao como Template
+            </button>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                className={styles.textInput}
+                style={{ flex: 1, padding: '8px 12px', fontSize: '0.85rem' }}
+                type="text"
+                placeholder="Nome do template..."
+                value={saveTemplateName}
+                onChange={e => onSaveTemplateNameChange(e.target.value)}
+                autoFocus
+              />
+              <button
+                className={styles.navNext}
+                style={{ padding: '8px 16px', fontSize: '0.82rem' }}
+                onClick={onConfirmSaveTemplate}
+                disabled={savingTemplate}
+              >
+                {savingTemplate ? 'Salvando...' : 'Salvar'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
       {error && (
         <div className={styles.errorMsg}>
-          Erro ao criar perfil: {error.message}
+          Erro ao salvar: {error.message || 'Erro desconhecido'}
         </div>
       )}
     </>
