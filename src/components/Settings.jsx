@@ -78,6 +78,9 @@ function Settings({ onOpenWizard }) {
   const [newSubName, setNewSubName] = useState('')
   const [newSubSaving, setNewSubSaving] = useState(false)
 
+  // Budget subcategory expansion
+  const [expandedBudgetCat, setExpandedBudgetCat] = useState(null)
+
   // Rules management
   const [showNewRuleForm, setShowNewRuleForm] = useState(false)
   const [newRuleKeyword, setNewRuleKeyword] = useState('')
@@ -319,6 +322,7 @@ function Settings({ onOpenWizard }) {
     if (!files.length) return
     setUploading(true)
     setUploadResult(null)
+    setImportResult(null)
 
     const formData = new FormData()
     for (const file of files) {
@@ -327,15 +331,38 @@ function Settings({ onOpenWizard }) {
 
     try {
       const profileId = getProfileId()
+      const headers = profileId ? { 'X-Profile-ID': profileId } : {}
       const res = await fetch(`${API_BASE}/import/?action=upload`, {
         method: 'POST',
         body: formData,
-        headers: profileId ? { 'X-Profile-ID': profileId } : {},
+        headers,
       })
       const data = await res.json()
       if (res.ok) {
         setUploadResult({ success: true, ...data })
-        refetchStatus()
+
+        // Auto-trigger incremental import after successful upload
+        setImporting(true)
+        try {
+          const importRes = await fetch(`${API_BASE}/import/?action=incremental`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(profileId && { 'X-Profile-ID': profileId }),
+            },
+          })
+          const importData = await importRes.json()
+          setImportResult(importData)
+          if (importData.success) {
+            refetchStatus()
+            queryClient.invalidateQueries({ queryKey: ['analytics-metricas'] })
+            queryClient.invalidateQueries({ queryKey: ['months'] })
+          }
+        } catch (importErr) {
+          setImportResult({ success: false, error: importErr.message })
+        } finally {
+          setImporting(false)
+        }
       } else {
         setUploadResult({ success: false, error: data.error || 'Upload failed' })
       }
@@ -344,7 +371,7 @@ function Settings({ onOpenWizard }) {
     } finally {
       setUploading(false)
     }
-  }, [refetchStatus])
+  }, [refetchStatus, queryClient])
 
   const handleDrop = useCallback((e) => {
     e.preventDefault()
@@ -509,6 +536,15 @@ function Settings({ onOpenWizard }) {
       refetchCategories()
     } catch (err) {
       console.error('Failed to delete subcategory:', err)
+    }
+  }
+
+  const handleUpdateSubcategory = async (subId, field, value) => {
+    try {
+      await api.patch(`/subcategories/${subId}/`, { [field]: value })
+      refetchCategories()
+    } catch (err) {
+      console.error('Failed to update subcategory:', err)
     }
   }
 
@@ -1230,21 +1266,53 @@ function Settings({ onOpenWizard }) {
             </div>
           </div>
 
-          {/* Category budget limits */}
+          {/* Category budget limits with subcategory expansion */}
           <h4 className={styles.subheading}>Limites por Categoria (Variável)</h4>
           <div className={styles.itemList}>
-            {taxonomyCategories.map((cat) => (
-              <div key={cat.id} className={styles.budgetTableRow}>
-                <span className={styles.budgetCatName}>{cat.name}</span>
-                <span className={styles.budgetLimit}>
-                  <InlineEdit
-                    value={cat.default_limit || 0}
-                    onSave={(val) => handleUpdateCategory(cat.id, 'default_limit', val)}
-                    color="var(--color-text)"
-                  />
-                </span>
-              </div>
-            ))}
+            {taxonomyCategories.map((cat) => {
+              const subs = cat.subcategories || []
+              const hasSubs = subs.length > 0
+              const isBudgetExpanded = expandedBudgetCat === cat.id
+              return (
+                <div key={cat.id}>
+                  <div className={styles.budgetTableRow}>
+                    {hasSubs ? (
+                      <button
+                        className={styles.catExpandBtn}
+                        onClick={() => setExpandedBudgetCat(isBudgetExpanded ? null : cat.id)}
+                        title={isBudgetExpanded ? 'Fechar' : 'Ver subcategorias'}
+                      >
+                        {isBudgetExpanded ? '▾' : '▸'}
+                      </button>
+                    ) : (
+                      <span style={{ width: 24, display: 'inline-block' }} />
+                    )}
+                    <span className={styles.budgetCatName}>{cat.name}</span>
+                    <span className={styles.budgetLimit}>
+                      <InlineEdit
+                        value={cat.default_limit || 0}
+                        onSave={(val) => handleUpdateCategory(cat.id, 'default_limit', val)}
+                        color="var(--color-text)"
+                      />
+                    </span>
+                  </div>
+                  {/* Subcategory limits */}
+                  {isBudgetExpanded && subs.map((sub) => (
+                    <div key={sub.id} className={styles.budgetTableRow} style={{ paddingLeft: 32, opacity: 0.85 }}>
+                      <span className={styles.subIndent}>{'\u2514'}</span>
+                      <span className={styles.budgetCatName} style={{ fontSize: '0.82rem' }}>{sub.name}</span>
+                      <span className={styles.budgetLimit}>
+                        <InlineEdit
+                          value={sub.default_limit || 0}
+                          onSave={(val) => handleUpdateSubcategory(sub.id, 'default_limit', val)}
+                          color="var(--color-text)"
+                        />
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )
+            })}
             {taxonomyCategories.length === 0 && (
               <div className={styles.emptyState}>Nenhuma categoria variável</div>
             )}
@@ -1360,7 +1428,10 @@ function Settings({ onOpenWizard }) {
               <div key={rule.id} className={styles.ruleRow}>
                 <span className={styles.ruleKeyword}>{rule.keyword}</span>
                 <span className={styles.ruleArrow}>&rarr;</span>
-                <span className={styles.ruleCat}>{rule.category_name || '?'}</span>
+                <span className={styles.ruleCat}>
+                  {rule.category_name || '?'}
+                  {rule.subcategory_name && <span className={styles.ruleSubcat}> &rsaquo; {rule.subcategory_name}</span>}
+                </span>
                 <button
                   className={styles.deleteBtn}
                   onClick={() => handleDeleteRule(rule.id, rule.keyword)}
@@ -1634,6 +1705,9 @@ function Settings({ onOpenWizard }) {
                 <span>
                   Importacao concluida: <strong>{importResult.transactions}</strong> transacoes,{' '}
                   <strong>{importResult.months}</strong> meses
+                  {importResult.new_transactions != null && importResult.new_transactions !== importResult.transactions && (
+                    <> ({importResult.new_transactions} novas)</>
+                  )}
                 </span>
               ) : (
                 <span>Erro na importacao: {importResult.error}</span>

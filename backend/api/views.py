@@ -17,6 +17,35 @@ logger = logging.getLogger(__name__)
 MONTH_STR_RE = re.compile(r'^\d{4}-(?:0[1-9]|1[0-2])$')
 
 
+def _safe_error_response(e, context='', status_code=status.HTTP_400_BAD_REQUEST):
+    """Return a generic error response, logging the full exception.
+
+    Avoids leaking internal error details to the client.
+    """
+    logger.exception(f'{context} error' if context else 'Unexpected error')
+    if os.getenv('DEBUG', '0') == '1':
+        return Response({'error': str(e)}, status=status_code)
+    return Response({'error': 'An unexpected error occurred'}, status=status_code)
+
+
+def _sanitize_applescript_string(s):
+    """Sanitize a string for safe interpolation into AppleScript.
+
+    Strips characters that could escape the string context:
+    backslashes, double quotes, and AppleScript string concatenation.
+    """
+    if not s:
+        return ''
+    # Remove backslashes first, then double quotes
+    sanitized = s.replace('\\', '').replace('"', '')
+    # Remove any ampersands that could be used for string concatenation injection
+    sanitized = sanitized.replace('&', '')
+    # Strip control characters
+    sanitized = re.sub(r'[\x00-\x1f\x7f]', '', sanitized)
+    # Limit length to prevent abuse
+    return sanitized[:500]
+
+
 def _validate_month_str(month_str):
     """Validate month_str format (YYYY-MM). Returns error Response or None."""
     if not month_str:
@@ -529,8 +558,10 @@ class ImportStatementsView(APIView):
     """
     parser_classes = [MultiPartParser, FormParser]
 
-    SAMPLE_DATA_DIR = os.path.join(
-        os.path.dirname(__file__), '..', '..', 'FinanceDashboard', 'SampleData'
+    # Resolve SampleData dir to match where DataLoader reads from.
+    # In Docker: FinanceDashboard is mounted at /app/legacy_data
+    SAMPLE_DATA_DIR = os.path.join('/app', 'legacy_data', 'SampleData') if os.path.isdir('/app/legacy_data') else os.path.join(
+        os.path.dirname(__file__), '..', '..', '..', 'FinanceDashboard', 'SampleData'
     )
 
     def get(self, request):
@@ -580,6 +611,8 @@ class ImportStatementsView(APIView):
             return self._handle_upload(request)
         elif action == 'run':
             return self._handle_import(request)
+        elif action == 'incremental':
+            return self._handle_import(request, clear=False)
         else:
             return Response({'error': 'Invalid action'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -627,9 +660,9 @@ class ImportStatementsView(APIView):
         import re
         lower = original_name.lower()
 
-        # Credit card CSV: itau-master-YYYYMMDD.csv or itau-visa-YYYYMMDD.csv
+        # Credit card CSV: fatura-master-YYYYMMDD.csv, itau-master-YYYYMMDD.csv, etc.
         card_match = re.match(
-            r'itau-(master|visa)-(\d{4})(\d{2})\d{2}\.csv', lower
+            r'(?:itau|fatura)-(master|visa)-(\d{4})(\d{2})\d{2}\.csv', lower
         )
         if card_match:
             card_type = card_match.group(1)  # master or visa
@@ -654,8 +687,12 @@ class ImportStatementsView(APIView):
         # Fallback: keep original name
         return original_name
 
-    def _handle_import(self, request):
-        """Trigger a full re-import using the management command."""
+    def _handle_import(self, request, clear=True):
+        """Trigger import using the management command.
+
+        clear=True: full re-import (wipes existing data first)
+        clear=False: incremental import (adds new transactions, skips duplicates)
+        """
         from django.core.management import call_command
         from io import StringIO
 
@@ -663,27 +700,26 @@ class ImportStatementsView(APIView):
         stderr_capture = StringIO()
 
         profile_name = request.profile.name if request.profile else 'Palmer'
+        profile = request.profile
+
+        txn_before = Transaction.objects.filter(profile=profile).count()
 
         try:
-            call_command(
-                'import_legacy_data',
-                '--clear',
-                '--profile', profile_name,
-                stdout=stdout_capture,
-                stderr=stderr_capture,
-            )
+            args = ['import_legacy_data', '--profile', profile_name]
+            if clear:
+                args.append('--clear')
+            call_command(*args, stdout=stdout_capture, stderr=stderr_capture)
             output = stdout_capture.getvalue()
 
-            # Extract key stats from output
-            profile = request.profile
-            txn_count = Transaction.objects.filter(profile=profile).count()
+            txn_after = Transaction.objects.filter(profile=profile).count()
             month_count = Transaction.objects.filter(profile=profile).values('month_str').distinct().count()
 
             return Response({
                 'success': True,
-                'transactions': txn_count,
+                'transactions': txn_after,
                 'months': month_count,
-                'output': output[-2000:],  # Last 2000 chars of output
+                'new_transactions': txn_after - txn_before if not clear else txn_after,
+                'output': output[-2000:],
             })
         except Exception as e:
             return Response({
@@ -1820,10 +1856,12 @@ class RemindersAddView(APIView):
         if not name:
             return Response({'error': 'name required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        escaped_name = name.replace('"', '\\"')
+        sanitized_name = _sanitize_applescript_string(name)
+        if not sanitized_name:
+            return Response({'error': 'Invalid name after sanitization'}, status=status.HTTP_400_BAD_REQUEST)
         script = f'''tell application "Reminders"
     tell list "{list_name}"
-        make new reminder with properties {{name:"{escaped_name}"}}
+        make new reminder with properties {{name:"{sanitized_name}"}}
     end tell
     return "ok"
 end tell'''
@@ -1858,10 +1896,12 @@ class RemindersCompleteView(APIView):
         if not reminder_name:
             return Response({'error': 'reminder_name required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        escaped_name = reminder_name.replace('"', '\\"')
+        sanitized_name = _sanitize_applescript_string(reminder_name)
+        if not sanitized_name:
+            return Response({'error': 'Invalid name after sanitization'}, status=status.HTTP_400_BAD_REQUEST)
         script = f'''tell application "Reminders"
     set theList to list "{list_name}"
-    set theReminders to (reminders of theList whose name is "{escaped_name}" and completed is false)
+    set theReminders to (reminders of theList whose name is "{sanitized_name}" and completed is false)
     if (count of theReminders) > 0 then
         set completed of item 1 of theReminders to true
         return "ok"

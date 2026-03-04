@@ -10,7 +10,7 @@ from difflib import get_close_matches, SequenceMatcher
 from django.db.models import Sum, Q, F, Case, When, Value, CharField, Count, Max
 from dateutil.relativedelta import relativedelta
 from .models import (
-    Transaction, Category, Account, BalanceOverride,
+    Transaction, Category, Subcategory, Account, BalanceOverride,
     RecurringMapping, RecurringTemplate, BudgetConfig, CategorizationRule,
     MetricasOrderConfig, CustomMetric,
 )
@@ -926,30 +926,35 @@ def get_metricas(month_str, _cascade=True, profile=None):
         total=Sum('amount'))['total'] or Decimal('0.00'))
 
     # =====================================================================
-    # 7. FATURA MASTER — Mastercard Black + Mastercard - Rafa combined
+    # 7. FATURA MASTER — Mastercard accounts (dynamically matched)
+    #    ALWAYS uses invoice_month regardless of cc_display_mode, because
+    #    the fatura metric represents the invoice total debited from checking.
+    #    cc_display_mode only affects the CC transaction *table* view.
     # =====================================================================
-    _met_cc_field = _cc_month_field(profile)
-    if _met_cc_field == 'month_str':
-        _fatura_master_q = Q(month_str=month_str, account__name__icontains='Mastercard', profile=profile)
-    else:
-        _fatura_master_q = (
-            Q(invoice_month=month_str, account__name__icontains='Mastercard', profile=profile) |
-            Q(month_str=month_str, invoice_month='', account__name__icontains='Mastercard', profile=profile)
+    # Dynamically find credit card accounts by type instead of hardcoded names
+    cc_accounts = Account.objects.filter(profile=profile, account_type='credit_card')
+    master_accounts = cc_accounts.filter(name__icontains='Mastercard')
+    visa_accounts = cc_accounts.exclude(name__icontains='Mastercard')
+
+    def _build_cc_fatura_query(accounts_qs, month_str, profile):
+        """Build query for fatura metric — always by invoice_month."""
+        account_ids = list(accounts_qs.values_list('id', flat=True))
+        if not account_ids:
+            return Q(pk__in=[])  # Empty result
+        return (
+            Q(invoice_month=month_str, account_id__in=account_ids, profile=profile) |
+            Q(month_str=month_str, invoice_month='', account_id__in=account_ids, profile=profile)
         )
+
+    _fatura_master_q = _build_cc_fatura_query(master_accounts, month_str, profile)
     fatura_master = abs(Transaction.objects.filter(
         _fatura_master_q
     ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
 
     # =====================================================================
-    # 8. FATURA VISA — Visa Infinite
+    # 8. FATURA VISA — Non-Mastercard credit card accounts
     # =====================================================================
-    if _met_cc_field == 'month_str':
-        _fatura_visa_q = Q(month_str=month_str, account__name__icontains='Visa', profile=profile)
-    else:
-        _fatura_visa_q = (
-            Q(invoice_month=month_str, account__name__icontains='Visa', profile=profile) |
-            Q(month_str=month_str, invoice_month='', account__name__icontains='Visa', profile=profile)
-        )
+    _fatura_visa_q = _build_cc_fatura_query(visa_accounts, month_str, profile)
     fatura_visa = abs(Transaction.objects.filter(
         _fatura_visa_q
     ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
@@ -1695,11 +1700,38 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
             'is_mapped': txn.id in mapped_txn_ids,
         })
 
+    # Always compute invoice totals per account (by invoice_month) so the
+    # frontend can show the real fatura amount regardless of cc_display_mode.
+    # Exclude transactions that have been cross-month-moved to another month.
+    cross_moved_ids = set()
+    for cm in RecurringMapping.objects.filter(
+        profile=profile,
+    ).exclude(month_str=month_str).prefetch_related('cross_month_transactions'):
+        for t in cm.cross_month_transactions.all():
+            cross_moved_ids.add(t.id)
+
+    invoice_qs = Transaction.objects.filter(
+        account__account_type='credit_card',
+        profile=profile,
+    ).filter(
+        Q(invoice_month=month_str) |
+        Q(month_str=month_str, invoice_month='')
+    ).exclude(id__in=cross_moved_ids)
+    if account_filter:
+        invoice_qs = invoice_qs.filter(account__name__icontains=account_filter)
+
+    invoice_by_account = {}
+    for row in invoice_qs.values('account__name').annotate(total=Sum('amount')):
+        invoice_by_account[row['account__name']] = abs(float(row['total'] or 0))
+    invoice_total = sum(invoice_by_account.values())
+
     return {
         'month_str': month_str,
         'transactions': results,
         'count': len(results),
         'total': float(sum(r['amount'] for r in results)),
+        'invoice_total': invoice_total,
+        'invoice_by_account': invoice_by_account,
     }
 
 
@@ -2110,10 +2142,14 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile
     # 3. Prior month: checking/manual from previous month (for cross-month linking)
     from django.db.models import Q
     _cand_cc_q = _cc_month_q(month_str, profile)
+    # Also include CC transactions where invoice_month matches (catches installments
+    # whose month_str is the purchase date but invoice_month is the billing month)
+    _cand_cc_invoice_q = Q(invoice_month=month_str, account__account_type='credit_card')
     qs = Transaction.objects.filter(
         Q(month_str=month_str, account__account_type='checking') |
         Q(month_str=month_str, account__account_type='manual') |
         _cand_cc_q |
+        _cand_cc_invoice_q |
         Q(month_str=month_str, account__account_type='credit_card'),
         profile=profile,
     ).select_related('account', 'category').order_by('-date').distinct()
@@ -2812,6 +2848,27 @@ def get_orcamento(month_str, profile=None):
         ).values_list('category_id', 'total')
     )
 
+    # Batch: current month spending per (category, subcategory) for breakdown
+    sub_spending_qs = (
+        Transaction.objects.filter(
+            month_str=month_str,
+            category_id__in=cat_ids,
+            amount__lt=0,
+            is_internal_transfer=False,
+            profile=profile,
+        ).values('category_id', 'subcategory_id').annotate(
+            total=Sum('amount')
+        )
+    )
+    # Build dict: { category_id: { subcategory_id: total } }
+    sub_spending = {}
+    for row in sub_spending_qs:
+        cid = row['category_id']
+        sid = row['subcategory_id']  # None for uncategorized subcategory
+        if cid not in sub_spending:
+            sub_spending[cid] = {}
+        sub_spending[cid][sid] = row['total']
+
     # Batch: 6-month lookback spending per category (1 query)
     lookback_spending = dict(
         Transaction.objects.filter(
@@ -2838,6 +2895,13 @@ def get_orcamento(month_str, profile=None):
             month_count=Count('month_str', distinct=True)
         ).values_list('category_id', 'month_count')
     )
+
+    # Batch: all subcategories for these categories (1 query)
+    all_subcategories = {}
+    for sub in Subcategory.objects.filter(category_id__in=cat_ids).order_by('name'):
+        if sub.category_id not in all_subcategories:
+            all_subcategories[sub.category_id] = []
+        all_subcategories[sub.category_id].append(sub)
 
     categories = []
     total_limit = 0.0
@@ -2866,6 +2930,39 @@ def get_orcamento(month_str, profile=None):
         total_limit += limit
         total_spent += spent
 
+        # Build subcategory breakdown
+        cat_subs = all_subcategories.get(cat.id, [])
+        cat_sub_spending = sub_spending.get(cat.id, {})
+        subcategories_data = []
+
+        for sub in cat_subs:
+            sub_spent_agg = cat_sub_spending.get(sub.id, Decimal('0.00'))
+            sub_spent = float(abs(sub_spent_agg))
+            sub_limit = float(sub.default_limit)
+            sub_remaining = max(0, sub_limit - sub_spent) if sub_limit > 0 else 0
+            sub_pct = (sub_spent / sub_limit * 100) if sub_limit > 0 else 0
+
+            if sub_pct > 100:
+                sub_status = 'over'
+            elif sub_pct > 80:
+                sub_status = 'warning'
+            else:
+                sub_status = 'ok'
+
+            subcategories_data.append({
+                'id': str(sub.id),
+                'name': sub.name,
+                'limit': round(sub_limit, 2),
+                'spent': round(sub_spent, 2),
+                'remaining': round(sub_remaining, 2),
+                'pct': round(sub_pct, 1),
+                'status': sub_status,
+            })
+
+        # Uncategorized spending (transactions with this category but no subcategory)
+        uncategorized_spent_agg = cat_sub_spending.get(None, Decimal('0.00'))
+        uncategorized_spent = float(abs(uncategorized_spent_agg))
+
         categories.append({
             'id': str(cat.id),
             'name': cat.name,
@@ -2875,6 +2972,8 @@ def get_orcamento(month_str, profile=None):
             'pct': round(pct, 1),
             'avg_6m': round(avg_6m, 2),
             'status': status,
+            'subcategories': subcategories_data,
+            'uncategorized_spent': round(uncategorized_spent, 2),
         })
 
     total_pct = (total_spent / total_limit * 100) if total_limit > 0 else 0
@@ -4551,14 +4650,18 @@ def analyze_statements_for_setup(profile):
 
     # --- 1. Detect recurring charges ---
     # Group by normalized description + approximate amount
-    desc_groups = defaultdict(lambda: {'months': set(), 'amounts': [], 'category': None, 'account_type': None})
+    # Track raw (signed) amounts to distinguish income vs expense
+    desc_groups = defaultdict(lambda: {
+        'months': set(), 'amounts': [], 'raw_amounts': [],
+        'category': None, 'account_type': None,
+    })
 
     for txn in txns_in_range.select_related('category', 'account'):
         desc_key = txn.description.strip().lower()
-        amt = float(abs(txn.amount))
         group = desc_groups[desc_key]
         group['months'].add(txn.month_str)
-        group['amounts'].append(amt)
+        group['amounts'].append(float(abs(txn.amount)))
+        group['raw_amounts'].append(float(txn.amount))
         if txn.category:
             group['category'] = txn.category.name
         if txn.account:
@@ -4572,8 +4675,11 @@ def analyze_statements_for_setup(profile):
             # Low variance = likely recurring
             is_low_variance = (stddev / avg_amount < 0.15) if avg_amount > 0 else True
             if is_low_variance:
-                # Determine type
-                if avg_amount > 0:
+                # Determine type using raw (signed) amounts
+                negative_count = sum(1 for a in info['raw_amounts'] if a < 0)
+                is_expense = negative_count > len(info['raw_amounts']) / 2
+
+                if not is_expense:
                     rec_type = 'Income'
                 elif info.get('category') and 'invest' in (info['category'] or '').lower():
                     rec_type = 'Investimento'
@@ -4583,6 +4689,7 @@ def analyze_statements_for_setup(profile):
                 suggested_recurring.append({
                     'name': desc.title(),
                     'type': rec_type,
+                    'amount': round(avg_amount, 2),
                     'avg_amount': round(avg_amount, 2),
                     'frequency': len(info['months']),
                     'months_found': len(info['months']),
@@ -4599,17 +4706,32 @@ def analyze_statements_for_setup(profile):
     avg_monthly_income = total_income / num_months if num_months > 0 else 0
 
     # --- 3. Category spending analysis ---
-    category_spending = defaultdict(lambda: {'total': 0, 'months': set(), 'amounts': []})
+    category_spending = defaultdict(lambda: {'total': 0, 'months': set(), 'amounts': [], 'type': 'Variavel'})
+
+    # Normalize uncategorized names to avoid duplicates
+    _UNCATEGORIZED = {'nao categorizado', 'não categorizado'}
 
     for txn in txns_in_range.filter(amount__lt=0).select_related('category'):
         cat_name = txn.category.name if txn.category else 'Nao categorizado'
+        cat_type = txn.category.category_type if txn.category else 'Variavel'
+        # Normalize uncategorized variants
+        if cat_name.lower().strip() in _UNCATEGORIZED:
+            cat_name = 'Nao categorizado'
         cat_data = category_spending[cat_name]
         cat_data['total'] += float(abs(txn.amount))
         cat_data['months'].add(txn.month_str)
         cat_data['amounts'].append(float(abs(txn.amount)))
+        if cat_type:
+            cat_data['type'] = cat_type
 
     suggested_budget_limits = []
     for cat_name, data in category_spending.items():
+        # Skip uncategorized — meaningless for budgeting
+        if cat_name.lower().strip() in _UNCATEGORIZED:
+            continue
+        # Only include categories active in 2+ months
+        if len(data['months']) < 2:
+            continue
         avg_spend = data['total'] / num_months
 
         # Suggest limit at 110% of average (buffer room)
@@ -4617,6 +4739,7 @@ def analyze_statements_for_setup(profile):
 
         suggested_budget_limits.append({
             'category': cat_name,
+            'type': data.get('type', 'Variavel'),
             'avg_monthly': round(avg_spend, 2),
             'suggested_limit': suggested_limit,
             'months_active': len(data['months']),
@@ -4624,6 +4747,12 @@ def analyze_statements_for_setup(profile):
         })
 
     suggested_budget_limits.sort(key=lambda x: -x['avg_monthly'])
+
+    # Also filter suggested_categories to exclude uncategorized
+    suggested_categories = [
+        c for c in category_spending.keys()
+        if c.lower().strip() not in _UNCATEGORIZED
+    ]
 
     # --- 4. Detect investments ---
     invest_txns = txns_in_range.filter(
@@ -4648,7 +4777,7 @@ def analyze_statements_for_setup(profile):
 
     return {
         'suggested_recurring': suggested_recurring[:30],  # Top 30
-        'suggested_categories': list(category_spending.keys()),
+        'suggested_categories': suggested_categories,
         'suggested_budget_limits': suggested_budget_limits[:20],
         'detected_income': round(avg_monthly_income, 2),
         'detected_investments': round(avg_monthly_investments, 2),

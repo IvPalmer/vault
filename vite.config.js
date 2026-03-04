@@ -8,7 +8,7 @@ export default defineConfig({
     strictPort: true,
     host: true,
     open: false,
-    allowedHosts: ['.local'],
+    allowedHosts: ['.local', 'vault.local'],
     proxy: {
       // Apple Reminders → host-side sidecar (needs macOS EventKit)
       '/api/home/reminders': {

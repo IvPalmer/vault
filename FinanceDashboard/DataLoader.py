@@ -338,7 +338,9 @@ class DataLoader:
                 close_year = invoice_year
                 close_month = invoice_month - 1
 
-            close_date = pd.Timestamp(year=close_year, month=close_month, day=30)
+            import calendar
+            last_day = min(30, calendar.monthrange(close_year, close_month)[1])
+            close_date = pd.Timestamp(year=close_year, month=close_month, day=last_day)
 
             # Payment date: 5th day of invoice month
             payment_date = pd.Timestamp(year=invoice_year, month=invoice_month, day=5)

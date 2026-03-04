@@ -31,8 +31,14 @@ from api.models import (
 
 
 # Path to the legacy FinanceDashboard code
-LEGACY_DIR = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'FinanceDashboard')
-LEGACY_DIR = os.path.abspath(LEGACY_DIR)
+# In Docker: ./FinanceDashboard is mounted at /app/legacy_data
+_candidate = os.path.join('/app', 'legacy_data')
+if os.path.isdir(_candidate) and os.path.isfile(os.path.join(_candidate, 'DataLoader.py')):
+    LEGACY_DIR = _candidate
+else:
+    LEGACY_DIR = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'FinanceDashboard')
+    )
 
 # Per-profile account definitions
 PROFILE_ACCOUNTS = {
@@ -76,6 +82,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         profile_name = options['profile']
         clone_from = options.get('clone_from')
+        self.is_clear = options['clear']
 
         # Get or create profile
         self.profile, created = Profile.objects.get_or_create(
@@ -492,7 +499,23 @@ class Command(BaseCommand):
             )
             batch.append(txn)
 
-        self.stdout.write(f'  Creating {len(batch)} transactions (skipped {skipped})...')
+        self.stdout.write(f'  Prepared {len(batch)} transactions (skipped {skipped})...')
+
+        # For incremental imports (no --clear), filter out transactions that already exist
+        # by matching on (date, amount, description, account, profile)
+        if not self.is_clear:
+            existing = set(
+                Transaction.objects.filter(profile=self.profile)
+                .values_list('date', 'amount', 'description', 'account_id')
+            )
+            before = len(batch)
+            batch = [
+                t for t in batch
+                if (t.date, t.amount, t.description, t.account_id) not in existing
+            ]
+            dupes = before - len(batch)
+            if dupes:
+                self.stdout.write(f'  Skipped {dupes} existing transactions (incremental mode)')
 
         # Use bulk_create in chunks
         CHUNK_SIZE = 500
