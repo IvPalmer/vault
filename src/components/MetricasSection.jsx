@@ -99,17 +99,21 @@ function buildCards(data) {
     a_pagar: {
       label: 'A PAGAR',
       value: `R$ ${fmt(data.a_pagar)}`,
-      subtitle: data.a_pagar > 0 ? 'despesa pendente' : 'tudo pago',
+      subtitle: data.fatura_remaining > 0
+        ? `fixo + fatura pendente`
+        : data.a_pagar > 0 ? 'despesa pendente' : 'tudo pago',
       color: data.a_pagar > 0 ? 'var(--color-red)' : 'var(--color-green)',
     },
     saldo_projetado: {
       label: 'SALDO PROJETADO',
       value: `R$ ${fmt(data.saldo_projetado)}`,
       subtitle: data.balance_override != null
-        ? 'baseado no saldo'
-        : data.prev_month_saldo != null
-          ? 'cascata do mes anterior'
-          : 'calculado',
+        ? 'saldo + entradas - a pagar'
+        : !data.is_current_month && data.checking_balance_eom != null
+          ? 'saldo real da conta'
+          : data.prev_month_saldo != null
+            ? 'cascata do mes anterior'
+            : 'calculado',
       color: data.saldo_projetado >= 0 ? 'var(--color-green)' : 'var(--color-red)',
     },
     dias_fechamento: {
@@ -446,21 +450,25 @@ function MetricasSection() {
           <span
             className={styles.balanceAuto}
             style={{
-              color: data.prev_month_saldo != null
-                ? data.prev_month_saldo >= 0
+              color: (data.checking_balance_eom ?? data.prev_month_saldo) != null
+                ? (data.checking_balance_eom ?? data.prev_month_saldo) >= 0
                   ? 'var(--color-green)'
                   : 'var(--color-red)'
                 : 'var(--color-text-secondary)',
             }}
           >
-            {data.prev_month_saldo != null
-              ? `R$ ${fmt(data.prev_month_saldo)}`
-              : '—'
+            {data.checking_balance_eom != null
+              ? `R$ ${fmt(data.checking_balance_eom)}`
+              : data.prev_month_saldo != null
+                ? `R$ ${fmt(data.prev_month_saldo)}`
+                : '—'
             }
           </span>
         )}
-        {!data.is_current_month && data.prev_month_saldo != null && (
-          <span className={styles.balanceHint}>saldo projetado anterior</span>
+        {!data.is_current_month && (
+          <span className={styles.balanceHint}>
+            {data.checking_balance_eom != null ? 'saldo final do mes' : data.prev_month_saldo != null ? 'saldo projetado anterior' : ''}
+          </span>
         )}
       </div>
 

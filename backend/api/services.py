@@ -10,7 +10,7 @@ from difflib import get_close_matches, SequenceMatcher
 from django.db.models import Sum, Q, F, Case, When, Value, CharField, Count, Max
 from dateutil.relativedelta import relativedelta
 from .models import (
-    Transaction, Category, Subcategory, Account, BalanceOverride,
+    Transaction, Category, Subcategory, Account, BalanceOverride, BalanceAnchor,
     RecurringMapping, RecurringTemplate, BudgetConfig, CategorizationRule,
     MetricasOrderConfig, CustomMetric,
 )
@@ -709,38 +709,54 @@ def delete_recurring_template(template_id, profile=None):
 # Replaces the old get_summary_metrics() and get_control_metrics() functions.
 # ---------------------------------------------------------------------------
 
-def _get_prev_month_saldo(month_str, profile=None):
+def _get_checking_balance_eom(month_str, profile=None):
     """
-    Get the previous month's saldo projetado to use as this month's
-    starting balance when no BalanceOverride is set.
+    Compute end-of-month checking account balance for a closed month.
+    Uses the most recent BalanceAnchor (from OFX LEDGERBAL) and works
+    backwards by subtracting all checking transactions between month-end
+    and the anchor date.
 
-    Calls get_metricas() for the previous month (with _cascade=False to
-    prevent infinite recursion on months without a BO anchor).
+    Returns the balance as a Decimal, or None if no anchor exists.
     """
-    prev_str = _month_str_add(month_str, -1)
+    import calendar
 
-    # Check if prev month has any transactions at all
-    has_data = Transaction.objects.filter(month_str=prev_str, profile=profile).exists()
-    if not has_data:
-        # Also check if prev month has a BalanceOverride
-        try:
-            BalanceOverride.objects.get(month_str=prev_str, profile=profile)
-        except BalanceOverride.DoesNotExist:
-            return None
+    anchor = BalanceAnchor.objects.filter(profile=profile).order_by('-date').first()
+    if not anchor:
+        return None
 
-    # Compute prev month's full metricas to get its saldo_projetado
-    prev_metricas = get_metricas(prev_str, _cascade=False, profile=profile)
-    return Decimal(str(prev_metricas['saldo_projetado']))
+    year = int(month_str[:4])
+    month = int(month_str[5:7])
+    last_day_num = calendar.monthrange(year, month)[1]
+    from datetime import date
+    month_end = date(year, month, last_day_num)
+
+    if month_end >= anchor.date:
+        return None  # Can't compute for months at or after the anchor
+
+    checking = Account.objects.filter(
+        profile=profile, account_type='checking'
+    ).first()
+    if not checking:
+        return None
+
+    # Sum all checking transactions AFTER month-end up to anchor date
+    txns_after = Transaction.objects.filter(
+        profile=profile,
+        account=checking,
+        date__gt=month_end,
+        date__lte=anchor.date,
+    ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+    return anchor.balance - txns_after
 
 
-def get_metricas(month_str, _cascade=True, profile=None):
+def get_metricas(month_str, profile=None):
     """
     MÉTRICAS — unified dashboard metrics replacing both get_summary_metrics
     and get_control_metrics. Returns 15 metrics computed with shared queries.
 
-    _cascade: if True, attempts to cascade saldo from previous month.
-              Set to False to prevent infinite recursion when called from
-              _get_prev_month_saldo().
+    Saldo projetado uses real bank balances from OFX BalanceAnchors
+    (via _get_checking_balance_eom) instead of cascading from previous months.
     """
     import calendar
 
@@ -853,12 +869,11 @@ def get_metricas(month_str, _cascade=True, profile=None):
     schedule = _compute_installment_schedule(month_str, num_future_months=0, profile=profile)
     parcelas_total = Decimal(str(schedule.get(month_str, 0)))
 
-    variable_budget = Category.objects.filter(
-        category_type='Variavel', is_active=True,
-        profile=profile,
-    ).aggregate(total=Sum('default_limit'))['total'] or Decimal('0.00')
-
-    gastos_projetados = fixo_expected_total + parcelas_total + variable_budget
+    # gastos_projetados = all committed expenses for the month.
+    # Fixo (checking debits) + CC fatura total (which already includes parcelas
+    # + regular CC purchases). Parcelas are NOT added separately — they're
+    # already inside the fatura. Fatura is computed below in sections 7-8,
+    # so gastos_projetados is finalized after those sections.
 
     # --- Helper: compute actual for a recurring mapping ---
     def _get_actual_for_mapping(mapping, is_income=False):
@@ -960,42 +975,70 @@ def get_metricas(month_str, _cascade=True, profile=None):
     ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
 
     # =====================================================================
-    # 9. PARCELAS — installment total (already computed above)
+    # 9. PARCELAS + GASTOS PROJETADOS
+    #    fatura_master/visa (invoice_month=this month) = the CC bill DUE this
+    #    month (contains previous month's purchases). This is what will be
+    #    paid from checking via internal transfer.
+    #    gastos_projetados = fixo + fatura (all committed checking outflows).
+    #    Parcelas are a detail view (installments within the fatura).
     # =====================================================================
-    # parcelas_total already set
+    fatura_total = fatura_master + fatura_visa
+    gastos_projetados = fixo_expected_total + fatura_total
 
     # =====================================================================
     # 10. A ENTRAR — pending income (from unlinked/unmatched recurring items)
     #     Uses match_mode to determine how to compute actual received.
+    #     Considers an item fully received if actual >= 90% of expected
+    #     (same threshold used by _compute_status_and_actual for "Pago").
     # =====================================================================
     a_entrar = Decimal('0.00')
     for mapping in income_mappings:
         expected = mapping.expected_amount
         actual = _get_actual_for_mapping(mapping, is_income=True)
-        if actual >= expected:
-            continue  # Fully received
+        if expected == 0 or actual >= expected * Decimal('0.9'):
+            continue  # Fully received (or within tolerance)
         elif actual > 0:
             a_entrar += expected - actual  # Partial
         else:
             a_entrar += expected  # Nothing received
 
     # =====================================================================
-    # 11. A PAGAR — pending fixed expenses (from unlinked/unmatched recurring)
-    #     Uses match_mode to determine how to compute actual paid.
+    # 11. A PAGAR — all pending expenses that will hit checking.
+    #     Includes pending fixo (direct debits) + CC fatura if not yet paid.
+    #     CC bill payment is an internal transfer from checking.
     # =====================================================================
-    a_pagar = Decimal('0.00')
+    a_pagar_fixo = Decimal('0.00')
     for mapping in fixo_mappings_all:
         expected = mapping.expected_amount
         actual = _get_actual_for_mapping(mapping, is_income=False)
-        if actual >= expected:
-            continue  # Fully paid
+        if expected == 0 or actual >= expected * Decimal('0.9'):
+            continue  # Fully paid (or within tolerance)
         elif actual > 0:
-            a_pagar += expected - actual  # Partial
+            a_pagar_fixo += expected - actual  # Partial
         else:
-            a_pagar += expected  # Not paid
+            a_pagar_fixo += expected  # Not paid
+
+    # Previous month's CC bill due this month, minus what's been paid.
+    # For closed months, everything is settled (reflected in OFX balance).
+    if is_current:
+        checking_acct = Account.objects.filter(
+            profile=profile, account_type='checking'
+        ).first()
+        cc_paid = Decimal('0')
+        if checking_acct:
+            cc_paid = abs(Transaction.objects.filter(
+                month_str=month_str, profile=profile, account=checking_acct,
+                is_internal_transfer=True, amount__lt=0,
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0'))
+        fatura_remaining = max(Decimal('0'), fatura_total - cc_paid)
+    else:
+        fatura_remaining = Decimal('0')
+
+    a_pagar = a_pagar_fixo + fatura_remaining
 
     # =====================================================================
     # 12. BALANCE OVERRIDE + SALDO PROJETADO
+    #     Uses real bank balances from OFX BalanceAnchors for accuracy.
     # =====================================================================
     balance_override = None
     try:
@@ -1004,27 +1047,30 @@ def get_metricas(month_str, _cascade=True, profile=None):
     except BalanceOverride.DoesNotExist:
         pass
 
-    # Cascade: compute previous month's projected ending balance
-    prev_month_saldo = None
-    prev_month_saldo_float = None
-    if _cascade:
-        prev_month_saldo = _get_prev_month_saldo(month_str, profile=profile)
-        prev_month_saldo_float = float(prev_month_saldo) if prev_month_saldo is not None else None
+    # Compute checking_balance_eom for closed months (moved here from later)
+    checking_balance_eom = None
+    if not is_current:
+        checking_balance_eom = _get_checking_balance_eom(month_str, profile=profile)
+
+    # Prev month's real checking balance (for cascade and frontend subtitle)
+    prev_checking = _get_checking_balance_eom(
+        _month_str_add(month_str, -1), profile=profile
+    )
+    prev_month_saldo_float = float(prev_checking) if prev_checking is not None else None
 
     if balance_override is not None:
-        # User manually set balance for this month — use it.
-        # BO already reflects all realized transactions, so only add pending.
+        # User manually set balance = current checking balance.
+        # Add pending income, subtract all pending outflows (fixo + CC bill).
         saldo_projetado = Decimal(str(balance_override)) + a_entrar - a_pagar
-    elif prev_month_saldo is not None:
-        # No manual balance — cascade from previous month's projected saldo.
-        # Starting from prev ending balance, add this month's realized +
-        # pending income, subtract realized + pending expenses.
-        saldo_projetado = (prev_month_saldo
-                           + entradas_atuais + a_entrar
-                           - gastos_atuais - a_pagar)
+    elif not is_current and checking_balance_eom is not None:
+        # Closed month: use actual bank balance from OFX
+        saldo_projetado = checking_balance_eom
+    elif is_current and prev_checking is not None:
+        # Current month without BO: prev real balance + income - all expenses
+        saldo_projetado = prev_checking + entradas_projetadas - gastos_projetados
     else:
-        # No anchor at all — fallback to simple computation
-        saldo_projetado = entradas_atuais - gastos_fixos - gastos_variaveis - parcelas_total
+        # No anchor available at all — fallback to simple computation
+        saldo_projetado = entradas_atuais - gastos_fixos - fatura_total
 
     # =====================================================================
     # 13. DIAS ATÉ O FECHAMENTO
@@ -1106,6 +1152,7 @@ def get_metricas(month_str, _cascade=True, profile=None):
         'month_str': month_str,
         'balance_override': balance_override,
         'prev_month_saldo': prev_month_saldo_float,
+        'checking_balance_eom': float(checking_balance_eom) if checking_balance_eom is not None else None,
         'entradas_atuais': float(entradas_atuais),
         'entradas_projetadas': float(entradas_projetadas),
         'gastos_atuais': float(gastos_atuais),
@@ -1117,6 +1164,8 @@ def get_metricas(month_str, _cascade=True, profile=None):
         'parcelas': float(parcelas_total),
         'a_entrar': float(a_entrar),
         'a_pagar': float(a_pagar),
+        'a_pagar_fixo': float(a_pagar_fixo),
+        'fatura_remaining': float(fatura_remaining),
         'saldo_projetado': float(saldo_projetado),
         'dias_fechamento': dias_fechamento,
         'is_current_month': is_current,
@@ -2699,12 +2748,13 @@ def get_projection(start_month_str, num_months=6, profile=None):
     """
     import re
 
-    # Starting balance
+    # Starting balance: prefer BalanceOverride, fall back to OFX checking balance
     try:
         bo = BalanceOverride.objects.get(month_str=start_month_str, profile=profile)
         starting_balance = float(bo.balance)
     except BalanceOverride.DoesNotExist:
-        starting_balance = 0.0
+        eom = _get_checking_balance_eom(start_month_str, profile=profile)
+        starting_balance = float(eom) if eom is not None else 0.0
 
     # Template defaults for recurring items
     tpls = RecurringTemplate.objects.filter(is_active=True, profile=profile)
