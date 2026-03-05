@@ -84,9 +84,12 @@ export function ProfileProvider({ children }) {
     }
   }, [profileList, isLoading, location.pathname])
 
-  // Auto-select first profile if none stored
+  // Auto-select first profile if none stored (skip if URL already specifies a profile)
   useEffect(() => {
     if (isLoading || !profileList.length) return
+    // If URL already has a valid profile slug, the URL-slug effect handles selection
+    const urlSlug = getSlugFromPath(location.pathname)
+    if (urlSlug && profileList.find(p => toSlug(p.name) === urlSlug)) return
     if (!profileId || !profileList.find(p => p.id === profileId)) {
       const firstId = profileList[0]?.id
       if (firstId) {
@@ -94,7 +97,7 @@ export function ProfileProvider({ children }) {
         setProfileId(firstId)
       }
     }
-  }, [profiles, profileId, isLoading])
+  }, [profiles, profileId, isLoading, location.pathname])
 
   const switchProfile = useCallback((id) => {
     const targetProfile = profileList.find(p => p.id === id)

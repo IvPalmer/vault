@@ -37,11 +37,14 @@ export function MonthProvider({ children }) {
     }
   }, [profileId, storageKey])
 
-  // Set default to latest month when months load, or reset if stored month is invalid
+  // Set default to current month when months load, or reset if stored month is invalid
   useEffect(() => {
     if (months.length > 0) {
       if (!selectedMonth || !months.includes(selectedMonth)) {
-        setSelectedMonth(months[0]) // months are sorted descending
+        const now = new Date()
+        const current = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+        // Prefer current month, fall back to latest available
+        setSelectedMonth(months.includes(current) ? current : months[0])
       }
     }
   }, [months]) // eslint-disable-line react-hooks/exhaustive-deps
