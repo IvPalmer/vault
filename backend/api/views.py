@@ -902,7 +902,7 @@ class ProjectionView(APIView):
         if err:
             return err
         try:
-            num_months = int(request.query_params.get('months', 6))
+            num_months = int(request.query_params.get('months', 0))
         except (ValueError, TypeError):
             return Response({'error': 'months must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
         try:

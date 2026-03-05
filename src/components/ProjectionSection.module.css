@@ -93,6 +93,48 @@
   color: var(--color-text-secondary);
 }
 
+.purple {
+  color: #6366f1;
+}
+
+.saldoCol {
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 1px solid var(--color-border);
+}
+
+.balanceRow {
+  background: var(--color-surface);
+  border-bottom: 2px solid var(--color-border) !important;
+}
+
+.balanceRow td {
+  border-bottom: 2px solid var(--color-border);
+}
+
+.balanceLabel {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.breakevenHint {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-green);
+}
+
+.breakevenRow {
+  border-top: 2px dashed var(--color-green) !important;
+}
+
+.breakevenRow td:first-child::after {
+  content: ' \2713';
+  color: var(--color-green);
+  font-weight: 700;
+}
+
 .loading,
 .error {
   color: var(--color-text-secondary);

@@ -12,11 +12,15 @@ function MonthlyOverview() {
     <div className={styles.container}>
       <MetricasSection />
       <SmartCategorizeBar />
-      <RecurringSection />
-      <OrcamentoSection />
-      <CardsSection />
-      <CheckingSection />
+      <div className={styles.twoCol}>
+        <RecurringSection />
+        <OrcamentoSection />
+      </div>
       <ProjectionSection />
+      <div className={styles.twoColEven}>
+        <CardsSection />
+        <CheckingSection />
+      </div>
     </div>
   )
 }

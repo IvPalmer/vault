@@ -412,6 +412,32 @@ def get_recurring_data(month_str, profile=None):
             # Fixo + Variavel + any other type go into fixo list
             fixo_items.append(item)
 
+    # Dynamic savings target: 20% of income
+    # For closed months with actual data, use actual income; otherwise template expected
+    savings_target_pct = float(profile.savings_target_pct) if profile else 20.0
+    income_expected = sum(i['expected'] for i in income_items if not i.get('is_skipped'))
+    income_actual = sum(i['actual'] for i in income_items if not i.get('is_skipped'))
+    _today = datetime.today()
+    _is_current = month_str == f'{_today.year}-{_today.month:02d}'
+    income_ref = income_actual if (not _is_current and income_actual > 0) else income_expected
+    savings_target_amount = income_ref * savings_target_pct / 100 if income_ref > 0 else 0.0
+
+    # Override investment items' expected to reflect dynamic target
+    invest_template_total = sum(i['expected'] for i in investimento_items if not i.get('is_skipped'))
+    if savings_target_amount > invest_template_total and investimento_items:
+        # Scale each investment item proportionally to hit the target
+        if invest_template_total > 0:
+            scale = savings_target_amount / invest_template_total
+            for item in investimento_items:
+                if not item.get('is_skipped'):
+                    item['expected'] = round(item['expected'] * scale, 2)
+        else:
+            # Single or equal split
+            per_item = savings_target_amount / sum(1 for i in investimento_items if not i.get('is_skipped'))
+            for item in investimento_items:
+                if not item.get('is_skipped'):
+                    item['expected'] = round(per_item, 2)
+
     return {
         'month_str': month_str,
         'fixo': fixo_items,
@@ -419,6 +445,8 @@ def get_recurring_data(month_str, profile=None):
         'investimento': investimento_items,
         'all': income_items + fixo_items + investimento_items,
         'initialized': was_initialized,
+        'savings_target_pct': savings_target_pct,
+        'savings_target_amount': round(savings_target_amount, 2),
     }
 
 
@@ -886,14 +914,35 @@ def get_metricas(month_str, profile=None):
     for m in fixo_mappings_all:
         fixo_expected_total += m.expected_amount
 
+    invest_mappings_all = RecurringMapping.objects.filter(
+        month_str=month_str,
+        profile=profile,
+    ).filter(
+        Q(template__template_type='Investimento') | Q(is_custom=True, custom_type='Investimento')
+    ).exclude(status='skipped').select_related('template', 'category', 'transaction').prefetch_related('transactions')
+
+    invest_template_total = Decimal('0.00')
+    for m in invest_mappings_all:
+        invest_template_total += m.expected_amount
+
+    # Dynamic savings target: use max(template total, savings_target_pct × income)
+    # For closed months with actual data, use actuals; otherwise projections
+    _savings_pct = Decimal(str(profile.savings_target_pct)) / Decimal('100') if profile else Decimal('0.20')
+    _income_ref = entradas_atuais if (not is_current and entradas_atuais > 0) else entradas_projetadas
+    _savings_target = _income_ref * _savings_pct if _income_ref > 0 else Decimal('0')
+    invest_goal = max(invest_template_total, _savings_target)
+    # Actual invest_expected_total will be clamped after saldo_before_invest is known
+    invest_expected_total = invest_goal  # placeholder, clamped below
+
     schedule = _compute_installment_schedule(month_str, num_future_months=0, profile=profile)
     parcelas_total = Decimal(str(schedule.get(month_str, 0)))
 
-    # gastos_projetados = all committed expenses for the month.
-    # Fixo (checking debits) + CC fatura total (which already includes parcelas
-    # + regular CC purchases). Parcelas are NOT added separately — they're
-    # already inside the fatura. Fatura is computed below in sections 7-8,
-    # so gastos_projetados is finalized after those sections.
+    # gastos_projetados = all committed checking outflows for the month.
+    # Fixo (recurring debits) + Investimento (transfer debits) + CC fatura total
+    # (which already includes parcelas + regular CC purchases).
+    # Parcelas are NOT added separately — they're inside the fatura.
+    # Fatura is computed below in sections 7-8, so gastos_projetados
+    # is finalized after those sections.
 
     # --- Helper: compute actual for a recurring mapping ---
     def _get_actual_for_mapping(mapping, is_income=False):
@@ -1008,7 +1057,9 @@ def get_metricas(month_str, profile=None):
     # For future months with no imported CC data, use projected installments
     # for gastos_projetados calculation only. Fatura cards stay 0 — no real bill yet.
     projected_cc = parcelas_total if fatura_total == 0 else fatura_total
-    gastos_projetados = fixo_expected_total + projected_cc
+    # Base expenses WITHOUT investment (used to determine affordable invest)
+    gastos_base = fixo_expected_total + projected_cc
+    gastos_projetados = gastos_base + invest_expected_total
 
     # =====================================================================
     # 10. A ENTRAR — pending income (from unlinked/unmatched recurring items)
@@ -1043,6 +1094,12 @@ def get_metricas(month_str, profile=None):
         else:
             a_pagar_fixo += expected  # Not paid
 
+    # a_pagar_invest: pending investment = dynamic target - what's been invested
+    _invest_actual_total = Decimal('0.00')
+    for mapping in invest_mappings_all:
+        _invest_actual_total += _get_actual_for_mapping(mapping, is_income=False)
+    a_pagar_invest = max(Decimal('0'), invest_expected_total - _invest_actual_total)
+
     # Previous month's CC bill due this month, minus what's been paid.
     # For closed months, everything is settled (reflected in OFX balance).
     if is_current:
@@ -1059,7 +1116,7 @@ def get_metricas(month_str, profile=None):
     else:
         fatura_remaining = Decimal('0')
 
-    a_pagar = a_pagar_fixo + fatura_remaining
+    a_pagar = a_pagar_fixo + a_pagar_invest + fatura_remaining
 
     # =====================================================================
     # 12. BALANCE OVERRIDE + SALDO PROJETADO
@@ -1083,7 +1140,24 @@ def get_metricas(month_str, profile=None):
     )
     prev_month_saldo_float = float(prev_checking) if prev_checking is not None else None
 
-    if balance_override is not None:
+    # Determine if this is a future month (after today)
+    is_future = (year > today.year or (year == today.year and month > today.month))
+
+    # For future months, cascade from the current month's projection.
+    # This uses get_projection which anchors to the real current-month saldo.
+    projected_balance = None  # Starting balance for this month from projection cascade
+    if is_future:
+        today_str = today.strftime('%Y-%m')
+        proj = get_projection(today_str, profile=profile)
+        proj_months = {r['month']: r for r in proj['months']}
+        prev_month_str = _month_str_add(month_str, -1)
+        if prev_month_str in proj_months:
+            projected_balance = proj_months[prev_month_str]['cumulative']
+        if month_str in proj_months:
+            saldo_projetado = Decimal(str(proj_months[month_str]['cumulative']))
+        else:
+            saldo_projetado = entradas_projetadas - gastos_projetados
+    elif balance_override is not None:
         # User manually set balance = current checking balance.
         # Add pending income, subtract all pending outflows (fixo + CC bill).
         saldo_projetado = Decimal(str(balance_override)) + a_entrar - a_pagar
@@ -1093,9 +1167,45 @@ def get_metricas(month_str, profile=None):
     elif is_current and prev_checking is not None:
         # Current month without BO: prev real balance + income - all expenses
         saldo_projetado = prev_checking + entradas_projetadas - gastos_projetados
+    elif not is_current and float(entradas_atuais) > 0:
+        # Closed month without OFX anchor — use actual transactions
+        saldo_projetado = entradas_atuais - gastos_atuais
     else:
-        # No anchor available at all — fallback to simple computation
-        saldo_projetado = entradas_atuais - gastos_fixos - fatura_total
+        saldo_projetado = entradas_projetadas - gastos_projetados
+
+    # =====================================================================
+    # 12b. CLAMP INVESTMENT TO AFFORDABLE AMOUNT
+    #      Only invest if it won't push balance negative (avoid overdraft juros).
+    #      For closed months with OFX, actuals are final — don't clamp.
+    # =====================================================================
+    # Skip clamping only for closed months with real OFX balance (actuals are final)
+    _closed_with_ofx = (not is_current and checking_balance_eom is not None)
+    if not _closed_with_ofx and invest_expected_total > 0:
+        # saldo_before_invest: what balance would be without any investment
+        saldo_before_invest = saldo_projetado + invest_expected_total
+        if saldo_before_invest <= 0:
+            # Can't afford any investment
+            invest_expected_total = Decimal('0')
+        elif saldo_before_invest < invest_expected_total:
+            # Can only afford partial investment
+            invest_expected_total = saldo_before_invest
+        # else: full target is affordable, keep as-is
+
+        # Recompute derived values with clamped investment
+        gastos_projetados = gastos_base + invest_expected_total
+        a_pagar_invest = max(Decimal('0'), invest_expected_total - _invest_actual_total)
+        a_pagar = a_pagar_fixo + a_pagar_invest + fatura_remaining
+
+        # Recompute saldo with clamped values
+        if balance_override is not None:
+            saldo_projetado = Decimal(str(balance_override)) + a_entrar - a_pagar
+        elif is_current and prev_checking is not None:
+            saldo_projetado = prev_checking + entradas_projetadas - gastos_projetados
+        elif not is_current and float(entradas_atuais) > 0:
+            saldo_projetado = entradas_atuais - gastos_atuais
+        elif not is_future:
+            saldo_projetado = entradas_projetadas - gastos_projetados
+        # For future months, saldo came from projection — don't recompute here
 
     # =====================================================================
     # 13. DIAS ATÉ O FECHAMENTO
@@ -1176,6 +1286,8 @@ def get_metricas(month_str, profile=None):
     result_dict = {
         'month_str': month_str,
         'balance_override': balance_override,
+        'projected_balance': projected_balance,
+        'is_future': is_future,
         'prev_month_saldo': prev_month_saldo_float,
         'checking_balance_eom': float(checking_balance_eom) if checking_balance_eom is not None else None,
         'entradas_atuais': float(entradas_atuais),
@@ -1190,7 +1302,11 @@ def get_metricas(month_str, profile=None):
         'a_entrar': float(a_entrar),
         'a_pagar': float(a_pagar),
         'a_pagar_fixo': float(a_pagar_fixo),
+        'a_pagar_invest': float(a_pagar_invest),
         'fatura_remaining': float(fatura_remaining),
+        'fatura_total': float(fatura_total),
+        'fixo_expected_total': float(fixo_expected_total),
+        'invest_expected_total': float(invest_expected_total),
         'saldo_projetado': float(saldo_projetado),
         'dias_fechamento': dias_fechamento,
         'is_current_month': is_current,
@@ -1199,12 +1315,35 @@ def get_metricas(month_str, profile=None):
         'saude_level': saude_level,
         'cross_month_moved': cross_month_info,
         'savings_target_pct': float(profile.savings_target_pct) if profile else 20.0,
-        'savings_rate': round(
-            ((float(entradas_atuais) - float(gastos_atuais)) / float(entradas_atuais) * 100)
-            if float(entradas_atuais) > 0 else 0.0,
-            1
-        ),
     }
+
+    # --- Meta Poupança: investment achievement vs dynamic target ---
+    income_ref = float(entradas_atuais) if (not is_current and float(entradas_atuais) > 0) else float(entradas_projetadas)
+    savings_target_pct = float(profile.savings_target_pct) if profile else 20.0
+    savings_target_amount = income_ref * savings_target_pct / 100
+
+    # Actual invested = sum of actual amounts from investment mappings
+    invest_actual = 0.0
+    for mapping in invest_mappings_all:
+        actual = _get_actual_for_mapping(mapping, is_income=False)
+        invest_actual += float(actual)
+
+    # Achievement: what % of the dynamic target has been invested
+    savings_achievement = round(
+        (invest_actual / savings_target_amount * 100) if savings_target_amount > 0 else 0.0, 1
+    )
+
+    # Headroom: after all non-investment expenses, can the full target be met?
+    # saldo already includes invest_expected in gastos_projetados, so add it back
+    # to see what's available before investment decisions
+    saldo_before_invest = float(saldo_projetado) + float(invest_expected_total)
+    savings_affordable = saldo_before_invest >= savings_target_amount
+
+    result_dict['savings_rate'] = savings_achievement
+    result_dict['savings_target_amount'] = round(savings_target_amount, 2)
+    result_dict['invest_actual'] = round(invest_actual, 2)
+    result_dict['savings_affordable'] = savings_affordable
+    result_dict['savings_headroom'] = round(saldo_before_invest - savings_target_amount, 2)
 
     # Append custom metrics computed from this month's data
     result_dict['custom_metrics'] = _compute_custom_metrics(month_str, result_dict, profile=profile)
@@ -2743,47 +2882,54 @@ def get_last_installment_month(profile=None):
     return furthest
 
 
-def get_projection(start_month_str, num_months=6, profile=None):
+def get_projection(start_month_str, num_months=0, profile=None):
     """
-    PROJEÇÃO — Forward-looking financial projection.
+    PROJEÇÃO — Cascading financial projection.
 
-    Starting from the balance override of start_month_str, projects
-    income, fixed expenses, installments, and variable budget for
-    each of the next num_months months.
+    Always starts from the current checking balance (BalanceOverride or OFX)
+    and projects forward, cascading each month's net into the next.
 
-    For the current month: uses actual RecurringMapping expected amounts.
-    For future months: uses RecurringTemplate defaults / BudgetConfig overrides.
-    Installments: parses "N/M" info to calculate remaining months.
-
-    Returns per-month: income, fixo, installments, variable_budget,
-    net, cumulative balance.
+    When num_months=0 (default), auto-computes range:
+      current month → max(last_installment_month, Dec of current year)
     """
-    import re
 
-    # Starting balance: prefer BalanceOverride, fall back to OFX checking balance
+    # Current month saldo uses the same formula as metricas:
+    # BO + a_entrar - a_pagar (grounded in real checking balance).
+    # This accounts for ALL checking activity, not just tracked categories.
+    # We compute current-month saldo here and cascade future months from it.
+    #
+    # For display, starting_balance = BalanceOverride or prev-month EOM.
     try:
         bo = BalanceOverride.objects.get(month_str=start_month_str, profile=profile)
         starting_balance = float(bo.balance)
     except BalanceOverride.DoesNotExist:
-        eom = _get_checking_balance_eom(start_month_str, profile=profile)
+        prev_month = _month_str_add(start_month_str, -1)
+        eom = _get_checking_balance_eom(prev_month, profile=profile)
         starting_balance = float(eom) if eom is not None else 0.0
+
+    # Auto-compute range if num_months not specified
+    if num_months <= 0:
+        year = int(start_month_str[:4])
+        dec_this_year = f'{year}-12'
+        last_inst = get_last_installment_month(profile=profile)
+        end_month = dec_this_year
+        if last_inst and last_inst > end_month:
+            end_month = last_inst
+        # Compute num_months from start to end (inclusive)
+        start_dt = _parse_month(start_month_str)
+        end_dt = _parse_month(end_month)
+        num_months = max(
+            (end_dt.year - start_dt.year) * 12 + end_dt.month - start_dt.month + 1,
+            3,  # minimum 3 months
+        )
 
     # Template defaults for recurring items
     tpls = RecurringTemplate.objects.filter(is_active=True, profile=profile)
-    income_tpls = tpls.filter(template_type='Income')
-    fixo_tpls = tpls.filter(template_type='Fixo')
-    invest_tpls = tpls.filter(template_type='Investimento')
+    income_tpls = list(tpls.filter(template_type='Income'))
+    fixo_tpls = list(tpls.filter(template_type='Fixo'))
+    invest_tpls = list(tpls.filter(template_type='Investimento'))
 
-    total_income_default = float(
-        income_tpls.aggregate(t=Sum('default_limit'))['t'] or 0
-    )
-    total_fixo_default = float(
-        fixo_tpls.aggregate(t=Sum('default_limit'))['t'] or 0
-    )
-    total_invest_default = float(
-        invest_tpls.aggregate(t=Sum('default_limit'))['t'] or 0
-    )
-    # Variable budget comes from taxonomy Category (not templates)
+    # Variable budget for future months (covers discretionary checking + CC spending)
     variable_cats = Category.objects.filter(
         category_type='Variavel', is_active=True, default_limit__gt=0,
         profile=profile,
@@ -2798,9 +2944,48 @@ def get_projection(start_month_str, num_months=6, profile=None):
     )
     current_installment_total = installment_schedule.get(start_month_str, 0)
 
+    # Current month fatura total (actual CC bill) — use instead of parcelas
+    # when available, since fatura is the real amount debited from checking.
+    cc_accounts = Account.objects.filter(profile=profile, account_type='credit_card')
+    fatura_q = Q()
+    cc_ids = list(cc_accounts.values_list('id', flat=True))
+    if cc_ids:
+        fatura_q = (
+            Q(invoice_month=start_month_str, account_id__in=cc_ids, profile=profile,
+              is_internal_transfer=False) |
+            Q(month_str=start_month_str, invoice_month='', account_id__in=cc_ids, profile=profile,
+              is_internal_transfer=False)
+        )
+    current_fatura_total = float(abs(
+        Transaction.objects.filter(fatura_q).aggregate(
+            total=Sum('amount'))['total'] or Decimal('0')
+    )) if cc_ids else 0.0
+
+    # Prefetch BudgetConfig overrides for all future months in one query
+    future_months = [_month_str_add(start_month_str, i) for i in range(1, num_months)]
+    all_tpl_ids = [t.id for t in income_tpls + fixo_tpls + invest_tpls]
+    bc_lookup = {}
+    if all_tpl_ids and future_months:
+        for bc in BudgetConfig.objects.filter(
+            profile=profile, template_id__in=all_tpl_ids, month_str__in=future_months,
+        ):
+            bc_lookup[(str(bc.template_id), bc.month_str)] = float(bc.limit_override) if bc.limit_override is not None else None
+
+    def _tpl_amount(tpl, month):
+        val = bc_lookup.get((str(tpl.id), month))
+        return val if val is not None else float(tpl.default_limit)
+
+    # Compute current month saldo using metricas formula (BO + a_entrar - a_pagar)
+    # so the projection aligns with the saldo_projetado card.
+    metricas = get_metricas(start_month_str, profile=profile)
+    current_month_saldo = float(metricas['saldo_projetado'])
+
+    # Savings target percentage for dynamic investment goal
+    savings_target_pct = float(profile.savings_target_pct) if profile else 20.0
+
     # Build projection rows
     rows = []
-    cumulative = starting_balance
+    cumulative = 0.0
 
     for i in range(num_months):
         month = _month_str_add(start_month_str, i)
@@ -2827,24 +3012,43 @@ def get_projection(start_month_str, num_months=6, profile=None):
                 elif cat_type == 'Investimento':
                     invest += expected
 
-            installments = current_installment_total
-            variable = total_variable_default
+            # Use fatura total (real CC bill) when available, else parcelas
+            installments = current_fatura_total if current_fatura_total > 0 else current_installment_total
+            variable = 0.0  # Current month: fully handled by metricas saldo anchor
         else:
-            # Future months: use defaults + BudgetConfig overrides
-            income = total_income_default
-            fixo = total_fixo_default
-            invest = total_invest_default
+            # Future months: use defaults, applying BudgetConfig overrides per template
+            income = sum(_tpl_amount(t, month) for t in income_tpls)
+            fixo = sum(_tpl_amount(t, month) for t in fixo_tpls)
+            invest = sum(_tpl_amount(t, month) for t in invest_tpls)
             installments = installment_schedule.get(month, 0)
             variable = total_variable_default
 
-        net = income - fixo - invest - installments - variable
-        cumulative += net
+        # Dynamic savings target: use max(template invest, target % of income)
+        savings_target_amount = income * savings_target_pct / 100 if income > 0 else 0.0
+        invest_goal = max(invest, savings_target_amount)
+
+        if i == 0:
+            # Current month: invest already baked into metricas saldo
+            invest = invest_goal
+            net = income - fixo - invest - installments - variable
+            cumulative = current_month_saldo
+        else:
+            # Future months: only invest if balance stays non-negative
+            net_before_invest = income - fixo - installments - variable
+            balance_before_invest = cumulative + net_before_invest
+            if balance_before_invest <= 0:
+                invest = 0.0
+            else:
+                invest = min(invest_goal, balance_before_invest)
+            net = net_before_invest - invest
+            cumulative += net
 
         rows.append({
             'month': month,
             'income': round(income, 2),
             'fixo': round(fixo, 2),
             'investimento': round(invest, 2),
+            'savings_target_amount': round(savings_target_amount, 2),
             'installments': round(installments, 2),
             'variable': round(variable, 2),
             'net': round(net, 2),
@@ -2853,7 +3057,7 @@ def get_projection(start_month_str, num_months=6, profile=None):
 
     return {
         'start_month': start_month_str,
-        'starting_balance': starting_balance,
+        'starting_balance': round(starting_balance, 2),
         'months': rows,
         'num_months': num_months,
     }

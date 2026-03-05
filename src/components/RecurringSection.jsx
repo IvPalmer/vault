@@ -138,6 +138,93 @@ const TABS = [
   { key: 'investimento', label: 'INVESTIMENTOS' },
 ]
 
+/** Summary totals bar below the table */
+function RecurringTotals({ data, activeTab }) {
+  const totals = useMemo(() => {
+    if (!data) return null
+    const computeGroup = (items) => {
+      let expected = 0, actual = 0, count = 0, paid = 0, pending = 0
+      for (const item of items) {
+        if (item.is_skipped) continue
+        expected += item.expected || 0
+        actual += item.actual || 0
+        count++
+        if (item.status === 'Pago') paid++
+        else if (item.status !== 'Pulado') pending++
+      }
+      return { expected, actual, count, paid, pending }
+    }
+
+    if (activeTab === 'all') {
+      const income = computeGroup(data.income || [])
+      const fixo = computeGroup(data.fixo || [])
+      const invest = computeGroup(data.investimento || [])
+      return { income, fixo, invest, isAll: true }
+    }
+
+    const items = data[activeTab] || []
+    return { single: computeGroup(items), isAll: false, tab: activeTab }
+  }, [data, activeTab])
+
+  if (!totals) return null
+
+  if (totals.isAll) {
+    const { income, fixo, invest } = totals
+    // Use dynamic savings target (20% of income) when it exceeds template total
+    const dynamicTarget = data?.savings_target_amount ?? 0
+    const investExpected = Math.max(invest.expected, dynamicTarget)
+    return (
+      <div className={styles.totalsBar}>
+        <TotalRow label="Entradas" expected={income.expected} actual={income.actual} paid={income.paid} pending={income.pending} color="var(--color-green)" isIncome />
+        <TotalRow label="Fixos" expected={fixo.expected} actual={fixo.actual} paid={fixo.paid} pending={fixo.pending} color="var(--color-red)" />
+        <TotalRow label="Investimentos" expected={investExpected} actual={invest.actual} paid={invest.paid} pending={invest.pending} color="#6366f1" hint={investExpected > invest.expected ? `(meta ${data?.savings_target_pct ?? 20}%)` : null} />
+        <div className={styles.totalsDivider} />
+        <div className={styles.totalsNet}>
+          <span className={styles.totalsNetLabel}>SOBRA PROJETADA</span>
+          <span
+            className={styles.totalsNetValue}
+            style={{ color: income.expected - fixo.expected - investExpected >= 0 ? 'var(--color-green)' : 'var(--color-red)' }}
+          >
+            R$ {fmt(income.expected - fixo.expected - investExpected)}
+          </span>
+          <span className={styles.totalsNetHint}>entradas - fixos - invest (sem cartao/variavel)</span>
+        </div>
+      </div>
+    )
+  }
+
+  const { single, tab } = totals
+  const isIncome = tab === 'income'
+  const label = tab === 'income' ? 'Entradas' : tab === 'fixo' ? 'Fixos' : 'Investimentos'
+  const color = tab === 'income' ? 'var(--color-green)' : tab === 'fixo' ? 'var(--color-red)' : '#6366f1'
+  // For investimento tab, use dynamic target as expected
+  const expected = tab === 'investimento' ? Math.max(single.expected, data?.savings_target_amount ?? 0) : single.expected
+
+  return (
+    <div className={styles.totalsBar}>
+      <TotalRow label={label} expected={expected} actual={single.actual} paid={single.paid} pending={single.pending} color={color} isIncome={isIncome} />
+    </div>
+  )
+}
+
+function TotalRow({ label, expected, actual, paid, pending, color, isIncome, hint }) {
+  return (
+    <div className={styles.totalsRow}>
+      <span className={styles.totalsLabel} style={{ color }}>{label}</span>
+      <span className={styles.totalsExpected}>
+        Esperado: <strong>R$ {fmt(expected)}</strong>{hint ? <span style={{ opacity: 0.6, marginLeft: 4 }}>{hint}</span> : null}
+      </span>
+      <span className={styles.totalsActual}>
+        {isIncome ? 'Recebido' : 'Pago'}: <strong style={{ color: actual > 0 ? color : 'var(--color-text-secondary)' }}>R$ {fmt(actual)}</strong>
+      </span>
+      <span className={styles.totalsStatus}>
+        {paid > 0 && <span className={styles.totalsPaid}>{paid} pago{paid > 1 ? 's' : ''}</span>}
+        {pending > 0 && <span className={styles.totalsPending}>{pending} pendente{pending > 1 ? 's' : ''}</span>}
+      </span>
+    </div>
+  )
+}
+
 
 function RecurringSection() {
   const { selectedMonth } = useMonth()
@@ -519,6 +606,7 @@ function RecurringSection() {
           draggable
           onReorder={handleReorder}
         />
+        <RecurringTotals data={recData} activeTab={activeTab} />
       </div>
     </div>
   )
