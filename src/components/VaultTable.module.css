@@ -4,6 +4,15 @@
   border-radius: var(--radius-md);
   overflow: hidden;
   box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.tableContainer {
+  overflow: auto;
+  flex: 1;
 }
 
 .searchBar {
@@ -48,10 +57,6 @@
 
 .clearBtn:hover {
   color: var(--color-text);
-}
-
-.tableContainer {
-  overflow: auto;
 }
 
 .table {

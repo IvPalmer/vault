@@ -413,13 +413,24 @@ def get_recurring_data(month_str, profile=None):
             fixo_items.append(item)
 
     # Dynamic savings target: 20% of income
-    # For closed months with actual data, use actual income; otherwise template expected
+    # Must use TOTAL actual income (same as metricas entradas_atuais) for closed months,
+    # not just template-linked income, so that invest target matches metricas card.
     savings_target_pct = float(profile.savings_target_pct) if profile else 20.0
     income_expected = sum(i['expected'] for i in income_items if not i.get('is_skipped'))
-    income_actual = sum(i['actual'] for i in income_items if not i.get('is_skipped'))
     _today = datetime.today()
     _is_current = month_str == f'{_today.year}-{_today.month:02d}'
-    income_ref = income_actual if (not _is_current and income_actual > 0) else income_expected
+    if not _is_current:
+        # Closed month: use total actual checking income (matches metricas entradas_atuais)
+        _checking_accounts = Account.objects.filter(profile=profile, account_type='checking')
+        _total_income = float(abs(
+            Transaction.objects.filter(
+                month_str=month_str, profile=profile,
+                account__in=_checking_accounts, amount__gt=0,
+            ).aggregate(total=Sum('amount'))['total'] or 0
+        ))
+        income_ref = _total_income if _total_income > 0 else income_expected
+    else:
+        income_ref = income_expected
     savings_target_amount = income_ref * savings_target_pct / 100 if income_ref > 0 else 0.0
 
     # Override investment items' expected to reflect dynamic target
@@ -1003,9 +1014,25 @@ def get_metricas(month_str, profile=None):
             if mapping.transaction_id:
                 fixo_linked_txn_ids.add(mapping.transaction_id)
 
-    variavel_qs = expense_txns.filter(category__category_type='Variavel')
-    if fixo_linked_txn_ids:
-        variavel_qs = variavel_qs.exclude(id__in=fixo_linked_txn_ids)
+    # Also collect invest-linked transaction IDs
+    invest_linked_txn_ids = set()
+    for mapping in invest_mappings_all:
+        if mapping.match_mode == 'category' and mapping.category:
+            inv_txn_ids = all_expense.filter(
+                category=mapping.category
+            ).values_list('id', flat=True)
+            invest_linked_txn_ids.update(inv_txn_ids)
+        else:
+            for t in mapping.transactions.all():
+                invest_linked_txn_ids.add(t.id)
+            if mapping.transaction_id:
+                invest_linked_txn_ids.add(mapping.transaction_id)
+
+    # Variable = all expenses minus fixo-linked, invest-linked, internal transfers
+    committed_ids = fixo_linked_txn_ids | invest_linked_txn_ids
+    variavel_qs = expense_txns
+    if committed_ids:
+        variavel_qs = variavel_qs.exclude(id__in=committed_ids)
     gastos_variaveis = abs(variavel_qs.aggregate(
         total=Sum('amount'))['total'] or Decimal('0.00'))
 
@@ -3050,31 +3077,102 @@ def get_projection(start_month_str, num_months=0, profile=None):
 
 def get_orcamento(month_str, profile=None):
     """
-    ORÇAMENTO — Variable spending budget tracking per category.
+    ORÇAMENTO — Dynamic variable spending budget.
 
-    For each variable category with a limit:
-    - Current month spending from transactions
-    - 6-month historical average
-    - Remaining budget and percentage used
-    - Status: ok / warning (>80%) / over (>100%)
-
-    Returns per-category budget data + totals.
+    Available budget = projected income − committed expenses (fixo + invest).
+    Distributed across categories proportionally based on 6-month spending profile.
+    Shows all categories with current or historical variable spending.
     """
-    variable_cats = Category.objects.filter(
-        is_active=True,
-        category_type='Variavel',
-        default_limit__gt=0,
-        profile=profile,
-    ).order_by('display_order', 'name')
+    from django.db.models import Count
 
-    cat_ids = [c.id for c in variable_cats]
+    # ── 1. Available budget from metricas ────────────────────────────
+    metricas = get_metricas(month_str, profile=profile)
+    entradas = metricas['entradas_projetadas']
+    fixo = metricas['fixo_expected_total']
+    invest = metricas['invest_expected_total']
+    total_available = max(0.0, entradas - fixo - invest)
 
-    # 6-month lookback for averages
-    lookback_months = []
-    for i in range(1, 7):
-        lookback_months.append(_month_str_add(month_str, -i))
+    # ── 2. Identify committed (fixo/invest/income) transaction IDs ───
+    all_months = [month_str] + [_month_str_add(month_str, -i) for i in range(1, 7)]
+    lookback_months = all_months[1:]
 
-    # Batch: BudgetConfig overrides for this month (1 query)
+    committed_txn_ids = set()
+    committed_cat_ids = set()
+    for mapping in RecurringMapping.objects.filter(
+        month_str__in=all_months, profile=profile,
+    ).exclude(status='skipped').select_related('template').prefetch_related(
+        'transactions', 'cross_month_transactions'
+    ):
+        ttype = mapping.template.template_type if mapping.template else (mapping.custom_type or '')
+        if ttype not in ('Fixo', 'Income', 'Investimento'):
+            continue
+        if mapping.match_mode == 'category' and mapping.category_id:
+            committed_cat_ids.add(mapping.category_id)
+        for t in mapping.transactions.all():
+            committed_txn_ids.add(t.id)
+        for t in mapping.cross_month_transactions.all():
+            committed_txn_ids.add(t.id)
+        if mapping.transaction_id:
+            committed_txn_ids.add(mapping.transaction_id)
+
+    # ── 3. Active categories (exclude system + committed-only) ───────
+    EXCLUDE_NAMES = {'Transferencias'}
+    all_cats = list(Category.objects.filter(
+        is_active=True, profile=profile,
+    ).exclude(name__in=EXCLUDE_NAMES).exclude(
+        id__in=committed_cat_ids,
+    ).order_by('name'))
+    cat_ids = [c.id for c in all_cats]
+
+    # ── 4. Variable expense query builder ────────────────────────────
+    def _var_qs(**extra):
+        qs = Transaction.objects.filter(
+            amount__lt=0, is_internal_transfer=False,
+            category_id__in=cat_ids, profile=profile, **extra,
+        )
+        if committed_txn_ids:
+            qs = qs.exclude(id__in=committed_txn_ids)
+        return qs
+
+    # ── 5. Current month spending ────────────────────────────────────
+    current_spending = dict(
+        _var_qs(month_str=month_str)
+        .values('category_id').annotate(total=Sum('amount'))
+        .values_list('category_id', 'total')
+    )
+    sub_spending = {}
+    for row in _var_qs(month_str=month_str).values(
+        'category_id', 'subcategory_id'
+    ).annotate(total=Sum('amount')):
+        sub_spending.setdefault(row['category_id'], {})[row['subcategory_id']] = row['total']
+
+    # ── 6. 6-month lookback spending profile ─────────────────────────
+    lookback_spending = dict(
+        _var_qs(month_str__in=lookback_months)
+        .values('category_id').annotate(total=Sum('amount'))
+        .values_list('category_id', 'total')
+    )
+    lookback_month_counts = dict(
+        _var_qs(month_str__in=lookback_months)
+        .values('category_id').annotate(mc=Count('month_str', distinct=True))
+        .values_list('category_id', 'mc')
+    )
+
+    all_subcategories = {}
+    for sub in Subcategory.objects.filter(category_id__in=cat_ids).order_by('name'):
+        all_subcategories.setdefault(sub.category_id, []).append(sub)
+
+    # ── 7. Compute spending profile (6-month avg per category) ───────
+    avg_by_cat = {}
+    total_avg = 0.0
+    for cat in all_cats:
+        raw = float(abs(lookback_spending.get(cat.id, Decimal('0.00'))))
+        mc = lookback_month_counts.get(cat.id, 0)
+        avg = raw / max(mc, 1)
+        avg_by_cat[cat.id] = avg
+        total_avg += avg
+
+    # ── 8. Manual overrides (BudgetConfig) ───────────────────────────
     budget_overrides = {
         bc.category_id: float(bc.limit_override)
         for bc in BudgetConfig.objects.filter(
@@ -3082,133 +3180,48 @@ def get_orcamento(month_str, profile=None):
         )
     }
 
-    # Batch: current month spending per category (1 query)
-    current_spending = dict(
-        Transaction.objects.filter(
-            month_str=month_str,
-            category_id__in=cat_ids,
-            amount__lt=0,
-            is_internal_transfer=False,
-            profile=profile,
-        ).values('category_id').annotate(
-            total=Sum('amount')
-        ).values_list('category_id', 'total')
-    )
-
-    # Batch: current month spending per (category, subcategory) for breakdown
-    sub_spending_qs = (
-        Transaction.objects.filter(
-            month_str=month_str,
-            category_id__in=cat_ids,
-            amount__lt=0,
-            is_internal_transfer=False,
-            profile=profile,
-        ).values('category_id', 'subcategory_id').annotate(
-            total=Sum('amount')
-        )
-    )
-    # Build dict: { category_id: { subcategory_id: total } }
-    sub_spending = {}
-    for row in sub_spending_qs:
-        cid = row['category_id']
-        sid = row['subcategory_id']  # None for uncategorized subcategory
-        if cid not in sub_spending:
-            sub_spending[cid] = {}
-        sub_spending[cid][sid] = row['total']
-
-    # Batch: 6-month lookback spending per category (1 query)
-    lookback_spending = dict(
-        Transaction.objects.filter(
-            month_str__in=lookback_months,
-            category_id__in=cat_ids,
-            amount__lt=0,
-            is_internal_transfer=False,
-            profile=profile,
-        ).values('category_id').annotate(
-            total=Sum('amount')
-        ).values_list('category_id', 'total')
-    )
-
-    # Batch: months with data per category in lookback (1 query)
-    from django.db.models import Count
-    lookback_month_counts = dict(
-        Transaction.objects.filter(
-            month_str__in=lookback_months,
-            category_id__in=cat_ids,
-            amount__lt=0,
-            is_internal_transfer=False,
-            profile=profile,
-        ).values('category_id').annotate(
-            month_count=Count('month_str', distinct=True)
-        ).values_list('category_id', 'month_count')
-    )
-
-    # Batch: all subcategories for these categories (1 query)
-    all_subcategories = {}
-    for sub in Subcategory.objects.filter(category_id__in=cat_ids).order_by('name'):
-        if sub.category_id not in all_subcategories:
-            all_subcategories[sub.category_id] = []
-        all_subcategories[sub.category_id].append(sub)
-
+    # ── 9. Build per-category budget ─────────────────────────────────
     categories = []
     total_limit = 0.0
     total_spent = 0.0
 
-    for cat in variable_cats:
-        limit = budget_overrides.get(cat.id, float(cat.default_limit))
+    for cat in all_cats:
+        has_current = cat.id in current_spending
+        has_history = avg_by_cat.get(cat.id, 0) > 0
+        if not has_current and not has_history:
+            continue
 
-        spent_agg = current_spending.get(cat.id, Decimal('0.00'))
-        spent = float(abs(spent_agg))
+        avg_6m = avg_by_cat.get(cat.id, 0.0)
 
-        avg_total = float(abs(lookback_spending.get(cat.id, Decimal('0.00'))))
-        months_with_data = lookback_month_counts.get(cat.id, 0)
-        avg_6m = avg_total / max(months_with_data, 1)
-
-        remaining = max(0, limit - spent)
-        pct = (spent / limit * 100) if limit > 0 else 0
-
-        if pct > 100:
-            status = 'over'
-        elif pct > 80:
-            status = 'warning'
+        # Limit: manual override > proportional allocation from available budget
+        if cat.id in budget_overrides:
+            limit = budget_overrides[cat.id]
+        elif total_avg > 0 and total_available > 0:
+            limit = total_available * (avg_6m / total_avg)
         else:
-            status = 'ok'
+            limit = 0.0
+
+        spent = float(abs(current_spending.get(cat.id, Decimal('0.00'))))
+        remaining = max(0, limit - spent)
+        pct = (spent / limit * 100) if limit > 0 else (100.0 if spent > 0 else 0.0)
+        status = 'over' if pct > 100 else ('warning' if pct > 80 else 'ok')
 
         total_limit += limit
         total_spent += spent
 
-        # Build subcategory breakdown
-        cat_subs = all_subcategories.get(cat.id, [])
+        # Subcategory breakdown (only subs with spending)
         cat_sub_spending = sub_spending.get(cat.id, {})
         subcategories_data = []
-
-        for sub in cat_subs:
-            sub_spent_agg = cat_sub_spending.get(sub.id, Decimal('0.00'))
-            sub_spent = float(abs(sub_spent_agg))
-            sub_limit = float(sub.default_limit)
-            sub_remaining = max(0, sub_limit - sub_spent) if sub_limit > 0 else 0
-            sub_pct = (sub_spent / sub_limit * 100) if sub_limit > 0 else 0
-
-            if sub_pct > 100:
-                sub_status = 'over'
-            elif sub_pct > 80:
-                sub_status = 'warning'
-            else:
-                sub_status = 'ok'
-
-            subcategories_data.append({
-                'id': str(sub.id),
-                'name': sub.name,
-                'limit': round(sub_limit, 2),
-                'spent': round(sub_spent, 2),
-                'remaining': round(sub_remaining, 2),
-                'pct': round(sub_pct, 1),
-                'status': sub_status,
-            })
-
-        # Uncategorized spending (transactions with this category but no subcategory)
-        uncategorized_spent_agg = cat_sub_spending.get(None, Decimal('0.00'))
-        uncategorized_spent = float(abs(uncategorized_spent_agg))
+        for sub in all_subcategories.get(cat.id, []):
+            sub_spent = float(abs(cat_sub_spending.get(sub.id, Decimal('0.00'))))
+            if sub_spent > 0:
+                subcategories_data.append({
+                    'id': str(sub.id),
+                    'name': sub.name,
+                    'spent': round(sub_spent, 2),
+                })
+        subcategories_data.sort(key=lambda s: -s['spent'])
+        uncategorized_spent = float(abs(cat_sub_spending.get(None, Decimal('0.00'))))
 
         categories.append({
             'id': str(cat.id),
@@ -3218,22 +3231,24 @@ def get_orcamento(month_str, profile=None):
             'remaining': round(remaining, 2),
             'pct': round(pct, 1),
             'avg_6m': round(avg_6m, 2),
+            'share_pct': round((avg_6m / total_avg * 100) if total_avg > 0 else 0, 1),
             'status': status,
             'subcategories': subcategories_data,
             'uncategorized_spent': round(uncategorized_spent, 2),
         })
 
+    categories.sort(key=lambda c: -c['limit'])
     total_pct = (total_spent / total_limit * 100) if total_limit > 0 else 0
 
     return {
         'month_str': month_str,
         'categories': categories,
+        'total_available': round(total_available, 2),
         'total_limit': round(total_limit, 2),
         'total_spent': round(total_spent, 2),
         'total_remaining': round(max(0, total_limit - total_spent), 2),
         'total_pct': round(total_pct, 1),
     }
-
 
 # ---------------------------------------------------------------------------
 # Smart Categorization — learning from past manually-categorized transactions

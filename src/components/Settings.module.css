@@ -520,86 +520,6 @@
 /* ============================================================ */
 /* SECTION 3: CATEGORIZATION RULES                              */
 /* ============================================================ */
-.ruleToolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  margin-bottom: var(--space-sm);
-}
-
-.ruleSearchInput {
-  flex: 1;
-  padding: 6px 10px;
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text);
-  font-size: 0.8rem;
-  font-family: var(--font-sans);
-}
-
-.ruleSearchInput:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
-.ruleSearchInput::placeholder {
-  color: var(--color-text-secondary);
-}
-
-.ruleList {
-  max-height: 400px;
-  overflow-y: auto;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg);
-}
-
-.ruleRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: 6px var(--space-md);
-  border-bottom: 1px solid rgba(226, 217, 208, 0.3);
-  font-size: 0.8rem;
-}
-
-.ruleRow:last-child {
-  border-bottom: none;
-}
-
-.ruleRow:hover {
-  background: var(--color-surface-hover);
-}
-
-.ruleKeyword {
-  flex: 1;
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--color-accent);
-  min-width: 80px;
-}
-
-.ruleArrow {
-  color: var(--color-text-secondary);
-  font-size: 0.7rem;
-  flex-shrink: 0;
-}
-
-.ruleCat {
-  flex: 1;
-  font-size: 0.78rem;
-  color: var(--color-text);
-  text-align: right;
-  min-width: 80px;
-}
-
-.ruleSubcat {
-  color: var(--color-text-secondary);
-  font-size: 0.72rem;
-}
-
 /* ============================================================ */
 /* SECTION 4: IMPORT                                            */
 /* ============================================================ */
@@ -1193,7 +1113,7 @@
   text-align: right;
 }
 
-/* Rename rules section (mirrors categorization rules) */
+/* Rename rules section */
 .renameRow {
   display: flex;
   align-items: center;
@@ -1353,7 +1273,6 @@
   }
   .tplRow,
   .catRow,
-  .ruleRow,
   .acctRow,
   .renameRow,
   .profileField,

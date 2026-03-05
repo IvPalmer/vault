@@ -81,7 +81,7 @@ function CheckingSection() {
     {
       accessorKey: 'description',
       header: 'DESCRIÇÃO',
-      minSize: 300,
+      minSize: 180,
       cell: ({ getValue, row }) => <DescriptionCell value={getValue()} row={row} onUpdated={invalidate} />,
     },
     {
@@ -161,7 +161,6 @@ function CheckingSection() {
         columns={checkingColumns}
         data={data.transactions}
         emptyMessage="Sem transações de conta corrente neste mês."
-        maxHeight={500}
         rowClassName={rowClassName}
       />
     </div>

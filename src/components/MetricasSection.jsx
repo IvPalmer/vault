@@ -29,7 +29,7 @@ const STORAGE_KEY = 'vault-metricas-order'
 const FALLBACK_ORDER = [
   'entradas_atuais', 'entradas_projetadas', 'a_entrar', 'a_pagar',
   'dias_fechamento', 'gastos_atuais', 'gastos_projetados', 'gastos_fixos',
-  'gastos_invest', 'gastos_variaveis', 'diario_max', 'fatura_master', 'fatura_visa',
+  'gastos_invest', 'gastos_variaveis', 'diario_max',
   'parcelas', 'saldo_projetado', 'saude', 'meta_poupanca',
 ]
 
@@ -51,7 +51,8 @@ const CARD_GROUPS = [
     key: 'cartoes',
     label: 'CARTOES',
     color: 'var(--color-orange)',
-    cards: ['fatura_master', 'fatura_visa', 'parcelas'],
+    cards: ['parcelas'],  // fatura cards injected dynamically from fatura_by_card
+    dynamic: true,
   },
   {
     key: 'resumo',
@@ -148,24 +149,7 @@ function buildCards(data) {
       color: 'var(--color-orange)',
       tooltip: 'Despesas na conta corrente categorizadas como "Variavel" (supermercado, restaurantes, etc). Nao inclui fixos nem cartao.',
     },
-    fatura_master: {
-      label: 'FATURA MASTER',
-      value: `R$ ${fmt(data.fatura_master)}`,
-      subtitle: faturaTotal > 0
-        ? `${Math.round((data.fatura_master / faturaTotal) * 100)}% da fatura total`
-        : 'fatura deste mes',
-      color: 'var(--color-red)',
-      tooltip: 'Fatura Mastercard que vence neste mes (compras do mes anterior + parcelas). Sera debitado da conta corrente.',
-    },
-    fatura_visa: {
-      label: 'FATURA VISA',
-      value: `R$ ${fmt(data.fatura_visa)}`,
-      subtitle: faturaTotal > 0
-        ? `${Math.round((data.fatura_visa / faturaTotal) * 100)}% da fatura total`
-        : 'fatura deste mes',
-      color: 'var(--color-red)',
-      tooltip: 'Fatura Visa que vence neste mes (compras do mes anterior + parcelas).',
-    },
+    // Dynamic per-card fatura entries are injected below after cards object is built
     parcelas: {
       label: 'PARCELAS',
       value: `R$ ${fmt(data.parcelas)}`,
@@ -279,6 +263,22 @@ function buildCards(data) {
         tooltip: tooltipParts.join('. '),
       }
     })(),
+  }
+
+  // Add dynamic per-card fatura cards
+  if (data.fatura_by_card) {
+    for (const [cardName, amount] of Object.entries(data.fatura_by_card)) {
+      const key = `fatura_${cardName.toLowerCase().replace(/\s+/g, '_')}`
+      cards[key] = {
+        label: `FATURA ${cardName.toUpperCase()}`,
+        value: `R$ ${fmt(amount)}`,
+        subtitle: faturaTotal > 0
+          ? `${Math.round((amount / faturaTotal) * 100)}% da fatura total`
+          : 'fatura deste mes',
+        color: 'var(--color-red)',
+        tooltip: `Fatura ${cardName} que vence neste mes (compras do mes anterior + parcelas).`,
+      }
+    }
   }
 
   // Add custom metric cards from API response
@@ -562,18 +562,34 @@ function MetricasSection() {
   // Build visible card set for quick lookup
   const visibleSet = new Set(cardOrder)
 
+  // Collect dynamic fatura card keys from the cards object
+  const faturaCardKeys = Object.keys(cards).filter((k) => k.startsWith('fatura_'))
+
   // Group cards: each group shows its visible cards in cardOrder sequence
   const groupedCards = CARD_GROUPS.map((group) => {
-    const groupCardIds = group.cards.filter(
-      (id) => visibleSet.has(id) && cards[id] && !hiddenCards.includes(id)
+    // For the cartoes group, include dynamic fatura cards
+    const groupKeys = group.dynamic
+      ? [...faturaCardKeys, ...group.cards]
+      : group.cards
+    const groupCardIds = groupKeys.filter(
+      (id) => cards[id] && !hiddenCards.includes(id)
     )
-    // Respect user's drag order within the group
-    groupCardIds.sort((a, b) => cardOrder.indexOf(a) - cardOrder.indexOf(b))
+    // Respect user's drag order within the group, new cards at end
+    groupCardIds.sort((a, b) => {
+      const ai = cardOrder.indexOf(a)
+      const bi = cardOrder.indexOf(b)
+      if (ai === -1 && bi === -1) return 0
+      if (ai === -1) return 1
+      if (bi === -1) return 1
+      return ai - bi
+    })
     return { ...group, visibleCards: groupCardIds }
   })
 
   // Custom cards that don't belong to any group
-  const groupedCardSet = new Set(CARD_GROUPS.flatMap((g) => g.cards))
+  const allGroupCards = new Set(CARD_GROUPS.flatMap((g) => g.cards))
+  faturaCardKeys.forEach((k) => allGroupCards.add(k))
+  const groupedCardSet = allGroupCards
   const customCardIds = cardOrder.filter(
     (id) => !groupedCardSet.has(id) && cards[id] && !hiddenCards.includes(id)
   )

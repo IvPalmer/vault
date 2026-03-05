@@ -5,12 +5,12 @@ import { useProfile } from '../context/ProfileContext'
 import styles from './SetupWizard.module.css'
 
 // ── Constants ──────────────────────────────────────────────────
-const TOTAL_STEPS = 10
+const TOTAL_STEPS = 9
 
 const FALLBACK_ORDER = [
   'entradas_atuais', 'entradas_projetadas', 'a_entrar', 'a_pagar',
   'dias_fechamento', 'gastos_atuais', 'gastos_projetados', 'gastos_fixos',
-  'gastos_variaveis', 'diario_max', 'fatura_master', 'fatura_visa',
+  'gastos_variaveis', 'diario_max',
   'parcelas', 'saldo_projetado', 'saude', 'meta_poupanca',
 ]
 
@@ -30,8 +30,6 @@ const CARD_LABELS = {
   diario_max: 'Gasto Diario Recomendado',
   saude: 'Saude do Mes',
   meta_poupanca: 'Meta Poupanca',
-  fatura_master: 'Fatura Mastercard',
-  fatura_visa: 'Fatura Visa',
 }
 
 const ACCT_TYPE_LABELS = {
@@ -84,7 +82,7 @@ const initialState = {
   investmentTarget: 0,
   investmentAllocation: [],
   renameRules: [],
-  categorizationRules: [],
+
   cardOrder: [...FALLBACK_ORDER],
   hiddenCards: [],
 }
@@ -217,18 +215,6 @@ function reducer(state, action) {
       )
       return { ...state, renameRules: rules }
     }
-    case 'SET_CATEGORIZATION_RULES':
-      return { ...state, categorizationRules: action.payload }
-    case 'ADD_CATEGORIZATION_RULE':
-      return { ...state, categorizationRules: [...state.categorizationRules, action.payload] }
-    case 'REMOVE_CATEGORIZATION_RULE':
-      return { ...state, categorizationRules: state.categorizationRules.filter((_, i) => i !== action.payload) }
-    case 'UPDATE_CATEGORIZATION_RULE': {
-      const rules = state.categorizationRules.map((r, i) =>
-        i === action.payload.index ? { ...r, ...action.payload.data } : r
-      )
-      return { ...state, categorizationRules: rules }
-    }
     case 'SET_CARD_ORDER':
       return { ...state, cardOrder: action.payload }
     case 'TOGGLE_HIDDEN_CARD': {
@@ -271,7 +257,7 @@ function reducer(state, action) {
           ? td.investment_allocation
           : Object.entries(td.investment_allocation || {}).map(([name, percentage]) => ({ name, percentage })),
         renameRules: td.rename_rules || [],
-        categorizationRules: td.categorization_rules || [],
+
         cardOrder: td.metricas_config?.card_order || [...FALLBACK_ORDER],
         hiddenCards: td.metricas_config?.hidden_cards || [],
       }
@@ -301,7 +287,7 @@ function reducer(state, action) {
           ? cfg.investment_allocation
           : Object.entries(cfg.investment_allocation || {}).map(([name, percentage]) => ({ name, percentage })),
         renameRules: cfg.rename_rules || [],
-        categorizationRules: cfg.categorization_rules || [],
+
         cardOrder: cfg.metricas_config?.card_order || [...FALLBACK_ORDER],
         hiddenCards: cfg.metricas_config?.hidden_cards || [],
       }
@@ -363,7 +349,7 @@ function buildPayload(state) {
     recurring_templates: recurringTemplates,
     categories,
     rename_rules: state.renameRules.filter(r => r.keyword && r.display_name),
-    categorization_rules: state.categorizationRules.filter(r => r.keyword && r.category_name),
+
     metricas_config: {
       card_order: state.cardOrder,
       hidden_cards: state.hiddenCards,
@@ -698,17 +684,9 @@ export default function SetupWizard({ onClose, editMode = false }) {
             />
           )}
           {state.step === 7 && <Step7Rename state={state} dispatch={dispatch} />}
-          {state.step === 8 && (
-            <Step8Categorize
-              state={state}
-              dispatch={dispatch}
-              categories={state.categories}
-              budgetLimits={state.budgetLimits}
-            />
-          )}
-          {state.step === 9 && <Step9Cards state={state} dispatch={dispatch} />}
-          {state.step === 10 && (
-            <Step10Review
+          {state.step === 8 && <Step8Cards state={state} dispatch={dispatch} />}
+          {state.step === 9 && (
+            <Step9Review
               state={state}
               onSubmit={handleSubmit}
               submitting={submitMutation.isPending}
@@ -1576,95 +1554,11 @@ function Step7Rename({ state, dispatch }) {
   )
 }
 
-// ── Step 8: Categorization Rules (NEW) ─────────────────────────
-function Step8Categorize({ state, dispatch, categories, budgetLimits }) {
-  // Build category name list for dropdown
-  const categoryNames = useMemo(() => {
-    const names = new Set()
-    categories.forEach(c => names.add(typeof c === 'string' ? c : c.name))
-    budgetLimits.forEach(b => names.add(b.category || b.name))
-    return [...names].filter(Boolean).sort()
-  }, [categories, budgetLimits])
-
+// ── Step 8: Dashboard Cards ────────────────────────────────────
+function Step8Cards({ state, dispatch }) {
   return (
     <>
       <div className={styles.stepLabel}>Passo 8 de {TOTAL_STEPS}</div>
-      <h1 className={styles.stepTitle}>Regras de Categorizacao</h1>
-      <p className={styles.stepDesc}>
-        Defina regras para categorizar transacoes automaticamente.
-        Ex: "UBER" vai para categoria "Transporte".
-      </p>
-
-      {state.categorizationRules.length > 0 && (
-        <div className={styles.dataTable}>
-          <div className={styles.dataTableHead}>
-            <span className={styles.dataColFlex}>Palavra-chave</span>
-            <span className={styles.dataColFlex}>Categoria</span>
-            <span style={{ width: 32 }} />
-          </div>
-          {state.categorizationRules.map((rule, i) => (
-            <div key={i} className={styles.dataRow}>
-              <span className={styles.dataColFlex}>
-                <input
-                  className={styles.textInput}
-                  style={{ padding: '6px 10px', fontSize: '0.82rem' }}
-                  type="text"
-                  placeholder="Palavra-chave"
-                  value={rule.keyword || ''}
-                  onChange={e =>
-                    dispatch({ type: 'UPDATE_CATEGORIZATION_RULE', payload: { index: i, data: { keyword: e.target.value } } })
-                  }
-                />
-              </span>
-              <span className={styles.dataColFlex}>
-                <select
-                  className={styles.profileSelect}
-                  style={{ marginBottom: 0 }}
-                  value={rule.category_name || ''}
-                  onChange={e =>
-                    dispatch({ type: 'UPDATE_CATEGORIZATION_RULE', payload: { index: i, data: { category_name: e.target.value } } })
-                  }
-                >
-                  <option value="">Selecione...</option>
-                  {categoryNames.map(name => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
-              </span>
-              <button
-                className={styles.skipLink}
-                onClick={() => dispatch({ type: 'REMOVE_CATEGORIZATION_RULE', payload: i })}
-                style={{ textDecoration: 'none', color: 'var(--color-red)', width: 32, textAlign: 'center' }}
-              >
-                &#10005;
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <button
-        className={styles.allocAddBtn}
-        style={{ marginTop: 16 }}
-        onClick={() => dispatch({ type: 'ADD_CATEGORIZATION_RULE', payload: { keyword: '', category_name: '', priority: 0 } })}
-      >
-        + Adicionar Regra
-      </button>
-
-      {state.categorizationRules.length === 0 && (
-        <p className={styles.emptyState}>
-          Nenhuma regra de categorizacao configurada. Voce pode adicionar agora ou depois nas configuracoes.
-        </p>
-      )}
-    </>
-  )
-}
-
-// ── Step 9: Dashboard Cards ────────────────────────────────────
-function Step9Cards({ state, dispatch }) {
-  return (
-    <>
-      <div className={styles.stepLabel}>Passo 9 de {TOTAL_STEPS}</div>
       <h1 className={styles.stepTitle}>Cartoes do Dashboard</h1>
       <p className={styles.stepDesc}>
         Escolha quais metricas aparecem no dashboard e a ordem de exibicao.
@@ -1709,7 +1603,7 @@ function Step9Cards({ state, dispatch }) {
 }
 
 // ── Step 10: Review & Confirm ──────────────────────────────────
-function Step10Review({
+function Step9Review({
   state, onSubmit, submitting, error,
   onSaveTemplate, showSaveTemplate, saveTemplateName,
   onSaveTemplateNameChange, onConfirmSaveTemplate, savingTemplate,
@@ -1718,11 +1612,10 @@ function Step10Review({
   const activeRecurring = state.recurringItems.filter(r => r.included).length
   const activeCards = state.cardOrder.filter(c => !state.hiddenCards.includes(c)).length
   const validRenames = state.renameRules.filter(r => r.keyword && r.display_name).length
-  const validCatRules = state.categorizationRules.filter(r => r.keyword && r.category_name).length
 
   return (
     <>
-      <div className={styles.stepLabel}>Passo 10 de {TOTAL_STEPS}</div>
+      <div className={styles.stepLabel}>Passo 9 de {TOTAL_STEPS}</div>
       <h1 className={styles.stepTitle}>Revisao</h1>
       <p className={styles.stepDesc}>
         {state.wizardMode === 'edit'
@@ -1802,10 +1695,6 @@ function Step10Review({
           <div className={styles.reviewRow}>
             <span className={styles.reviewLabel}>Regras de renomeacao</span>
             <span className={styles.reviewValueAccent}>{validRenames}</span>
-          </div>
-          <div className={styles.reviewRow}>
-            <span className={styles.reviewLabel}>Regras de categorizacao</span>
-            <span className={styles.reviewValueAccent}>{validCatRules}</span>
           </div>
           <div className={styles.reviewRow}>
             <span className={styles.reviewLabel}>Meta de reserva</span>

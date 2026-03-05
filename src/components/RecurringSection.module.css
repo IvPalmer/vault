@@ -8,6 +8,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
 }
 
 .title {
@@ -351,7 +353,8 @@
 .totalsRow {
   display: flex;
   align-items: center;
-  gap: var(--space-md);
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
   font-size: 0.75rem;
   padding: 3px 0;
 }
@@ -366,12 +369,10 @@
 
 .totalsExpected {
   color: var(--color-text-secondary);
-  min-width: 150px;
 }
 
 .totalsActual {
   color: var(--color-text-secondary);
-  min-width: 140px;
 }
 
 .totalsStatus {
@@ -398,7 +399,8 @@
 .totalsNet {
   display: flex;
   align-items: center;
-  gap: var(--space-md);
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
   padding: 2px 0;
 }
 

@@ -28,7 +28,7 @@ function VaultTable({
   data,
   emptyMessage = 'Nenhum dado disponível.',
   searchable = true,
-  maxHeight = 500,
+  maxHeight,
   compact = false,
   rowClassName,
   draggable = false,
@@ -116,7 +116,7 @@ function VaultTable({
         </div>
       )}
 
-      <div className={styles.tableContainer} style={{ maxHeight }}>
+      <div className={styles.tableContainer} style={maxHeight ? { maxHeight } : undefined}>
         <table className={`${styles.table} ${compact ? styles.compact : ''}`}>
           <thead className={styles.thead}>
             {table.getHeaderGroups().map((headerGroup) => (

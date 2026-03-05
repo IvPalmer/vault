@@ -139,7 +139,7 @@ const TABS = [
 ]
 
 /** Summary totals bar below the table */
-function RecurringTotals({ data, activeTab }) {
+function RecurringTotals({ data, activeTab, metricasData }) {
   const totals = useMemo(() => {
     if (!data) return null
     const computeGroup = (items) => {
@@ -170,9 +170,10 @@ function RecurringTotals({ data, activeTab }) {
 
   if (totals.isAll) {
     const { income, fixo, invest } = totals
-    // Use dynamic savings target (20% of income) when it exceeds template total
+    // Use invest_expected_total from metricas (authoritative, includes clamping)
+    const metricasInvest = metricasData?.invest_expected_total
     const dynamicTarget = data?.savings_target_amount ?? 0
-    const investExpected = Math.max(invest.expected, dynamicTarget)
+    const investExpected = metricasInvest != null ? metricasInvest : Math.max(invest.expected, dynamicTarget)
     return (
       <div className={styles.totalsBar}>
         <TotalRow label="Entradas" expected={income.expected} actual={income.actual} paid={income.paid} pending={income.pending} color="var(--color-green)" isIncome />
@@ -197,8 +198,9 @@ function RecurringTotals({ data, activeTab }) {
   const isIncome = tab === 'income'
   const label = tab === 'income' ? 'Entradas' : tab === 'fixo' ? 'Fixos' : 'Investimentos'
   const color = tab === 'income' ? 'var(--color-green)' : tab === 'fixo' ? 'var(--color-red)' : '#6366f1'
-  // For investimento tab, use dynamic target as expected
-  const expected = tab === 'investimento' ? Math.max(single.expected, data?.savings_target_amount ?? 0) : single.expected
+  // For investimento tab, use metricas invest_expected_total as expected
+  const metricasInvest2 = metricasData?.invest_expected_total
+  const expected = tab === 'investimento' ? (metricasInvest2 != null ? metricasInvest2 : Math.max(single.expected, data?.savings_target_amount ?? 0)) : single.expected
 
   return (
     <div className={styles.totalsBar}>
@@ -446,6 +448,13 @@ function RecurringSection() {
     enabled: !!selectedMonth,
   })
 
+  const { data: metricasData } = useQuery({
+    queryKey: ['analytics-metricas', selectedMonth],
+    queryFn: () => api.get(`/analytics/metricas/?month_str=${selectedMonth}`),
+    enabled: !!selectedMonth,
+    staleTime: 30_000,
+  })
+
   const [reapplying, setReapplying] = useState(false)
   const [autoLinking, setAutoLinking] = useState(false)
   const [autoLinkResult, setAutoLinkResult] = useState(null)
@@ -606,7 +615,7 @@ function RecurringSection() {
           draggable
           onReorder={handleReorder}
         />
-        <RecurringTotals data={recData} activeTab={activeTab} />
+        <RecurringTotals data={recData} activeTab={activeTab} metricasData={metricasData} />
       </div>
     </div>
   )

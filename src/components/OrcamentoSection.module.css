@@ -36,8 +36,9 @@
 /* Grid of budget cards */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: var(--space-sm);
+  align-content: start;
 }
 
 /* Individual card */

@@ -298,14 +298,6 @@ function Settings({ onOpenWizard }) {
   // Budget subcategory expansion
   const [expandedBudgetCat, setExpandedBudgetCat] = useState(null)
 
-  // Rules management
-  const [showNewRuleForm, setShowNewRuleForm] = useState(false)
-  const [newRuleKeyword, setNewRuleKeyword] = useState('')
-  const [newRuleCatId, setNewRuleCatId] = useState('')
-  const [newRuleSubId, setNewRuleSubId] = useState('')
-  const [newRuleSaving, setNewRuleSaving] = useState(false)
-  const [ruleSearch, setRuleSearch] = useState('')
-
   // Profile settings
   const { profileId, currentProfile } = useProfile()
   const [allocName, setAllocName] = useState('')
@@ -812,65 +804,6 @@ function Settings({ onOpenWizard }) {
       console.error('Failed to update subcategory:', err)
     }
   }
-
-  // Categorization rules query
-  const { data: rulesData, refetch: refetchRules } = useQuery({
-    queryKey: ['categorization-rules'],
-    queryFn: () => api.get('/rules/'),
-  })
-
-  const filteredRules = useMemo(() => {
-    const list = Array.isArray(rulesData) ? rulesData : (rulesData?.results || [])
-    if (!ruleSearch.trim()) return list.filter(r => r.is_active)
-    const q = ruleSearch.toLowerCase().trim()
-    return list.filter(r =>
-      r.is_active && (
-        r.keyword.toLowerCase().includes(q) ||
-        (r.category_name || '').toLowerCase().includes(q)
-      )
-    )
-  }, [rulesData, ruleSearch])
-
-  const handleCreateRule = async (e) => {
-    e.preventDefault()
-    if (!newRuleKeyword.trim() || !newRuleCatId) return
-    setNewRuleSaving(true)
-    try {
-      const payload = {
-        keyword: newRuleKeyword.trim(),
-        category: newRuleCatId,
-        is_active: true,
-      }
-      if (newRuleSubId) payload.subcategory = newRuleSubId
-      await api.post('/rules/', payload)
-      refetchRules()
-      setShowNewRuleForm(false)
-      setNewRuleKeyword('')
-      setNewRuleCatId('')
-      setNewRuleSubId('')
-    } catch (err) {
-      console.error('Failed to create rule:', err)
-    } finally {
-      setNewRuleSaving(false)
-    }
-  }
-
-  const handleDeleteRule = async (ruleId, keyword) => {
-    if (!confirm(`Desativar regra "${keyword}"?`)) return
-    try {
-      await api.patch(`/rules/${ruleId}/`, { is_active: false })
-      refetchRules()
-    } catch (err) {
-      console.error('Failed to deactivate rule:', err)
-    }
-  }
-
-  // Get subcategories for the selected new-rule category
-  const newRuleSubOptions = useMemo(() => {
-    if (!newRuleCatId || !allCategories.length) return []
-    const cat = allCategories.find(c => c.id === newRuleCatId)
-    return cat?.subcategories || []
-  }, [newRuleCatId, allCategories])
 
   const fmtSize = (bytes) => {
     if (bytes < 1024) return `${bytes} B`
@@ -1607,116 +1540,7 @@ function Settings({ onOpenWizard }) {
       </div>
 
       {/* ============================================================ */}
-      {/* SECTION 6: CATEGORIZATION RULES                              */}
-      {/* ============================================================ */}
-      <div className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>⚙️</div>
-          <div>
-            <h2 className={styles.sectionTitle}>Regras de Categorização</h2>
-            <p className={styles.sectionDesc}>
-              Regras automáticas por palavra-chave. Quando a descrição contém a palavra, a categoria é aplicada.
-            </p>
-          </div>
-          <button
-            className={styles.sectionAction}
-            onClick={() => setShowNewRuleForm(!showNewRuleForm)}
-          >
-            {showNewRuleForm ? 'Cancelar' : '+ Nova'}
-          </button>
-        </div>
-
-        {/* New rule form */}
-        {showNewRuleForm && (
-          <form className={styles.inlineForm} onSubmit={handleCreateRule}>
-            <input
-              className={styles.formInput}
-              type="text"
-              placeholder="Palavra-chave (ex: UBER, IFOOD)"
-              value={newRuleKeyword}
-              onChange={(e) => setNewRuleKeyword(e.target.value)}
-              autoFocus
-            />
-            <select
-              className={styles.formSelect}
-              value={newRuleCatId}
-              onChange={(e) => {
-                setNewRuleCatId(e.target.value)
-                setNewRuleSubId('')
-              }}
-            >
-              <option value="">Categoria...</option>
-              {allCategories.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-            {newRuleSubOptions.length > 0 && (
-              <select
-                className={styles.formSelect}
-                value={newRuleSubId}
-                onChange={(e) => setNewRuleSubId(e.target.value)}
-              >
-                <option value="">Subcategoria...</option>
-                {newRuleSubOptions.map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            )}
-            <button
-              className={styles.formSaveBtn}
-              type="submit"
-              disabled={newRuleSaving || !newRuleKeyword.trim() || !newRuleCatId}
-            >
-              {newRuleSaving ? '...' : 'Criar'}
-            </button>
-          </form>
-        )}
-
-        <div className={styles.sectionBody}>
-          {/* Search + count */}
-          <div className={styles.ruleToolbar}>
-            <input
-              className={styles.ruleSearchInput}
-              type="text"
-              placeholder="Buscar regras..."
-              value={ruleSearch}
-              onChange={(e) => setRuleSearch(e.target.value)}
-            />
-            <span className={styles.sectionCount}>
-              {filteredRules.length} ativas
-            </span>
-          </div>
-
-          {/* Rules list */}
-          <div className={styles.ruleList}>
-            {filteredRules.map((rule) => (
-              <div key={rule.id} className={styles.ruleRow}>
-                <span className={styles.ruleKeyword}>{rule.keyword}</span>
-                <span className={styles.ruleArrow}>&rarr;</span>
-                <span className={styles.ruleCat}>
-                  {rule.category_name || '?'}
-                  {rule.subcategory_name && <span className={styles.ruleSubcat}> &rsaquo; {rule.subcategory_name}</span>}
-                </span>
-                <button
-                  className={styles.deleteBtn}
-                  onClick={() => handleDeleteRule(rule.id, rule.keyword)}
-                  title="Desativar regra"
-                >
-                  {'\u00d7'}
-                </button>
-              </div>
-            ))}
-            {filteredRules.length === 0 && (
-              <div className={styles.emptyState}>
-                {ruleSearch ? 'Nenhuma regra encontrada' : 'Nenhuma regra cadastrada'}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ============================================================ */}
-      {/* SECTION 7: RENAME RULES (REGRAS DE RENOMEAÇÃO)               */}
+      {/* SECTION 6: RENAME RULES (REGRAS DE RENOMEAÇÃO)               */}
       {/* ============================================================ */}
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
@@ -1820,7 +1644,7 @@ function Settings({ onOpenWizard }) {
       </div>
 
       {/* ============================================================ */}
-      {/* SECTION 8: IMPORT                                            */}
+      {/* SECTION 7: IMPORT                                            */}
       {/* ============================================================ */}
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
@@ -1983,7 +1807,7 @@ function Settings({ onOpenWizard }) {
       </div>
 
       {/* ============================================================ */}
-      {/* SECTION 9: SALARY PROJECTION                                 */}
+      {/* SECTION 8: SALARY PROJECTION                                 */}
       {/* ============================================================ */}
       <SalarySection
         config={salaryConfig}
@@ -1998,7 +1822,7 @@ function Settings({ onOpenWizard }) {
       />
 
       {/* ============================================================ */}
-      {/* SECTION 10: STATUS                                           */}
+      {/* SECTION 9: STATUS                                            */}
       {/* ============================================================ */}
       {status && (
         <div className={styles.section}>
