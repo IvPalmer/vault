@@ -12,7 +12,7 @@ from dateutil.relativedelta import relativedelta
 from .models import (
     Transaction, Category, Subcategory, Account, BalanceOverride, BalanceAnchor,
     RecurringMapping, RecurringTemplate, BudgetConfig, CategorizationRule,
-    MetricasOrderConfig, CustomMetric,
+    MetricasOrderConfig, CustomMetric, SalaryConfig,
 )
 
 
@@ -1805,33 +1805,25 @@ def get_installment_details(month_str, profile=None):
     Returns: dict with 'source' ('real' or 'projected'), deduped installment
     items, count, and total.
     """
-    # Check if this month has real installment data
-    # Filter by configured CC display mode (invoice_month or month_str)
-    cc_field = _cc_month_field(profile)
-    if cc_field == 'month_str':
+    # Check if this month has real installment data.
+    # Always use invoice_month — installments belong to the bill they appear
+    # on, regardless of cc_display_mode (matches _compute_installment_schedule).
+    real_installments = Transaction.objects.filter(
+        invoice_month=month_str,
+        is_installment=True,
+        amount__lt=0,
+        profile=profile,
+    ).select_related('account', 'category', 'subcategory')
+
+    if not real_installments.exists():
+        # Fall back to month_str for legacy data without invoice_month
         real_installments = Transaction.objects.filter(
             month_str=month_str,
+            invoice_month='',
             is_installment=True,
             amount__lt=0,
             profile=profile,
         ).select_related('account', 'category', 'subcategory')
-    else:
-        # Invoice mode: prefer invoice_month; fall back to month_str for legacy data
-        real_installments = Transaction.objects.filter(
-            invoice_month=month_str,
-            is_installment=True,
-            amount__lt=0,
-            profile=profile,
-        ).select_related('account', 'category', 'subcategory')
-
-        if not real_installments.exists():
-            real_installments = Transaction.objects.filter(
-                month_str=month_str,
-                invoice_month='',
-                is_installment=True,
-                amount__lt=0,
-                profile=profile,
-            ).select_related('account', 'category', 'subcategory')
 
     if real_installments.exists():
         # Group by purchase identity, keep only the lowest position per group
@@ -1922,47 +1914,32 @@ def get_installment_details(month_str, profile=None):
     items = []
     seen = set()  # (base_desc, account, amount, total_inst) — one entry per purchase
 
-    # Batch fetch all lookback months' installment transactions
+    # Batch fetch all lookback months' installment transactions.
+    # Always use invoice_month (matches _compute_installment_schedule).
     lookback_months_list = [_month_str_add(month_str, -i) for i in range(1, 13)]
-    _lb_cc_field = _cc_month_field(profile)
-    if _lb_cc_field == 'month_str':
-        # Transaction mode: single query by month_str
-        _lb_txns = list(Transaction.objects.filter(
-            month_str__in=lookback_months_list,
-            is_installment=True,
-            amount__lt=0,
-            profile=profile,
-        ).select_related('account', 'category', 'subcategory'))
-        _lb_by_month = {}
-        for txn in _lb_txns:
-            _lb_by_month.setdefault(txn.month_str, []).append(txn)
-        _lb_by_invoice = _lb_by_month
-        _lb_by_fallback = {}
-    else:
-        # Invoice mode: prefer invoice_month with month_str fallback
-        _lb_invoice_txns = list(Transaction.objects.filter(
-            invoice_month__in=lookback_months_list,
-            is_installment=True,
-            amount__lt=0,
-            profile=profile,
-        ).select_related('account', 'category', 'subcategory'))
-        _lb_by_invoice = {}
-        for txn in _lb_invoice_txns:
-            _lb_by_invoice.setdefault(txn.invoice_month, []).append(txn)
+    _lb_invoice_txns = list(Transaction.objects.filter(
+        invoice_month__in=lookback_months_list,
+        is_installment=True,
+        amount__lt=0,
+        profile=profile,
+    ).select_related('account', 'category', 'subcategory'))
+    _lb_by_invoice = {}
+    for txn in _lb_invoice_txns:
+        _lb_by_invoice.setdefault(txn.invoice_month, []).append(txn)
 
-        _lb_months_with_invoice = set(_lb_by_invoice.keys())
-        _lb_months_needing_fallback = set(lookback_months_list) - _lb_months_with_invoice
-        _lb_by_fallback = {}
-        if _lb_months_needing_fallback:
-            _lb_fallback_txns = list(Transaction.objects.filter(
-                month_str__in=_lb_months_needing_fallback,
-                invoice_month='',
-                is_installment=True,
-                amount__lt=0,
-                profile=profile,
-            ).select_related('account', 'category', 'subcategory'))
-            for txn in _lb_fallback_txns:
-                _lb_by_fallback.setdefault(txn.month_str, []).append(txn)
+    _lb_months_with_invoice = set(_lb_by_invoice.keys())
+    _lb_months_needing_fallback = set(lookback_months_list) - _lb_months_with_invoice
+    _lb_by_fallback = {}
+    if _lb_months_needing_fallback:
+        _lb_fallback_txns = list(Transaction.objects.filter(
+            month_str__in=_lb_months_needing_fallback,
+            invoice_month='',
+            is_installment=True,
+            amount__lt=0,
+            profile=profile,
+        ).select_related('account', 'category', 'subcategory'))
+        for txn in _lb_fallback_txns:
+            _lb_by_fallback.setdefault(txn.month_str, []).append(txn)
 
     for lookback in range(1, 13):
         source_month = lookback_months_list[lookback - 1]
@@ -4845,3 +4822,187 @@ def analyze_statements_for_setup(profile):
         'suggested_investment_target': suggested_investment,
         'months_analyzed': num_months,
     }
+
+
+# ---------------------------------------------------------------------------
+# Salary Projection
+# ---------------------------------------------------------------------------
+
+def _weekdays_in_month(year, month):
+    """Count weekdays (Mon-Fri) in a given month."""
+    import calendar
+    cal = calendar.Calendar()
+    return sum(1 for d, wd in cal.itermonthdays2(year, month) if d != 0 and wd < 5)
+
+
+def _get_usd_brl_rate():
+    """Fetch live USD/BRL mid-market rate. Falls back to 5.85 on error."""
+    import urllib.request
+    import json as _json
+    try:
+        url = 'https://open.er-api.com/v6/latest/USD'
+        req = urllib.request.Request(url, headers={'User-Agent': 'Vault/1.0'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = _json.loads(resp.read())
+            return float(data['rates']['BRL'])
+    except Exception:
+        return 5.85
+
+
+def compute_salary_projection(profile, num_months=12, start_month_str=None):
+    """
+    Compute expected salary per month based on SalaryConfig.
+
+    Pipeline per payment (2 per month):
+      gross_half = rate × hours × weekdays / 2
+      → minus advance recoupment (12.5% per pay, if in deduction window)
+      → minus Wise fee (1.16% of net USD)
+      → convert to BRL at live rate
+      → minus tax hold (8% of BRL, kept in enterprise)
+      = net BRL to personal account
+
+    Returns dict with rate info, per-month breakdown, and summary.
+    """
+    try:
+        cfg = SalaryConfig.objects.get(profile=profile, is_active=True)
+    except SalaryConfig.DoesNotExist:
+        return {'error': 'No active SalaryConfig for this profile'}
+
+    if start_month_str is None:
+        start_month_str = datetime.now().strftime('%Y-%m')
+
+    rate = float(cfg.hourly_rate_usd)
+    hours = float(cfg.hours_per_day)
+    wise_pct = float(cfg.wise_fee_pct)
+    tax_pct = float(cfg.tax_hold_pct)
+    recoup_pct = float(cfg.advance_recoup_pct)
+    adv_start = cfg.advance_start_date  # e.g. '2026-02'
+    adv_cycles = cfg.advance_num_cycles
+
+    usd_brl = _get_usd_brl_rate()
+
+    # Build deduction schedule: which (work_month, pay_num) get advance deducted
+    # Advance deductions apply to pay dates, which are for the PREVIOUS month's work.
+    # Pay date ~1st of month M = work month M-1, payment 1
+    # Pay date ~15th of month M = work month M-1, payment 2
+    # So advance_start_date '2026-02' with first deduction on Feb 15 means:
+    #   work month Jan (pay_num=2), Feb (pay_num=1), Feb (pay_num=2), Mar (pay_num=1)
+    deduction_slots = []
+    if adv_start and adv_cycles > 0:
+        # Parse advance start as the pay month (e.g. 2026-02 = payments happen in Feb)
+        pay_y, pay_m = int(adv_start[:4]), int(adv_start[5:7])
+        # First deduction is on the 15th of the pay month = work_month - 1, pay 2
+        # Actually: the 4 cycles from "Feb 15 through Mar 30" are pay dates.
+        # Feb 15 pay → work month Jan, pay 2
+        # Mar 1 pay → work month Feb, pay 1
+        # Mar 15 pay → work month Feb, pay 2
+        # Mar 30/Apr 1 pay → work month Mar, pay 1
+        # So starting from pay_num=2 of work_month = pay_month - 1
+        from dateutil.relativedelta import relativedelta as rd
+        work_dt = datetime(pay_y, pay_m, 1) - rd(months=1)  # Jan for Feb start
+        pay_num = 2  # starts on the 15th
+        for _ in range(adv_cycles):
+            deduction_slots.append((work_dt.strftime('%Y-%m'), pay_num))
+            if pay_num == 2:
+                # next is pay 1 of next work month
+                work_dt += rd(months=1)
+                pay_num = 1
+            else:
+                pay_num = 2
+
+    months = []
+    advance_total_recouped = 0
+
+    for i in range(num_months):
+        dt = datetime.strptime(start_month_str, '%Y-%m') + relativedelta(months=i)
+        month_key = dt.strftime('%Y-%m')
+        year, month = dt.year, dt.month
+        wdays = _weekdays_in_month(year, month)
+        gross_usd = rate * hours * wdays
+        half = gross_usd / 2
+
+        payments = []
+        month_total_brl = 0
+
+        for pay_num in [1, 2]:
+            is_deduction = (month_key, pay_num) in deduction_slots
+            adv_ded = half * recoup_pct if is_deduction else 0
+            if is_deduction:
+                advance_total_recouped += adv_ded
+
+            net_usd = half - adv_ded
+            wise_fee = net_usd * wise_pct
+            after_wise_usd = net_usd - wise_fee
+            brl_enterprise = after_wise_usd * usd_brl
+            tax_hold_brl = brl_enterprise * tax_pct
+            brl_personal = brl_enterprise - tax_hold_brl
+
+            payments.append({
+                'pay_num': pay_num,
+                'gross_usd': round(half, 2),
+                'advance_deduction': round(adv_ded, 2),
+                'net_usd': round(net_usd, 2),
+                'wise_fee': round(wise_fee, 2),
+                'after_wise_usd': round(after_wise_usd, 2),
+                'brl_enterprise': round(brl_enterprise, 2),
+                'tax_hold_brl': round(tax_hold_brl, 2),
+                'brl_personal': round(brl_personal, 2),
+            })
+            month_total_brl += brl_personal
+
+        months.append({
+            'month': month_key,
+            'weekdays': wdays,
+            'gross_usd': round(gross_usd, 2),
+            'brl_personal': round(month_total_brl, 2),
+            'payments': payments,
+        })
+
+    return {
+        'config': {
+            'hourly_rate_usd': rate,
+            'hours_per_day': hours,
+            'wise_fee_pct': wise_pct,
+            'tax_hold_pct': tax_pct,
+            'advance_recoup_pct': recoup_pct,
+            'advance_cycles': adv_cycles,
+        },
+        'usd_brl': round(usd_brl, 4),
+        'advance_total_recouped': round(advance_total_recouped, 2),
+        'deduction_slots': [(m, p) for m, p in deduction_slots],
+        'months': months,
+    }
+
+
+def sync_salary_to_budget(profile, num_months=12, start_month_str=None):
+    """
+    Compute salary projection and write BudgetConfig overrides for the
+    linked income template. This makes the projection system automatically
+    use the correct salary amounts per month.
+    Returns the projection data + number of BudgetConfig rows upserted.
+    """
+    try:
+        cfg = SalaryConfig.objects.get(profile=profile, is_active=True)
+    except SalaryConfig.DoesNotExist:
+        return {'error': 'No active SalaryConfig for this profile'}
+
+    if not cfg.income_template:
+        return {'error': 'SalaryConfig has no income_template linked'}
+
+    projection = compute_salary_projection(profile, num_months, start_month_str)
+    if 'error' in projection:
+        return projection
+
+    upserted = 0
+    for m in projection['months']:
+        brl = Decimal(str(m['brl_personal']))
+        obj, created = BudgetConfig.objects.update_or_create(
+            profile=profile,
+            template=cfg.income_template,
+            month_str=m['month'],
+            defaults={'limit_override': brl},
+        )
+        upserted += 1
+
+    projection['budget_configs_upserted'] = upserted
+    return projection

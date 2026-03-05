@@ -152,6 +152,7 @@ class Subcategory(models.Model):
     profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='subcategories', null=True, blank=True)
     name = models.CharField(max_length=100)
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='subcategories')
+    default_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -372,6 +373,27 @@ class BalanceOverride(models.Model):
         return f"{self.month_str}: R$ {self.balance}"
 
 
+class BalanceAnchor(models.Model):
+    """
+    Stores a known checking account balance at a specific date,
+    captured from OFX LEDGERBAL during import. Used to compute
+    end-of-month balances for closed months.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='balance_anchors', null=True, blank=True)
+    date = models.DateField()
+    balance = models.DecimalField(max_digits=12, decimal_places=2)
+    source_file = models.CharField(max_length=255, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date']
+        unique_together = ('profile', 'date')
+
+    def __str__(self):
+        return f"{self.date}: R$ {self.balance}"
+
+
 class MetricasOrderConfig(models.Model):
     """
     Stores metric card order per month.
@@ -477,3 +499,31 @@ class FamilyNote(models.Model):
 
     def __str__(self):
         return f"{self.author_name}: {self.title or self.content[:40]}"
+
+
+class SalaryConfig(models.Model):
+    """
+    Salary calculation parameters for automated income projection.
+    Computes: gross USD → advance deduction → Wise fee → BRL conversion → tax hold → net BRL.
+    Payments arrive split into 2 per month for previous month's work.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.OneToOneField(Profile, on_delete=models.CASCADE, related_name='salary_config')
+    hourly_rate_usd = models.DecimalField(max_digits=8, decimal_places=2, help_text='USD per hour')
+    hours_per_day = models.DecimalField(max_digits=4, decimal_places=1, default=8.0)
+    wise_fee_pct = models.DecimalField(max_digits=5, decimal_places=4, default=0.0116, help_text='Wise transfer fee as decimal (0.0116 = 1.16%)')
+    tax_hold_pct = models.DecimalField(max_digits=5, decimal_places=4, default=0.08, help_text='% of BRL kept in enterprise for taxes')
+    income_template = models.ForeignKey(
+        RecurringTemplate, on_delete=models.SET_NULL, null=True, blank=True,
+        help_text='Income template to update with projected salary',
+    )
+    advance_total_usd = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text='Total advance to be recouped')
+    advance_recoup_pct = models.DecimalField(max_digits=5, decimal_places=4, default=0, help_text='% deducted per payment (e.g. 0.125 = 12.5%)')
+    advance_start_date = models.CharField(max_length=7, blank=True, help_text='First deduction month (YYYY-MM)')
+    advance_num_cycles = models.IntegerField(default=0, help_text='Number of pay cycles to deduct')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Salary {self.profile.name}: ${self.hourly_rate_usd}/h"

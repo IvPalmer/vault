@@ -33,6 +33,7 @@ from .views import (
     RemindersView, RemindersAddView, RemindersCompleteView, RemindersListsView,
     GoogleCalendarStatusView, GoogleCalendarAuthView, GoogleCalendarCallbackView,
     GoogleCalendarListView, GoogleCalendarEventsView, GoogleCalendarAddEventView,
+    SalaryProjectionView, SalarySyncView, SalaryConfigView,
 )
 
 router = DefaultRouter()
@@ -94,6 +95,10 @@ urlpatterns = [
     path('analytics/month-categories/', MonthCategoriesView.as_view(), name='analytics-month-categories'),
     path('analytics/recurring/auto-link/', AutoLinkRecurringView.as_view(), name='auto-link-recurring'),
     path('analytics/recurring/reorder/', RecurringReorderView.as_view(), name='recurring-reorder'),
+    # Salary projection
+    path('salary/projection/', SalaryProjectionView.as_view(), name='salary-projection'),
+    path('salary/sync/', SalarySyncView.as_view(), name='salary-sync'),
+    path('salary/config/', SalaryConfigView.as_view(), name='salary-config'),
     path('import/', ImportStatementsView.as_view(), name='import-statements'),
     # Setup wizard
     path('profiles/<uuid:pk>/setup/', ProfileSetupView.as_view(), name='profile-setup'),

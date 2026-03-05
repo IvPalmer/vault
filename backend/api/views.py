@@ -61,7 +61,7 @@ from .models import (
     Account, Category, Subcategory, CategorizationRule,
     RenameRule, Transaction, RecurringMapping, RecurringTemplate,
     BudgetConfig, BalanceOverride, Profile, BankTemplate, SetupTemplate,
-    FamilyNote,
+    FamilyNote, SalaryConfig,
 )
 from .serializers import (
     AccountSerializer, CategorySerializer, SubcategorySerializer,
@@ -96,6 +96,8 @@ from .services import (
     get_analytics_trends,
     get_spending_insights,
     analyze_statements_for_setup,
+    compute_salary_projection,
+    sync_salary_to_budget,
 )
 from .models import CustomMetric, MetricasOrderConfig, CategorizationRule
 
@@ -2061,3 +2063,73 @@ class GoogleCalendarAddEventView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
         return Response(result, status=status.HTTP_201_CREATED)
+
+
+class SalaryProjectionView(APIView):
+    """
+    GET /api/salary/projection/?months=12&month_str=2026-03
+    Returns salary projection with live USD/BRL rate.
+    """
+    def get(self, request):
+        months = int(request.query_params.get('months', 12))
+        month_str = request.query_params.get('month_str')
+        result = compute_salary_projection(request.profile, months, month_str)
+        if 'error' in result:
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result)
+
+
+class SalarySyncView(APIView):
+    """
+    POST /api/salary/sync/?months=12&month_str=2026-03
+    Compute salary projection and write BudgetConfig overrides
+    for the linked income template.
+    """
+    def post(self, request):
+        months = int(request.query_params.get('months', 12))
+        month_str = request.query_params.get('month_str')
+        result = sync_salary_to_budget(request.profile, months, month_str)
+        if 'error' in result:
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result)
+
+
+class SalaryConfigView(APIView):
+    """
+    GET /api/salary/config/ — return current config
+    PUT /api/salary/config/ — update config
+    """
+    def get(self, request):
+        try:
+            cfg = SalaryConfig.objects.get(profile=request.profile)
+            return Response({
+                'hourly_rate_usd': float(cfg.hourly_rate_usd),
+                'hours_per_day': float(cfg.hours_per_day),
+                'wise_fee_pct': float(cfg.wise_fee_pct),
+                'tax_hold_pct': float(cfg.tax_hold_pct),
+                'advance_recoup_pct': float(cfg.advance_recoup_pct),
+                'advance_start_date': cfg.advance_start_date,
+                'advance_num_cycles': cfg.advance_num_cycles,
+                'income_template_id': str(cfg.income_template_id) if cfg.income_template_id else None,
+                'is_active': cfg.is_active,
+            })
+        except SalaryConfig.DoesNotExist:
+            return Response({'error': 'No SalaryConfig'}, status=status.HTTP_404_NOT_FOUND)
+
+    def put(self, request):
+        data = request.data
+        cfg, _ = SalaryConfig.objects.update_or_create(
+            profile=request.profile,
+            defaults={
+                'hourly_rate_usd': data.get('hourly_rate_usd', 52),
+                'hours_per_day': data.get('hours_per_day', 8),
+                'wise_fee_pct': data.get('wise_fee_pct', 0.0116),
+                'tax_hold_pct': data.get('tax_hold_pct', 0.08),
+                'advance_recoup_pct': data.get('advance_recoup_pct', 0),
+                'advance_start_date': data.get('advance_start_date', ''),
+                'advance_num_cycles': data.get('advance_num_cycles', 0),
+                'income_template_id': data.get('income_template_id'),
+                'is_active': data.get('is_active', True),
+            },
+        )
+        return Response({'status': 'ok', 'id': str(cfg.id)})
