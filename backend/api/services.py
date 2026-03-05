@@ -983,7 +983,10 @@ def get_metricas(month_str, profile=None):
     #    Parcelas are a detail view (installments within the fatura).
     # =====================================================================
     fatura_total = fatura_master + fatura_visa
-    gastos_projetados = fixo_expected_total + fatura_total
+    # For future months with no imported CC data, use projected installments
+    # for gastos_projetados calculation only. Fatura cards stay 0 — no real bill yet.
+    projected_cc = parcelas_total if fatura_total == 0 else fatura_total
+    gastos_projetados = fixo_expected_total + projected_cc
 
     # =====================================================================
     # 10. A ENTRAR — pending income (from unlinked/unmatched recurring items)
@@ -2517,6 +2520,7 @@ def _month_str_add(month_str, months):
     return dt.strftime('%Y-%m')
 
 
+
 def _compute_installment_schedule(target_month_str, num_future_months=6, profile=None):
     """
     Compute installment totals for target_month and future months.
@@ -2539,47 +2543,34 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
     lookback_months = [_month_str_add(target_month_str, -i) for i in range(1, 13)]
     all_months = set(target_months + lookback_months)
 
-    # Batch fetch ALL installment transactions across all relevant months
-    _sched_cc_field = _cc_month_field(profile)
-    if _sched_cc_field == 'month_str':
-        # Transaction mode: single query by month_str
-        all_txns = list(Transaction.objects.filter(
-            month_str__in=all_months,
-            is_installment=True,
-            amount__lt=0,
-            profile=profile,
-        ).select_related('account'))
-        txns_by_invoice_month = {}
-        for txn in all_txns:
-            txns_by_invoice_month.setdefault(txn.month_str, []).append(txn)
-        txns_by_fallback_month = {}
-    else:
-        # Invoice mode: prefer invoice_month with month_str fallback
-        invoice_txns = list(Transaction.objects.filter(
-            invoice_month__in=all_months,
-            is_installment=True,
-            amount__lt=0,
-            profile=profile,
-        ).select_related('account'))
-        txns_by_invoice_month = {}
-        for txn in invoice_txns:
-            txns_by_invoice_month.setdefault(txn.invoice_month, []).append(txn)
+    # Batch fetch ALL installment transactions across all relevant months.
+    # Always use invoice_month (not cc_display_mode) — installments belong to
+    # the bill they appear on, regardless of display preference.
+    invoice_txns = list(Transaction.objects.filter(
+        invoice_month__in=all_months,
+        is_installment=True,
+        amount__lt=0,
+        profile=profile,
+    ).select_related('account'))
+    txns_by_invoice_month = {}
+    for txn in invoice_txns:
+        txns_by_invoice_month.setdefault(txn.invoice_month, []).append(txn)
 
-        months_with_invoice = set(txns_by_invoice_month.keys())
-        months_needing_fallback = all_months - months_with_invoice
-        if months_needing_fallback:
-            fallback_txns = list(Transaction.objects.filter(
-                month_str__in=months_needing_fallback,
-                invoice_month='',
-                is_installment=True,
-                amount__lt=0,
-                profile=profile,
-            ).select_related('account'))
-            txns_by_fallback_month = {}
-            for txn in fallback_txns:
-                txns_by_fallback_month.setdefault(txn.month_str, []).append(txn)
-        else:
-            txns_by_fallback_month = {}
+    months_with_invoice = set(txns_by_invoice_month.keys())
+    months_needing_fallback = all_months - months_with_invoice
+    if months_needing_fallback:
+        fallback_txns = list(Transaction.objects.filter(
+            month_str__in=months_needing_fallback,
+            invoice_month='',
+            is_installment=True,
+            amount__lt=0,
+            profile=profile,
+        ).select_related('account'))
+        txns_by_fallback_month = {}
+        for txn in fallback_txns:
+            txns_by_fallback_month.setdefault(txn.month_str, []).append(txn)
+    else:
+        txns_by_fallback_month = {}
 
     def _get_txns_for_month(month):
         """Get installment transactions for a month (configured mode preferred)."""
@@ -2617,7 +2608,10 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
             amt = round(float(abs(txn.amount)), 2)
             amt_group = round(float(abs(txn.amount)), 1)
 
-            group_key = (base_desc, acct, amt_group, total_inst)
+            # Include date so different purchases from the same merchant
+            # with the same amount aren't falsely deduped. Itaú lists all
+            # positions for one purchase with the same original date.
+            group_key = (base_desc, acct, amt_group, total_inst, txn.date)
             if group_key not in purchase_groups or current < purchase_groups[group_key][0]:
                 purchase_groups[group_key] = (current, amt)
 
@@ -2636,7 +2630,8 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
         if not inst_txns:
             continue
 
-        purchase_groups = {}
+        purchase_groups = {}   # group_key -> (min_pos, amt)
+        purchase_max_pos = {}  # group_key -> max_pos seen on this bill
         for txn in inst_txns:
             m_match = _parse_installment(txn)
             if not m_match:
@@ -2649,11 +2644,25 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
             base_desc = _extract_base_desc(txn.description)
             acct = txn.account.name if txn.account else ''
 
-            group_key = (base_desc, acct, amt_group, total_inst)
+            group_key = (base_desc, acct, amt_group, total_inst, txn.date)
             if group_key not in purchase_groups or current < purchase_groups[group_key][0]:
                 purchase_groups[group_key] = (current, amt)
+            purchase_max_pos[group_key] = max(
+                purchase_max_pos.get(group_key, 0), current
+            )
 
-        for (base_desc, acct, amt_group, total_inst), (current, amt) in purchase_groups.items():
+        for (base_desc, acct, amt_group, total_inst, _date), (current, amt) in purchase_groups.items():
+            # If all positions appear on the same bill (e.g., Itaú shows 01/03,
+            # 02/03, 03/03 together), the full purchase was charged on that bill.
+            # Don't project future installments — there are none.
+            max_pos = purchase_max_pos.get(
+                (base_desc, acct, amt_group, total_inst, _date), current
+            )
+            if max_pos >= total_inst:
+                continue
+
+            # Exclude date from cross-month dedup — same purchase has different
+            # posting dates on different bills but should only count once.
             purchase_id = (base_desc, acct, amt_group, total_inst)
 
             for target_offset in range(num_future_months + 1):
