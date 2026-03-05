@@ -3028,8 +3028,8 @@ def get_projection(start_month_str, num_months=0, profile=None):
         invest_goal = max(invest, savings_target_amount)
 
         if i == 0:
-            # Current month: invest already baked into metricas saldo
-            invest = invest_goal
+            # Current month: use metricas clamped invest (already in saldo)
+            invest = float(metricas.get('invest_expected_total', invest_goal))
             net = income - fixo - invest - installments - variable
             cumulative = current_month_saldo
         else:
