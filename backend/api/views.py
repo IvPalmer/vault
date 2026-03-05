@@ -2118,31 +2118,33 @@ class PluggySyncView(APIView):
     GET  /api/sync/pluggy/ — get last sync status
     """
     def post(self, request):
-        profile = request.profile
-        if not profile:
-            return Response({'error': 'No profile'}, status=400)
+        from .models import Profile
+        from django.core.cache import cache
+        from django.utils import timezone
         save_balance = request.data.get('save_balance', True)
-        try:
-            cmd = ['python', 'manage.py', 'sync_pluggy', '--profile', profile.name]
-            if save_balance:
-                cmd.append('--save-balance')
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=120
-            )
-            output = result.stdout + result.stderr
-            success = result.returncode == 0
-            # Store last sync time
-            from django.core.cache import cache
-            from django.utils import timezone
-            cache.set(f'pluggy_last_sync_{profile.id}', timezone.now().isoformat(), timeout=None)
-            return Response({
-                'success': success,
-                'output': output[-2000:],  # last 2000 chars
-            }, status=200 if success else 500)
-        except subprocess.TimeoutExpired:
-            return Response({'success': False, 'output': 'Sync timed out (120s)'}, status=504)
-        except Exception as e:
-            return Response({'success': False, 'output': str(e)}, status=500)
+        all_output = []
+        all_success = True
+        for p in Profile.objects.filter(is_active=True):
+            try:
+                cmd = ['python', 'manage.py', 'sync_pluggy', '--profile', p.name]
+                if save_balance:
+                    cmd.append('--save-balance')
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                all_output.append(f'=== {p.name} ===\n{result.stdout}{result.stderr}')
+                if result.returncode != 0:
+                    all_success = False
+                cache.set(f'pluggy_last_sync_{p.id}', timezone.now().isoformat(), timeout=None)
+            except subprocess.TimeoutExpired:
+                all_output.append(f'=== {p.name} === TIMEOUT')
+                all_success = False
+            except Exception as e:
+                all_output.append(f'=== {p.name} === ERROR: {e}')
+                all_success = False
+        output = '\n'.join(all_output)
+        return Response({
+            'success': all_success,
+            'output': output[-4000:],
+        }, status=200 if all_success else 500)
 
     def get(self, request):
         from django.core.cache import cache
