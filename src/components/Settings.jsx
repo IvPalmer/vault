@@ -734,7 +734,6 @@ function Settings({ onOpenWizard }) {
   // Alimentação, Compras, Transporte, etc. — shown regardless of whether they have subcategories
   const taxonomyCategories = useMemo(() => {
     return allCategories
-      .filter((c) => c.category_type === 'Variavel')
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
   }, [allCategories])
 

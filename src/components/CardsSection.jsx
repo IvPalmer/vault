@@ -134,7 +134,7 @@ function CardsSection() {
     {
       accessorKey: 'description',
       header: 'DESCRIÇÃO',
-      minSize: 250,
+      minSize: 160,
       cell: ({ getValue, row }) => (
         <DescriptionEdit
           transactionId={row.original.id}
@@ -146,7 +146,7 @@ function CardsSection() {
     {
       accessorKey: 'amount',
       header: 'VALOR',
-      size: 130,
+      size: 110,
       cell: ({ getValue }) => <AmountCell value={getValue()} />,
     },
     {
@@ -179,7 +179,7 @@ function CardsSection() {
       size: 150,
       cell: ({ row }) => {
         if (!row.original.id) {
-          return row.original.category || 'Não categorizado'
+          return row.original.category || '-'
         }
         return (
           <CategoryDropdown

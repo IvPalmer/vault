@@ -1010,50 +1010,38 @@ def get_metricas(month_str, profile=None):
         total=Sum('amount'))['total'] or Decimal('0.00'))
 
     # =====================================================================
-    # 7. FATURA MASTER — Mastercard accounts (dynamically matched)
+    # 7. FATURA PER CARD — dynamic per-account CC invoice totals
     #    ALWAYS uses invoice_month regardless of cc_display_mode, because
     #    the fatura metric represents the invoice total debited from checking.
     #    cc_display_mode only affects the CC transaction *table* view.
     # =====================================================================
-    # Dynamically find credit card accounts by type instead of hardcoded names
     cc_accounts = Account.objects.filter(profile=profile, account_type='credit_card')
-    master_accounts = cc_accounts.filter(name__icontains='Mastercard')
-    visa_accounts = cc_accounts.exclude(name__icontains='Mastercard')
 
-    def _build_cc_fatura_query(accounts_qs, month_str, profile):
+    def _build_cc_fatura_query_single(account_id, month_str, profile):
         """Build query for fatura metric — always by invoice_month, excludes internal transfers."""
-        account_ids = list(accounts_qs.values_list('id', flat=True))
-        if not account_ids:
-            return Q(pk__in=[])  # Empty result
         return (
-            Q(invoice_month=month_str, account_id__in=account_ids, profile=profile,
+            Q(invoice_month=month_str, account_id=account_id, profile=profile,
               is_internal_transfer=False) |
-            Q(month_str=month_str, invoice_month='', account_id__in=account_ids, profile=profile,
+            Q(month_str=month_str, invoice_month='', account_id=account_id, profile=profile,
               is_internal_transfer=False)
         )
 
-    _fatura_master_q = _build_cc_fatura_query(master_accounts, month_str, profile)
-    fatura_master = abs(Transaction.objects.filter(
-        _fatura_master_q
-    ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
+    fatura_by_card = {}
+    for cc_acct in cc_accounts:
+        q = _build_cc_fatura_query_single(cc_acct.id, month_str, profile)
+        total = abs(Transaction.objects.filter(q).aggregate(
+            total=Sum('amount'))['total'] or Decimal('0.00'))
+        fatura_by_card[cc_acct.name] = total
 
     # =====================================================================
-    # 8. FATURA VISA — Non-Mastercard credit card accounts
-    # =====================================================================
-    _fatura_visa_q = _build_cc_fatura_query(visa_accounts, month_str, profile)
-    fatura_visa = abs(Transaction.objects.filter(
-        _fatura_visa_q
-    ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
-
-    # =====================================================================
-    # 9. PARCELAS + GASTOS PROJETADOS
-    #    fatura_master/visa (invoice_month=this month) = the CC bill DUE this
+    # 8. PARCELAS + GASTOS PROJETADOS
+    #    fatura_by_card (invoice_month=this month) = the CC bill DUE this
     #    month (contains previous month's purchases). This is what will be
     #    paid from checking via internal transfer.
     #    gastos_projetados = fixo + fatura (all committed checking outflows).
     #    Parcelas are a detail view (installments within the fatura).
     # =====================================================================
-    fatura_total = fatura_master + fatura_visa
+    fatura_total = sum(fatura_by_card.values(), Decimal('0.00'))
     # For future months with no imported CC data, use projected installments
     # for gastos_projetados calculation only. Fatura cards stay 0 — no real bill yet.
     projected_cc = parcelas_total if fatura_total == 0 else fatura_total
@@ -1296,8 +1284,7 @@ def get_metricas(month_str, profile=None):
         'gastos_projetados': float(gastos_projetados),
         'gastos_fixos': float(gastos_fixos),
         'gastos_variaveis': float(gastos_variaveis),
-        'fatura_master': float(fatura_master),
-        'fatura_visa': float(fatura_visa),
+        'fatura_by_card': {name: float(val) for name, val in fatura_by_card.items()},
         'parcelas': float(parcelas_total),
         'a_entrar': float(a_entrar),
         'a_pagar': float(a_pagar),
@@ -1357,7 +1344,7 @@ def get_metricas(month_str, profile=None):
 BUILTIN_CARD_ORDER = [
     'entradas_atuais', 'entradas_projetadas', 'a_entrar', 'a_pagar',
     'dias_fechamento', 'gastos_atuais', 'gastos_projetados', 'gastos_fixos',
-    'gastos_variaveis', 'diario_max', 'fatura_master', 'fatura_visa',
+    'gastos_variaveis', 'diario_max', 'fatura_cards',
     'parcelas', 'saldo_projetado', 'saude', 'meta_poupanca',
 ]
 
@@ -1790,8 +1777,7 @@ def get_custom_metric_options(profile=None):
         {'key': 'gastos_projetados', 'label': 'GASTOS PROJETADOS', 'subtitle': 'despesa esperada'},
         {'key': 'gastos_fixos', 'label': 'GASTOS FIXOS', 'subtitle': 'fixos pagos'},
         {'key': 'gastos_variaveis', 'label': 'GASTOS VARIAVEIS', 'subtitle': 'variaveis gastos'},
-        {'key': 'fatura_master', 'label': 'FATURA MASTER', 'subtitle': 'mastercard total'},
-        {'key': 'fatura_visa', 'label': 'FATURA VISA', 'subtitle': 'visa total'},
+        {'key': 'fatura_cards', 'label': 'FATURA (per card)', 'subtitle': 'dynamic per-card totals'},
         {'key': 'parcelas', 'label': 'PARCELAS', 'subtitle': 'parcelamentos'},
         {'key': 'a_entrar', 'label': 'A ENTRAR', 'subtitle': 'receita pendente'},
         {'key': 'a_pagar', 'label': 'A PAGAR', 'subtitle': 'despesa pendente'},
@@ -3289,14 +3275,14 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
     """
     Self-improving categorization engine with 5-strategy priority chain.
 
-    Every categorized transaction (manual OR rule-based) is training data.
+    Every categorized transaction (manual OR Pluggy) is training data.
     Each strategy has a confidence score. Confidence tiers:
     - ≥0.85: auto-categorize silently
     - 0.70–0.84: auto-categorize but flag as "auto" for review
     - <0.70: leave uncategorized
 
     Strategy chain (priority order):
-    1. Keyword Rules (1.0) — CategorizationRule table
+    1. Pluggy Category Mapping (1.0) — Pluggy Open Finance ML classification
     2. Exact Description Match (0.95) — normalized description → most common category
     3. Amount + Account Pattern (0.85) — recurring subscription detection
     4. Token Similarity (0.70) — weighted token scoring
@@ -3311,15 +3297,11 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
     Returns:
         dict with categorized count, strategy breakdown, inconsistencies, and details.
     """
-    nao_cat = Category.objects.filter(name='Não categorizado', profile=profile).first()
-    if not nao_cat:
-        return {'categorized': 0, 'details': [], 'error': 'No uncategorized category found'}
-
-    # ── Get uncategorized transactions ──
+    # ── Get uncategorized transactions (category IS NULL) ──
     # When filtering by month, include both month_str matches AND
     # credit card transactions by configured display mode.
     qs = Transaction.objects.filter(
-        category=nao_cat,
+        category__isnull=True,
         is_internal_transfer=False,
         profile=profile,
     ).select_related('account', 'category')
@@ -3411,13 +3393,22 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
                 amt_account_sub_map[key] = Counter()
             amt_account_sub_map[key][txn.subcategory_id] += 1
 
-    # ── Load active categorization rules (ordered by priority) ──
-    rules = list(CategorizationRule.objects.filter(
-        is_active=True,
-        profile=profile,
-    ).select_related('category', 'subcategory').order_by('-priority'))
+    # ── Load Pluggy category mappings for Strategy 1 ──
+    from api.models import PluggyCategoryMapping
+    pluggy_map = {}
+    for pm in PluggyCategoryMapping.objects.filter(profile=profile).select_related('category', 'subcategory'):
+        pluggy_map[pm.pluggy_category_id] = (pm.category, pm.subcategory)
 
-    # Category lookup — includes ALL active categories (rules can still assign Fixo)
+    def _resolve_pluggy(cat_id):
+        if not cat_id:
+            return None, None
+        r = pluggy_map.get(cat_id)
+        if r:
+            return r
+        parent = cat_id[:2] + '000000'
+        return pluggy_map.get(parent, (None, None))
+
+    # Category lookup — includes ALL active categories
     cat_lookup = {c.id: c for c in Category.objects.filter(is_active=True, profile=profile)}
     # Subcategory lookup — also track which subcategory belongs to which category
     from api.models import Subcategory
@@ -3458,15 +3449,15 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
         # Check if this is a PIX/personal transfer (skip learning strategies)
         is_pix = _is_pix_transfer(txn)
 
-        # ── Strategy 1: Keyword Rules (confidence: 1.0) ──
-        # Rules always apply, even for PIX transfers (user creates explicit rules)
-        for rule in rules:
-            if rule.keyword.upper() in desc_upper:
-                matched_category = rule.category
-                matched_subcategory = rule.subcategory
-                match_method = 'rule'
+        # ── Strategy 1: Pluggy Category Mapping (confidence: 1.0) ──
+        # Uses Pluggy's ML classification stored on the transaction
+        if txn.pluggy_category_id:
+            p_cat, p_sub = _resolve_pluggy(txn.pluggy_category_id)
+            if p_cat:
+                matched_category = p_cat
+                matched_subcategory = p_sub
+                match_method = 'pluggy'
                 confidence = 1.0
-                break
 
         # ── Strategy 2: Exact Description Match (confidence: 0.95) ──
         # NOTE: Learning corpus only contains Variavel categories, so
@@ -3581,7 +3572,7 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
                 txn.save(update_fields=['category', 'subcategory', 'updated_at'])
 
     # ── Inconsistency Detection ──
-    inconsistencies = _detect_inconsistencies(nao_cat, profile=profile)
+    inconsistencies = _detect_inconsistencies(profile=profile)
 
     return {
         'categorized': len(results),
@@ -3593,7 +3584,7 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
     }
 
 
-def _detect_inconsistencies(nao_cat, profile=None):
+def _detect_inconsistencies(profile=None):
     """
     Find descriptions that appear in multiple different categories.
     These indicate categorization conflicts that need manual resolution.
@@ -3604,8 +3595,6 @@ def _detect_inconsistencies(nao_cat, profile=None):
     txns = Transaction.objects.filter(
         is_internal_transfer=False,
         profile=profile,
-    ).exclude(
-        category=nao_cat,
     ).exclude(
         category__isnull=True,
     )
@@ -3647,15 +3636,14 @@ def find_similar_transactions(transaction_id, profile=None):
     Returns similar uncategorized transactions + rule suggestion.
     """
     txn = Transaction.objects.select_related('account', 'category').get(id=transaction_id, profile=profile)
-    nao_cat = Category.objects.filter(name='Não categorizado', profile=profile).first()
-    if not nao_cat or not txn.category or txn.category == nao_cat:
+    if not txn.category:
         return {'similar_uncategorized': [], 'suggest_rule': None}
 
     norm = _normalize_description(txn.description)
 
     # Find uncategorized transactions with the same normalized description
     similar_qs = Transaction.objects.filter(
-        category=nao_cat,
+        category__isnull=True,
         is_internal_transfer=False,
         profile=profile,
     ).select_related('account')

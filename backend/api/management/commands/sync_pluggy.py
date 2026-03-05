@@ -6,6 +6,7 @@ Usage:
     python manage.py sync_pluggy --profile Palmer --from 2024-01-01 --to 2026-03-04
     python manage.py sync_pluggy --profile Palmer --accounts checking,master
     python manage.py sync_pluggy --profile Palmer --dry-run
+    python manage.py sync_pluggy --profile Rafa --item 68058e60-...
 """
 
 import os
@@ -18,20 +19,32 @@ from decimal import Decimal
 from django.core.management.base import BaseCommand
 
 from api.models import (
-    Account, BalanceAnchor, Category, CategorizationRule,
-    Profile, RenameRule, Transaction,
+    Account, BalanceAnchor, Category,
+    PluggyCategoryMapping, Profile, RenameRule, Transaction,
 )
 from api.pluggy import PluggyClient
 
 logger = logging.getLogger(__name__)
 
-# Pluggy account ID -> Vault account name mapping.
-# Configured per-profile. Only Palmer's Itau accounts for now.
-ACCOUNT_MAP = {
-    '535be1c8-5191-4f1f-8591-8d607538a883': 'Checking',
-    'feb08f5e-d151-40d4-b816-89647b9b7b19': 'Mastercard Black',
-    '22935e0c-0484-46fb-b638-5be4c03d3331': 'Visa Infinite',
-    # Savings and Investment excluded — not tracked in Vault currently
+# Per-profile Pluggy item IDs and account mappings.
+# Maps pluggy_account_id -> vault_account_name.
+# Items without explicit mapping use auto-discovery (match by account type).
+PROFILE_CONFIG = {
+    'Palmer': {
+        'item_ids': ['aa71ec48-af81-4d87-9bab-04627735c288'],
+        'account_map': {
+            '535be1c8-5191-4f1f-8591-8d607538a883': 'Checking',
+            'feb08f5e-d151-40d4-b816-89647b9b7b19': 'Mastercard Black',
+            '22935e0c-0484-46fb-b638-5be4c03d3331': 'Visa Infinite',
+        },
+    },
+    'Rafa': {
+        'item_ids': ['8702072c-6224-4f8f-a2be-ba61e4200557'],
+        'account_map': {
+            'edd1a40e-583c-4e93-ba28-05947f84162f': 'NuBank Conta',
+            '66b17a4e-8c15-47f0-abc2-b2425b027a4e': 'NuBank Cartão',
+        },
+    },
 }
 
 
@@ -101,10 +114,11 @@ class Command(BaseCommand):
     help = 'Sync transactions from Pluggy Open Finance API'
 
     def add_arguments(self, parser):
-        parser.add_argument('--profile', required=True, help='Profile name (e.g. Palmer)')
+        parser.add_argument('--profile', required=True, help='Profile name (e.g. Palmer, Rafa)')
         parser.add_argument('--from', dest='from_date', help='Start date YYYY-MM-DD (default: 12 months ago)')
         parser.add_argument('--to', dest='to_date', help='End date YYYY-MM-DD (default: today)')
-        parser.add_argument('--accounts', help='Comma-separated account filter: checking,master,visa')
+        parser.add_argument('--accounts', help='Comma-separated account filter: checking,master,nubank')
+        parser.add_argument('--item', dest='item_id', help='Override Pluggy item ID (for ad-hoc sync)')
         parser.add_argument('--dry-run', action='store_true', help='Show what would be synced without writing')
         parser.add_argument('--save-balance', action='store_true',
                             help='Create BalanceAnchor from current checking balance')
@@ -113,22 +127,42 @@ class Command(BaseCommand):
         # Load credentials
         client_id = os.environ.get('PLUGGY_CLIENT_ID', '')
         client_secret = os.environ.get('PLUGGY_CLIENT_SECRET', '')
-        item_id = os.environ.get('PLUGGY_ITEM_ID', '')
 
-        if not all([client_id, client_secret, item_id]):
+        if not all([client_id, client_secret]):
             self.stderr.write(self.style.ERROR(
-                'Missing PLUGGY_CLIENT_ID, PLUGGY_CLIENT_SECRET, or PLUGGY_ITEM_ID in environment'))
+                'Missing PLUGGY_CLIENT_ID or PLUGGY_CLIENT_SECRET in environment'))
             return
 
         # Load profile
+        profile_name = options['profile']
         try:
-            profile = Profile.objects.get(name=options['profile'])
+            profile = Profile.objects.get(name=profile_name)
         except Profile.DoesNotExist:
-            self.stderr.write(self.style.ERROR(f'Profile "{options["profile"]}" not found'))
+            self.stderr.write(self.style.ERROR(f'Profile "{profile_name}" not found'))
             return
 
         self.profile = profile
         self.dry_run = options['dry_run']
+
+        # Resolve item IDs and account map for this profile
+        config = PROFILE_CONFIG.get(profile_name, {})
+        account_map = dict(config.get('account_map', {}))
+
+        if options['item_id']:
+            item_ids = [options['item_id']]
+        else:
+            item_ids = config.get('item_ids', [])
+            # Fallback to env var for backwards compatibility
+            if not item_ids:
+                env_item = os.environ.get('PLUGGY_ITEM_ID', '')
+                if env_item:
+                    item_ids = [env_item]
+
+        if not item_ids:
+            self.stderr.write(self.style.ERROR(
+                f'No Pluggy item IDs configured for profile "{profile_name}". '
+                f'Use --item or add to PROFILE_CONFIG.'))
+            return
 
         # Date range
         to_date = options['to_date'] or date.today().isoformat()
@@ -139,22 +173,18 @@ class Command(BaseCommand):
         if options['accounts']:
             account_filter = [a.strip().lower() for a in options['accounts'].split(',')]
 
-        self.stdout.write(f'Pluggy sync: profile={profile.name}, '
+        self.stdout.write(f'Pluggy sync: profile={profile.name}, items={len(item_ids)}, '
                           f'from={from_date}, to={to_date}, dry_run={self.dry_run}')
 
         # Initialize client
         client = PluggyClient(client_id, client_secret)
 
-        # Check item status
-        item = client.get_item(item_id)
-        self.stdout.write(f'Item status: {item.get("status")} (last sync: {item.get("lastUpdatedAt")})')
-
-        # Load Vault accounts and build mapping
+        # Load Vault accounts
         vault_accounts = {a.name: a for a in Account.objects.filter(profile=profile)}
         self._load_categorization(profile)
 
         # Ensure external_ids are set on Vault accounts
-        for pluggy_id, vault_name in ACCOUNT_MAP.items():
+        for pluggy_id, vault_name in account_map.items():
             if vault_name in vault_accounts:
                 acct = vault_accounts[vault_name]
                 if acct.external_id != pluggy_id:
@@ -163,67 +193,72 @@ class Command(BaseCommand):
                         acct.save(update_fields=['external_id'])
                     self.stdout.write(f'  Mapped {vault_name} -> {pluggy_id}')
 
-        # Sync each mapped account
         total_new = 0
         total_skipped = 0
         total_updated = 0
 
-        # Pre-fetch bills for CC accounts to build billId -> invoice_month map
-        self.bill_map = {}  # billId -> invoice_month (YYYY-MM)
-        for pluggy_acct_id, vault_name in ACCOUNT_MAP.items():
-            if vault_name not in vault_accounts:
-                continue
-            if vault_accounts[vault_name].account_type == 'credit_card':
-                try:
-                    bills = client.get_bills(pluggy_acct_id)
-                    for bill in bills:
-                        due_date = bill['dueDate'][:10]  # YYYY-MM-DD
-                        inv_month = due_date[:7]  # YYYY-MM
-                        self.bill_map[bill['id']] = inv_month
-                    self.stdout.write(f'  Loaded {len(bills)} bills for {vault_name}')
-                except Exception as e:
-                    self.stderr.write(f'  Failed to load bills for {vault_name}: {e}')
+        # Process each Pluggy item
+        for item_id in item_ids:
+            item = client.get_item(item_id)
+            connector_name = item.get('connector', {}).get('name', '?')
+            self.stdout.write(f'\n=== Item: {connector_name} ({item_id[:12]}...) '
+                              f'status={item.get("status")} ===')
 
-        for pluggy_acct_id, vault_name in ACCOUNT_MAP.items():
-            # Apply account filter
-            if account_filter:
-                name_lower = vault_name.lower()
-                if not any(f in name_lower for f in account_filter):
+            # Pre-fetch bills for CC accounts in this item
+            self.bill_map = {}
+            for pluggy_acct_id, vault_name in account_map.items():
+                if vault_name not in vault_accounts:
+                    continue
+                if vault_accounts[vault_name].account_type == 'credit_card':
+                    try:
+                        bills = client.get_bills(pluggy_acct_id)
+                        for bill in bills:
+                            due_date = bill['dueDate'][:10]
+                            inv_month = due_date[:7]
+                            self.bill_map[bill['id']] = inv_month
+                        self.stdout.write(f'  Loaded {len(bills)} bills for {vault_name}')
+                    except Exception as e:
+                        self.stderr.write(f'  Failed to load bills for {vault_name}: {e}')
+
+            # Sync each mapped account in this item
+            for pluggy_acct_id, vault_name in account_map.items():
+                if account_filter:
+                    name_lower = vault_name.lower()
+                    if not any(f in name_lower for f in account_filter):
+                        continue
+
+                if vault_name not in vault_accounts:
+                    self.stdout.write(self.style.WARNING(
+                        f'  Vault account "{vault_name}" not found, skipping'))
                     continue
 
-            if vault_name not in vault_accounts:
-                self.stdout.write(self.style.WARNING(f'  Vault account "{vault_name}" not found, skipping'))
-                continue
+                vault_acct = vault_accounts[vault_name]
+                self.stdout.write(f'\n--- {vault_name} ({pluggy_acct_id[:8]}...) ---')
 
-            vault_acct = vault_accounts[vault_name]
-            self.stdout.write(f'\n--- {vault_name} ({pluggy_acct_id[:8]}...) ---')
+                txns = client.get_transactions(pluggy_acct_id, from_date, to_date)
+                self.stdout.write(f'  Pluggy returned {len(txns)} transactions')
 
-            txns = client.get_transactions(pluggy_acct_id, from_date, to_date)
-            self.stdout.write(f'  Pluggy returned {len(txns)} transactions')
-
-            new, skipped, updated = self._sync_transactions(txns, vault_acct)
-            total_new += new
-            total_skipped += skipped
-            total_updated += updated
+                new, skipped, updated = self._sync_transactions(txns, vault_acct)
+                total_new += new
+                total_skipped += skipped
+                total_updated += updated
 
         # Save checking balance as BalanceAnchor
         if options['save_balance'] and not self.dry_run:
-            self._save_balance_anchor(client, vault_accounts, profile)
+            self._save_balance_anchor(client, vault_accounts, profile, account_map)
 
         self.stdout.write(self.style.SUCCESS(
             f'\nDone: {total_new} new, {total_updated} updated, {total_skipped} skipped'))
 
     def _load_categorization(self, profile):
-        """Load categorization and rename rules for this profile."""
-        self.cat_rules = list(
-            CategorizationRule.objects.filter(profile=profile, is_active=True)
-            .select_related('category', 'subcategory')
-            .order_by('-priority')
-        )
+        """Load rename rules and Pluggy category mappings for this profile."""
         self.rename_rules = list(
             RenameRule.objects.filter(profile=profile, is_active=True)
         )
-        self.categories = {c.name: c for c in Category.objects.filter(profile=profile)}
+        # Pluggy category mappings: pluggy_category_id -> (category, subcategory)
+        self.pluggy_mappings = {}
+        for pm in PluggyCategoryMapping.objects.filter(profile=profile).select_related('category', 'subcategory'):
+            self.pluggy_mappings[pm.pluggy_category_id] = (pm.category, pm.subcategory)
 
     def _apply_rename(self, description):
         """Apply rename rules to a description."""
@@ -232,12 +267,19 @@ class Command(BaseCommand):
                 return rule.display_name
         return description
 
-    def _apply_categorization(self, description):
-        """Apply categorization rules. Returns (category, subcategory) or (None, None)."""
-        desc_lower = description.lower()
-        for rule in self.cat_rules:
-            if rule.keyword.lower() in desc_lower:
-                return rule.category, rule.subcategory
+    def _apply_pluggy_categorization(self, pluggy_category_id):
+        """Resolve Vault category from Pluggy category ID.
+        Tries exact match first, then falls back to parent category (first 2 digits + 000000)."""
+        if not pluggy_category_id:
+            return None, None
+        result = self.pluggy_mappings.get(pluggy_category_id)
+        if result:
+            return result
+        # Fall back to parent category
+        parent_id = pluggy_category_id[:2] + '000000'
+        result = self.pluggy_mappings.get(parent_id)
+        if result:
+            return result
         return None, None
 
     def _sync_transactions(self, pluggy_txns, vault_acct):
@@ -332,8 +374,23 @@ class Command(BaseCommand):
                     )
                     first = match_qs.first()
                     if first:
+                        update_fields = ['external_id']
                         first.external_id = ext_id
-                        first.save(update_fields=['external_id'])
+                        # Backfill Pluggy category on existing transactions
+                        p_cat = ptxn.get('category') or ''
+                        p_cat_id = ptxn.get('categoryId') or ''
+                        if p_cat and not first.pluggy_category:
+                            first.pluggy_category = p_cat
+                            first.pluggy_category_id = p_cat_id
+                            update_fields += ['pluggy_category', 'pluggy_category_id']
+                            # Also apply Pluggy category if uncategorized
+                            if not first.category and not first.is_manually_categorized:
+                                cat, sub = self._apply_pluggy_categorization(p_cat_id)
+                                if cat:
+                                    first.category = cat
+                                    first.subcategory = sub
+                                    update_fields += ['category', 'subcategory']
+                        first.save(update_fields=update_fields)
                 updated_count += 1
                 existing_ext_ids.add(ext_id)
                 existing_legacy.discard(fuzzy_key)
@@ -369,8 +426,12 @@ class Command(BaseCommand):
             # Detect internal transfers
             is_transfer = _detect_internal_transfer(description, amount, raw_desc)
 
-            # Apply categorization rules
-            category, subcategory = self._apply_categorization(display_desc)
+            # Pluggy category data
+            pluggy_category = ptxn.get('category') or ''
+            pluggy_category_id = ptxn.get('categoryId') or ''
+
+            # Categorization: Pluggy category mapping → uncategorized
+            category, subcategory = self._apply_pluggy_categorization(pluggy_category_id)
 
             txn = Transaction(
                 profile=self.profile,
@@ -390,6 +451,8 @@ class Command(BaseCommand):
                 invoice_month=invoice_month,
                 month_str=month_str,
                 external_id=ext_id,
+                pluggy_category=pluggy_category,
+                pluggy_category_id=pluggy_category_id,
             )
             batch_create.append(txn)
             new_count += 1
@@ -402,10 +465,17 @@ class Command(BaseCommand):
 
         return new_count, skipped_count, updated_count
 
-    def _save_balance_anchor(self, client, vault_accounts, profile):
+    def _save_balance_anchor(self, client, vault_accounts, profile, account_map):
         """Save current checking balance as a BalanceAnchor."""
-        checking_pluggy_id = '535be1c8-5191-4f1f-8591-8d607538a883'
-        if 'Checking' not in vault_accounts:
+        # Find the checking account in the account map
+        checking_pluggy_id = None
+        for pluggy_id, vault_name in account_map.items():
+            if vault_name in vault_accounts and vault_accounts[vault_name].account_type == 'checking':
+                checking_pluggy_id = pluggy_id
+                break
+
+        if not checking_pluggy_id:
+            self.stdout.write('  No checking account mapped, skipping balance anchor')
             return
 
         try:

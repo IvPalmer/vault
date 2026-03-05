@@ -59,13 +59,14 @@ def _validate_month_str(month_str):
 
 from .models import (
     Account, Category, Subcategory, CategorizationRule,
-    RenameRule, Transaction, RecurringMapping, RecurringTemplate,
-    BudgetConfig, BalanceOverride, Profile, BankTemplate, SetupTemplate,
-    FamilyNote, SalaryConfig,
+    PluggyCategoryMapping, RenameRule, Transaction, RecurringMapping,
+    RecurringTemplate, BudgetConfig, BalanceOverride, Profile,
+    BankTemplate, SetupTemplate, FamilyNote, SalaryConfig,
 )
 from .serializers import (
     AccountSerializer, CategorySerializer, SubcategorySerializer,
-    CategorizationRuleSerializer, RenameRuleSerializer,
+    CategorizationRuleSerializer, PluggyCategoryMappingSerializer,
+    RenameRuleSerializer,
     TransactionSerializer, TransactionListSerializer,
     RecurringMappingSerializer, RecurringTemplateSerializer,
     BudgetConfigSerializer, BalanceOverrideSerializer,
@@ -196,7 +197,11 @@ class CategoryViewSet(viewsets.ModelViewSet):
     pagination_class = None  # Always return full list (used as dropdown data)
 
     def get_queryset(self):
-        return Category.objects.filter(profile=self.request.profile)
+        qs = Category.objects.filter(profile=self.request.profile)
+        # Default to active-only unless explicitly requested
+        if 'is_active' not in self.request.query_params:
+            qs = qs.filter(is_active=True)
+        return qs
 
     def perform_create(self, serializer):
         serializer.save(profile=self.request.profile)
@@ -209,6 +214,19 @@ class SubcategoryViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return Subcategory.objects.filter(profile=self.request.profile)
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)
+
+
+class PluggyCategoryMappingViewSet(viewsets.ModelViewSet):
+    serializer_class = PluggyCategoryMappingSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        return PluggyCategoryMapping.objects.filter(
+            profile=self.request.profile
+        ).select_related('category', 'subcategory').order_by('pluggy_category_id')
 
     def perform_create(self, serializer):
         serializer.save(profile=self.request.profile)

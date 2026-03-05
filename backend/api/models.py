@@ -186,6 +186,28 @@ class CategorizationRule(models.Model):
         return f"{self.keyword} -> {self.category.name}"
 
 
+class PluggyCategoryMapping(models.Model):
+    """Maps a Pluggy category ID to a Vault Category/Subcategory.
+    Users can customize these mappings to override Pluggy's default classification."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='pluggy_category_mappings', null=True, blank=True)
+    pluggy_category_id = models.CharField(max_length=20, help_text='Pluggy category ID (e.g. 10000000)')
+    pluggy_category_name = models.CharField(max_length=100, help_text='Pluggy category display name')
+    category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='pluggy_mappings')
+    subcategory = models.ForeignKey(
+        Subcategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='pluggy_mappings'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('profile', 'pluggy_category_id')
+        ordering = ['pluggy_category_id']
+
+    def __str__(self):
+        return f"{self.pluggy_category_name} -> {self.category.name}"
+
+
 class RenameRule(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='rename_rules', null=True, blank=True)
@@ -252,6 +274,10 @@ class Transaction(models.Model):
     invoice_payment_date = models.DateField(null=True, blank=True)
     month_str = models.CharField(max_length=7, db_index=True)
     external_id = models.CharField(max_length=200, blank=True, default='', db_index=True)
+    pluggy_category = models.CharField(max_length=100, blank=True, default='',
+                                        help_text='Original category from Pluggy Open Finance')
+    pluggy_category_id = models.CharField(max_length=20, blank=True, default='',
+                                           help_text='Pluggy category ID (e.g. 10000000)')
     is_manually_categorized = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

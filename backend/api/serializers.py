@@ -1,8 +1,9 @@
 from rest_framework import serializers
 from .models import (
     Profile, Account, Category, Subcategory, CategorizationRule,
-    RenameRule, RecurringTemplate, Transaction, RecurringMapping,
-    BudgetConfig, BalanceOverride, BankTemplate, SetupTemplate, FamilyNote,
+    PluggyCategoryMapping, RenameRule, RecurringTemplate, Transaction,
+    RecurringMapping, BudgetConfig, BalanceOverride, BankTemplate,
+    SetupTemplate, FamilyNote,
 )
 
 
@@ -29,6 +30,15 @@ class CategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Category
+        fields = '__all__'
+
+
+class PluggyCategoryMappingSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    subcategory_name = serializers.CharField(source='subcategory.name', read_only=True, default=None)
+
+    class Meta:
+        model = PluggyCategoryMapping
         fields = '__all__'
 
 

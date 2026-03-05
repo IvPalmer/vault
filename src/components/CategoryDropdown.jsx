@@ -39,7 +39,7 @@ function CategoryDropdown({
   // Fetch categories with nested subcategories
   const { data: categories } = useQuery({
     queryKey: ['categories-dropdown'],
-    queryFn: () => api.get('/categories/?is_active=true&category_type=Variavel'),
+    queryFn: () => api.get('/categories/'),
     staleTime: 60_000,
   })
 
@@ -187,7 +187,7 @@ function CategoryDropdown({
   }, [field, transactionId, onUpdated])
 
   const displayValue = field === 'category' ? category : subcategory
-  const isEmpty = !displayValue || displayValue === 'Não categorizado'
+  const isEmpty = !displayValue
   const currentId = field === 'category' ? categoryId : subcategoryId
 
   // Portal dropdown

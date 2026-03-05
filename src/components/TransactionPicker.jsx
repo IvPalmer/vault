@@ -624,7 +624,7 @@ function TransactionPicker({
                           </span>
                         )}
                         <span className={styles.candAcct}>{txn.account}</span>
-                        {txn.category !== 'Não categorizado' && (
+                        {txn.category && (
                           <span className={styles.candCat}>{txn.category}</span>
                         )}
                       </div>

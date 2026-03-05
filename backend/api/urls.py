@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ProfileViewSet, BankTemplateViewSet,
     AccountViewSet, CategoryViewSet, SubcategoryViewSet,
-    CategorizationRuleViewSet, RenameRuleViewSet,
+    PluggyCategoryMappingViewSet, CategorizationRuleViewSet, RenameRuleViewSet,
     TransactionViewSet, RecurringMappingViewSet,
     BudgetConfigViewSet, BalanceOverrideViewSet,
     AnalyticsMetricasView,
@@ -42,6 +42,7 @@ router.register(r'bank-templates', BankTemplateViewSet, basename='banktemplate')
 router.register(r'accounts', AccountViewSet, basename='account')
 router.register(r'categories', CategoryViewSet, basename='category')
 router.register(r'subcategories', SubcategoryViewSet, basename='subcategory')
+router.register(r'pluggy-category-mappings', PluggyCategoryMappingViewSet, basename='pluggycategorymapping')
 router.register(r'rules', CategorizationRuleViewSet, basename='categorizationrule')
 router.register(r'renames', RenameRuleViewSet, basename='renamerule')
 router.register(r'transactions', TransactionViewSet, basename='transaction')
