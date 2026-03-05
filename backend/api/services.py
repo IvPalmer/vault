@@ -433,22 +433,6 @@ def get_recurring_data(month_str, profile=None):
         income_ref = income_expected
     savings_target_amount = income_ref * savings_target_pct / 100 if income_ref > 0 else 0.0
 
-    # Override investment items' expected to reflect dynamic target
-    invest_template_total = sum(i['expected'] for i in investimento_items if not i.get('is_skipped'))
-    if savings_target_amount > invest_template_total and investimento_items:
-        # Scale each investment item proportionally to hit the target
-        if invest_template_total > 0:
-            scale = savings_target_amount / invest_template_total
-            for item in investimento_items:
-                if not item.get('is_skipped'):
-                    item['expected'] = round(item['expected'] * scale, 2)
-        else:
-            # Single or equal split
-            per_item = savings_target_amount / sum(1 for i in investimento_items if not i.get('is_skipped'))
-            for item in investimento_items:
-                if not item.get('is_skipped'):
-                    item['expected'] = round(per_item, 2)
-
     return {
         'month_str': month_str,
         'fixo': fixo_items,
@@ -1877,6 +1861,7 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
         qs = Transaction.objects.filter(
             month_str=month_str,
             account__account_type='credit_card',
+            is_internal_transfer=False,
             profile=profile,
         ).select_related('account', 'category', 'subcategory').order_by('-date')
     else:
@@ -1884,6 +1869,7 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
         qs = Transaction.objects.filter(
             invoice_month=month_str,
             account__account_type='credit_card',
+            is_internal_transfer=False,
             profile=profile,
         ).select_related('account', 'category', 'subcategory').order_by('-date')
 
@@ -1892,6 +1878,7 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
                 month_str=month_str,
                 invoice_month='',
                 account__account_type='credit_card',
+                is_internal_transfer=False,
                 profile=profile,
             ).select_related('account', 'category', 'subcategory').order_by('-date')
 
@@ -1924,6 +1911,9 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
             'parcela': parcela,
             'is_installment': txn.is_installment,
             'is_mapped': txn.id in mapped_txn_ids,
+            'transaction_type': {'Fixo': 'Fixo', 'Investimento': 'Investimento'}.get(
+                mapped_txn_ids.get(txn.id), 'Variavel'
+            ),
         })
 
     # Always compute invoice totals per account (by invoice_month) so the
@@ -1938,6 +1928,7 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
 
     invoice_qs = Transaction.objects.filter(
         account__account_type='credit_card',
+        is_internal_transfer=False,
         profile=profile,
     ).filter(
         Q(invoice_month=month_str) |
@@ -3116,7 +3107,7 @@ def get_orcamento(month_str, profile=None):
             committed_txn_ids.add(mapping.transaction_id)
 
     # ── 3. Active categories (exclude system + committed-only) ───────
-    EXCLUDE_NAMES = {'Transferencias'}
+    EXCLUDE_NAMES = {'Transferencias', 'Renda', 'Investimentos', 'Não categorizado'}
     all_cats = list(Category.objects.filter(
         is_active=True, profile=profile,
     ).exclude(name__in=EXCLUDE_NAMES).exclude(
@@ -3254,6 +3245,175 @@ def get_orcamento(month_str, profile=None):
 # Smart Categorization — learning from past manually-categorized transactions
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Description → Subcategory Inference Map
+# ---------------------------------------------------------------------------
+# When Pluggy gives a parent-level category (e.g. 08000000 = Shopping) with no
+# subcategory, we use description keywords to infer a more specific subcategory.
+# Keys = Vault category name, Values = {subcategory_name: [keywords]}
+# Keywords are matched case-insensitively against the transaction description.
+
+DESCRIPTION_SUBCATEGORY_MAP = {
+    'Servicos Digitais': {
+        'Streaming Video': ['netflix', 'disney', 'hbo', 'prime video', 'star+',
+                            'starplus', 'globoplay', 'paramount', 'crunchyroll',
+                            'mubi', 'paypal *mubi', 'amazon prime'],
+        'Streaming Musica': ['spotify', 'deezer', 'apple music', 'tidal',
+                             'youtube music', 'amazon music', 'itunes'],
+        'Software': ['claude', 'chatgpt', 'openai', 'openrouter', 'adobe',
+                     'linkedin', 'google one', 'google cloud', 'google storage',
+                     'icloud', 'dropbox', 'notion', 'figma', 'canva',
+                     'midjourney', 'cursor', 'github', 'vercel', 'heroku',
+                     'digital ocean', 'patreon', 'substack', 'remarkable',
+                     'apple services', 'applecombill', 'apple.com/bill',
+                     'paddle.net', 'setapp', 'locaweb', 'localweb',
+                     'perlego', 'enhancv', 'linktree', '1 password',
+                     '1password', 'oinc', 'hotmart', 'grammarly',
+                     'todoist', 'evernote'],
+        'Gaming': ['steam', 'playstation', 'xbox', 'nintendo', 'epic games',
+                   'riot games', 'blizzard'],
+    },
+    'Compras': {
+        'Online': ['mercadolivre', 'mercadopago', 'mercado livre', 'amazon',
+                   'aliexpress', 'shopee', 'shein', 'kabum', 'magalu',
+                   'americanas', 'submarino', 'mp *'],
+        'Eletronicos': ['samsung', 'xiaomi', 'lg ', 'dell',
+                        'lenovo', 'asus', 'contato eletronica'],
+        'Pet': ['pet', 'cobasi', 'petz', 'petlove'],
+    },
+    'Alimentacao': {
+        'Mercado': ['supermercado', 'mercado', 'carrefour', 'extra', 'pao de acucar',
+                    'atacadao', 'assai', 'big bompreco', 'sams club', 'costco',
+                    'hortifruti', 'sacolao', 'feira', 'natural da terra',
+                    'st marche', 'oba hortifruti', 'mambo', 'big box'],
+        'Restaurante': ['restaurante', 'rest ', 'lanchonete', 'padaria',
+                        'bakery', 'pizzaria', 'burger', 'sushi', 'churrascaria',
+                        'bar ', 'bistr', 'cantina', 'cafe ', 'cafeteria',
+                        'starbucks', 'mcdonalds', 'mc donalds', 'bk ',
+                        'subway', 'outback', 'madero', 'coco bambu'],
+        'Delivery': ['ifood', 'ifd*', 'rappi', 'uber eats', 'zdelivery',
+                     'ze delivery', 'aiqfome', 'james delivery'],
+    },
+    'Transporte': {
+        'Taxi e Ride': ['uber trip', 'uber do brasil', 'uber ', '99 ', '99app',
+                        '99pop', 'cabify', 'lyft', 'indriver', '99taxi'],
+        'Combustivel': ['shell', 'ipiranga', 'br distribuidora', 'posto',
+                        'gas station', 'combustivel', 'gasolina', 'etanol',
+                        'ale combustiveis'],
+        'Estacionamento': ['estacionamento', 'parking', 'estapar', 'indigo',
+                           'zona azul'],
+        'Pedagio': ['pedagio', 'toll', 'conectcar', 'sem parar', 'veloe',
+                    'move mais'],
+    },
+    'Saude': {
+        'Farmacia': ['farmacia', 'drogaria', 'droga raia', 'drogasil',
+                     'panvel', 'pacheco', 'pague menos', 'sao joao',
+                     'ultrafarma', 'drogas', 'farm '],
+        'Academia': ['academia', 'gym', 'smart fit', 'bodytech', 'crossfit',
+                     'bio ritmo', 'bluefit'],
+        'Clinica': ['clinica', 'laboratorio', 'hospital', 'medico',
+                    'consultorio', 'exame', 'diagnostico', 'fleury',
+                    'dasa ', 'einstein'],
+        'Otica': ['otica', 'oticas', 'lentes', 'chilli beans'],
+    },
+    'Lazer': {
+        'Cinema e Teatro': ['cinema', 'cinemark', 'cinepolis', 'uci ',
+                            'teatro'],
+        'Ingressos': ['ingresso', 'sympla', 'eventim',
+                      'ticketmaster', 'bilheteria'],
+        'Musica': ['soulseek', 'traxsource', 'hypeddit', 'bandcamp',
+                   'beatport', 'bloopradio', 'synthetic lab', 'yoyaku',
+                   'lc music', 'djcity', 'juno download', 'splice',
+                   'p.e.novosyolov'],
+    },
+    'Contas': {
+        'Internet': ['internet', 'fibra', 'banda larga', 'vivo fibra',
+                     'claro net', 'oi fibra'],
+        'Celular': ['celular', 'mobile', 'vivo movel', 'claro movel',
+                    'tim ', 'oi movel'],
+        'Telecomunicacoes': ['telecom', 'telefone', 'vivo', 'claro',
+                             'tim ', 'oi ', 'net '],
+    },
+    'Moradia': {
+        'Energia': ['energia', 'eletric', 'cemig', 'enel', 'cpfl',
+                    'celpe', 'coelba', 'ceb ', 'neoenergia', 'light',
+                    'equatorial'],
+        'Aluguel': ['aluguel'],
+        'Condominio': ['condomin'],
+    },
+    'Casa': {
+        'Lavanderia': ['lavanderia', 'laundry'],
+        'Jardim': ['garden', 'flora', 'matsuflora', 'jardim'],
+        'Iluminacao': ['iluminacao', 'star luz', 'lampada'],
+        'Gas': ['util gas', 'consigaz', 'supergasbras'],
+        'Mobilia': ['casas bahia', 'mobly', 'tok stok', 'tokstok', 'etna'],
+    },
+    'Impostos': {
+        'IOF': ['iof'],
+        'DARF': ['darf'],
+        'Simples Nacional': ['simples naciona'],
+    },
+    'Pet': {
+        'Pet Shop': ['petz', 'cobasi', 'petlove', 'pet shop'],
+        'Veterinario': ['vet', 'veterinar'],
+    },
+    'Seguros': {
+        'Plano de Saude': ['plano de saude', 'unimed', 'amil', 'sulamerica',
+                           'bradesco saude', 'hapvida', 'notredame'],
+        'Seguro Veiculo': ['seguro auto', 'seguro veiculo', 'porto seguro',
+                           'tokio marine', 'liberty seguros', 'azul seguros'],
+        'Seguro Vida': ['seguro vida', 'seguro de vida'],
+    },
+}
+
+
+def _infer_subcategory_from_description(category_name, description, profile):
+    """
+    Try to infer a subcategory from transaction description when Pluggy
+    only gave a parent-level category (no subcategory).
+    Returns Subcategory instance or None.
+    """
+    if not description or category_name not in DESCRIPTION_SUBCATEGORY_MAP:
+        return None
+
+    desc_upper = description.upper()
+    sub_map = DESCRIPTION_SUBCATEGORY_MAP[category_name]
+
+    for sub_name, keywords in sub_map.items():
+        for kw in keywords:
+            if kw.upper() in desc_upper:
+                # Look up the actual Subcategory object
+                try:
+                    return Subcategory.objects.get(
+                        profile=profile, category__name=category_name, name=sub_name
+                    )
+                except Subcategory.DoesNotExist:
+                    return None
+
+    return None
+
+
+def _apply_categorization_rules(description, profile):
+    """
+    Match transaction description against CategorizationRules.
+    Returns (category, subcategory) or (None, None).
+    Rules are checked in priority order (highest first).
+    """
+    if not description:
+        return None, None
+
+    desc_upper = description.upper()
+    rules = CategorizationRule.objects.filter(
+        profile=profile, is_active=True
+    ).select_related('category', 'subcategory').order_by('-priority')
+
+    for rule in rules:
+        if rule.keyword.upper() in desc_upper:
+            return rule.category, rule.subcategory
+
+    return None, None
+
+
 def _normalize_description(desc):
     """
     Normalize a description for matching purposes.
@@ -3298,6 +3458,8 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
 
     Strategy chain (priority order):
     1. Pluggy Category Mapping (1.0) — Pluggy Open Finance ML classification
+    1b. Subcategory Refinement (1.0) — description keywords when Pluggy gave parent-only
+    1c. CategorizationRule (0.98) — user-defined keyword→category/subcategory rules
     2. Exact Description Match (0.95) — normalized description → most common category
     3. Amount + Account Pattern (0.85) — recurring subscription detection
     4. Token Similarity (0.70) — weighted token scoring
@@ -3473,6 +3635,32 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
                 matched_subcategory = p_sub
                 match_method = 'pluggy'
                 confidence = 1.0
+
+        # ── Strategy 1b: Subcategory Refinement (confidence: 1.0) ──
+        # When Pluggy gave a parent-level category with no subcategory,
+        # try to infer one from the transaction description.
+        if matched_category and not matched_subcategory:
+            inferred_sub = _infer_subcategory_from_description(
+                matched_category.name, txn.description, profile
+            )
+            if inferred_sub:
+                matched_subcategory = inferred_sub
+
+        # ── Strategy 1c: CategorizationRule Override (confidence: 0.98) ──
+        # User-defined keyword rules can override Pluggy or assign from scratch.
+        # Rules can also refine subcategory when Pluggy only gave category.
+        if not matched_category:
+            rule_cat, rule_sub = _apply_categorization_rules(txn.description, profile)
+            if rule_cat:
+                matched_category = rule_cat
+                matched_subcategory = rule_sub
+                match_method = 'rule'
+                confidence = 0.98
+        elif not matched_subcategory:
+            # Category assigned by Pluggy but no subcategory — check rules for subcategory
+            _, rule_sub = _apply_categorization_rules(txn.description, profile)
+            if rule_sub and rule_sub.category_id == matched_category.id:
+                matched_subcategory = rule_sub
 
         # ── Strategy 2: Exact Description Match (confidence: 0.95) ──
         # NOTE: Learning corpus only contains Variavel categories, so
@@ -4043,18 +4231,20 @@ def get_month_categories(month_str, profile=None):
 
 def _get_mapped_transaction_ids(month_str, profile):
     """
-    Return a set of transaction UUIDs that are linked to any RecurringMapping
-    for the given month (via M2M transactions or cross_month_transactions).
+    Return a dict of {transaction_uuid: mapping_type} for all transactions
+    linked to any RecurringMapping for the given month.
+    mapping_type is 'Fixo', 'Income', 'Investimento', etc.
     """
     mappings = RecurringMapping.objects.filter(
         profile=profile, month_str=month_str,
-    ).prefetch_related('transactions', 'cross_month_transactions')
-    ids = set()
+    ).select_related('template').prefetch_related('transactions', 'cross_month_transactions')
+    ids = {}
     for m in mappings:
+        mtype = m.custom_type if m.is_custom else (m.template.template_type if m.template else 'Fixo')
         for t in m.transactions.all():
-            ids.add(t.id)
+            ids[t.id] = mtype
         for t in m.cross_month_transactions.all():
-            ids.add(t.id)
+            ids[t.id] = mtype
     return ids
 
 
@@ -4117,6 +4307,11 @@ def get_checking_transactions(month_str, profile=None):
             'is_recurring': t.is_recurring,
             'moved_to_month': moved_to,
             'is_mapped': t.id in mapped_txn_ids,
+            'transaction_type': 'Entrada' if amt > 0 else (
+                {'Fixo': 'Fixo', 'Investimento': 'Investimento'}.get(
+                    mapped_txn_ids.get(t.id), 'Variavel'
+                )
+            ),
         })
 
     return {

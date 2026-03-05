@@ -251,7 +251,7 @@ class Command(BaseCommand):
             f'\nDone: {total_new} new, {total_updated} updated, {total_skipped} skipped'))
 
     def _load_categorization(self, profile):
-        """Load rename rules and Pluggy category mappings for this profile."""
+        """Load rename rules, Pluggy category mappings, and categorization rules."""
         self.rename_rules = list(
             RenameRule.objects.filter(profile=profile, is_active=True)
         )
@@ -259,6 +259,13 @@ class Command(BaseCommand):
         self.pluggy_mappings = {}
         for pm in PluggyCategoryMapping.objects.filter(profile=profile).select_related('category', 'subcategory'):
             self.pluggy_mappings[pm.pluggy_category_id] = (pm.category, pm.subcategory)
+        # Categorization rules (pre-loaded, sorted by priority desc)
+        from api.models import CategorizationRule
+        self.categorization_rules = list(
+            CategorizationRule.objects.filter(
+                profile=profile, is_active=True
+            ).select_related('category', 'subcategory').order_by('-priority')
+        )
 
     def _apply_rename(self, description):
         """Apply rename rules to a description."""
@@ -267,20 +274,46 @@ class Command(BaseCommand):
                 return rule.display_name
         return description
 
-    def _apply_pluggy_categorization(self, pluggy_category_id):
+    def _apply_pluggy_categorization(self, pluggy_category_id, description=''):
         """Resolve Vault category from Pluggy category ID.
-        Tries exact match first, then falls back to parent category (first 2 digits + 000000)."""
+        Tries exact match first, then falls back to parent category (first 2 digits + 000000).
+        When Pluggy gives parent-level only (no subcategory), tries description-based
+        inference and CategorizationRule matching."""
         if not pluggy_category_id:
             return None, None
         result = self.pluggy_mappings.get(pluggy_category_id)
-        if result:
-            return result
-        # Fall back to parent category
-        parent_id = pluggy_category_id[:2] + '000000'
-        result = self.pluggy_mappings.get(parent_id)
-        if result:
-            return result
-        return None, None
+        if not result:
+            # Fall back to parent category
+            parent_id = pluggy_category_id[:2] + '000000'
+            result = self.pluggy_mappings.get(parent_id)
+        if not result:
+            return None, None
+
+        category, subcategory = result
+
+        # Subcategory refinement: when Pluggy gave parent-level only
+        if category and not subcategory and description:
+            from api.services import _infer_subcategory_from_description
+            inferred = _infer_subcategory_from_description(
+                category.name, description, self.profile
+            )
+            if inferred:
+                subcategory = inferred
+
+        # CategorizationRule can override category+subcategory or just refine subcategory
+        # Uses pre-loaded rules from _load_categorization() to avoid N+1 queries
+        if description and hasattr(self, 'categorization_rules'):
+            desc_upper = description.upper()
+            for rule in self.categorization_rules:
+                if rule.keyword.upper() in desc_upper:
+                    if rule.category:
+                        category = rule.category
+                        subcategory = rule.subcategory
+                    elif rule.subcategory and category and rule.subcategory.category_id == category.id:
+                        subcategory = rule.subcategory
+                    break
+
+        return category, subcategory
 
     def _sync_transactions(self, pluggy_txns, vault_acct):
         """Sync a list of Pluggy transactions into Vault for one account."""
@@ -430,8 +463,10 @@ class Command(BaseCommand):
             pluggy_category = ptxn.get('category') or ''
             pluggy_category_id = ptxn.get('categoryId') or ''
 
-            # Categorization: Pluggy category mapping → uncategorized
-            category, subcategory = self._apply_pluggy_categorization(pluggy_category_id)
+            # Categorization: Pluggy category mapping + description refinement + rules
+            category, subcategory = self._apply_pluggy_categorization(
+                pluggy_category_id, description=display_desc
+            )
 
             txn = Transaction(
                 profile=self.profile,
