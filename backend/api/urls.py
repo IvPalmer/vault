@@ -34,6 +34,7 @@ from .views import (
     GoogleCalendarStatusView, GoogleCalendarAuthView, GoogleCalendarCallbackView,
     GoogleCalendarListView, GoogleCalendarEventsView, GoogleCalendarAddEventView,
     SalaryProjectionView, SalarySyncView, SalaryConfigView,
+    PluggySyncView,
 )
 
 router = DefaultRouter()
@@ -100,6 +101,7 @@ urlpatterns = [
     path('salary/projection/', SalaryProjectionView.as_view(), name='salary-projection'),
     path('salary/sync/', SalarySyncView.as_view(), name='salary-sync'),
     path('salary/config/', SalaryConfigView.as_view(), name='salary-config'),
+    path('sync/pluggy/', PluggySyncView.as_view(), name='sync-pluggy'),
     path('import/', ImportStatementsView.as_view(), name='import-statements'),
     # Setup wizard
     path('profiles/<uuid:pk>/setup/', ProfileSetupView.as_view(), name='profile-setup'),

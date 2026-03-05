@@ -2112,6 +2112,45 @@ class SalarySyncView(APIView):
         return Response(result)
 
 
+class PluggySyncView(APIView):
+    """
+    POST /api/sync/pluggy/ — trigger Pluggy sync for current profile
+    GET  /api/sync/pluggy/ — get last sync status
+    """
+    def post(self, request):
+        profile = request.profile
+        if not profile:
+            return Response({'error': 'No profile'}, status=400)
+        save_balance = request.data.get('save_balance', True)
+        try:
+            cmd = ['python', 'manage.py', 'sync_pluggy', '--profile', profile.name]
+            if save_balance:
+                cmd.append('--save-balance')
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=120
+            )
+            output = result.stdout + result.stderr
+            success = result.returncode == 0
+            # Store last sync time
+            from django.core.cache import cache
+            from django.utils import timezone
+            cache.set(f'pluggy_last_sync_{profile.id}', timezone.now().isoformat(), timeout=None)
+            return Response({
+                'success': success,
+                'output': output[-2000:],  # last 2000 chars
+            }, status=200 if success else 500)
+        except subprocess.TimeoutExpired:
+            return Response({'success': False, 'output': 'Sync timed out (120s)'}, status=504)
+        except Exception as e:
+            return Response({'success': False, 'output': str(e)}, status=500)
+
+    def get(self, request):
+        from django.core.cache import cache
+        profile = request.profile
+        last_sync = cache.get(f'pluggy_last_sync_{profile.id}') if profile else None
+        return Response({'last_sync': last_sync})
+
+
 class SalaryConfigView(APIView):
     """
     GET /api/salary/config/ — return current config

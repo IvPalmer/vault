@@ -54,6 +54,35 @@ services:
     depends_on:
       - backend
 
+  # Daily Pluggy sync cron
+  cron:
+    build: ./backend
+    restart: always
+    depends_on:
+      - db
+    environment:
+      - DEBUG=1
+      - POSTGRES_DB=vault
+      - POSTGRES_USER=vault_user
+      - POSTGRES_PASSWORD=vault_password
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - PLUGGY_CLIENT_ID=${PLUGGY_CLIENT_ID:-}
+      - PLUGGY_CLIENT_SECRET=${PLUGGY_CLIENT_SECRET:-}
+      - PLUGGY_ITEM_ID=${PLUGGY_ITEM_ID:-}
+      - SYNC_SCHEDULE=${SYNC_SCHEDULE:-0 8 * * *}
+    volumes:
+      - ./backend:/app
+      - ./FinanceDashboard:/app/legacy_data
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "$$SYNC_SCHEDULE python manage.py sync_pluggy --profile Palmer --save-balance >> /proc/1/fd/1 2>&1" > /tmp/crontab
+        echo "$$SYNC_SCHEDULE python manage.py sync_pluggy --profile Rafa --save-balance >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        crontab /tmp/crontab
+        echo "Cron started with schedule: $$SYNC_SCHEDULE"
+        crond -f -l 2
+
 volumes:
   postgres_data:
   static_volume:

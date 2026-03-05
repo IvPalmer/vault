@@ -300,9 +300,6 @@ function Settings({ onOpenWizard }) {
 
   // Profile settings
   const { profileId, currentProfile } = useProfile()
-  const [allocName, setAllocName] = useState('')
-  const [allocPct, setAllocPct] = useState('')
-  const [allocSaving, setAllocSaving] = useState(false)
 
   // Account management
   const [showNewAcctForm, setShowNewAcctForm] = useState(false)
@@ -316,6 +313,28 @@ function Settings({ onOpenWizard }) {
   const [salaryEditing, setSalaryEditing] = useState(false)
   const [salarySyncing, setSalarySyncing] = useState(false)
   const [salarySyncResult, setSalarySyncResult] = useState(null)
+
+  // Pluggy sync
+  const [pluggySyncing, setPluggySyncing] = useState(false)
+  const [pluggySyncResult, setPluggySyncResult] = useState(null)
+  const { data: syncStatus, refetch: refetchSyncStatus } = useQuery({
+    queryKey: ['pluggy-sync-status'],
+    queryFn: () => api.get('/sync/pluggy/').catch(() => null),
+  })
+  const handlePluggySync = async () => {
+    setPluggySyncing(true)
+    setPluggySyncResult(null)
+    try {
+      const res = await api.post('/sync/pluggy/', { save_balance: true })
+      setPluggySyncResult(res)
+      refetchSyncStatus()
+      queryClient.invalidateQueries()
+    } catch (err) {
+      setPluggySyncResult({ success: false, output: err.message || 'Sync failed' })
+    } finally {
+      setPluggySyncing(false)
+    }
+  }
 
   // Rename rules
   const [showNewRenameForm, setShowNewRenameForm] = useState(false)
@@ -421,48 +440,6 @@ function Settings({ onOpenWizard }) {
   }
 
   // Investment allocation handlers
-  const investmentAllocation = useMemo(() => {
-    if (!profileData?.investment_allocation) return []
-    const alloc = profileData.investment_allocation
-    if (typeof alloc === 'object' && !Array.isArray(alloc)) {
-      return Object.entries(alloc).map(([name, pct]) => ({ name, pct }))
-    }
-    return Array.isArray(alloc) ? alloc : []
-  }, [profileData])
-
-  const handleSaveAllocation = async (newAlloc) => {
-    if (!profileId) return
-    const allocObj = {}
-    for (const item of newAlloc) {
-      allocObj[item.name] = item.pct
-    }
-    try {
-      await api.patch(`/profiles/${profileId}/`, { investment_allocation: allocObj })
-      refetchProfile()
-    } catch (err) {
-      console.error('Failed to save allocation:', err)
-    }
-  }
-
-  const handleAddAllocation = async () => {
-    if (!allocName.trim() || !allocPct) return
-    setAllocSaving(true)
-    try {
-      const newAlloc = [...investmentAllocation, { name: allocName.trim(), pct: parseFloat(allocPct) }]
-      await handleSaveAllocation(newAlloc)
-      setAllocName('')
-      setAllocPct('')
-    } catch (err) {
-      console.error('Failed to add allocation:', err)
-    } finally {
-      setAllocSaving(false)
-    }
-  }
-
-  const handleRemoveAllocation = (idx) => {
-    const newAlloc = investmentAllocation.filter((_, i) => i !== idx)
-    handleSaveAllocation(newAlloc)
-  }
 
   // Account handlers
   const handleCreateAccount = async (e) => {
@@ -835,11 +812,6 @@ function Settings({ onOpenWizard }) {
     manual: { label: 'Manual', cls: styles.acctTypeManual },
   }
 
-  const BUDGET_STRATEGY_OPTIONS = [
-    { value: 'percentual', label: 'Percentual da Renda' },
-    { value: 'fixo', label: 'Valores Fixos' },
-    { value: 'inteligente', label: 'Inteligente (baseado em extratos)' },
-  ]
 
   // Budget summary: total income from templates vs total allocated budgets
   const totalIncome = useMemo(() => {
@@ -880,6 +852,47 @@ function Settings({ onOpenWizard }) {
       )}
 
       {/* ============================================================ */}
+      {/* PLUGGY SYNC                                                   */}
+      {/* ============================================================ */}
+      <div className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <div className={styles.sectionIcon}>🔄</div>
+          <div style={{ flex: 1 }}>
+            <h2 className={styles.sectionTitle}>Sincronizacao Pluggy</h2>
+            <p className={styles.sectionDesc}>
+              Sincroniza transacoes e saldos do Open Finance. Sync automatico diario as 8h.
+            </p>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {syncStatus?.last_sync && (
+              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}>
+                Ultimo sync: {new Date(syncStatus.last_sync).toLocaleString('pt-BR')}
+              </span>
+            )}
+            <button
+              className={styles.wizardBtn}
+              onClick={handlePluggySync}
+              disabled={pluggySyncing}
+              style={pluggySyncing ? { opacity: 0.6 } : {}}
+            >
+              {pluggySyncing ? 'Sincronizando...' : 'Sync Agora'}
+            </button>
+          </div>
+        </div>
+        {pluggySyncResult && (
+          <div className={styles.sectionBody}>
+            <pre style={{
+              fontSize: '0.7rem', padding: '8px 12px', borderRadius: '6px', maxHeight: '200px', overflow: 'auto',
+              background: pluggySyncResult.success ? 'rgba(22,163,74,0.08)' : 'rgba(220,53,69,0.08)',
+              color: pluggySyncResult.success ? 'var(--color-green)' : 'var(--color-red)',
+            }}>
+              {pluggySyncResult.output}
+            </pre>
+          </div>
+        )}
+      </div>
+
+      {/* ============================================================ */}
       {/* SECTION 1: PROFILE SETTINGS (PERFIL)                         */}
       {/* ============================================================ */}
       <div className={styles.section}>
@@ -888,7 +901,7 @@ function Settings({ onOpenWizard }) {
           <div>
             <h2 className={styles.sectionTitle}>Perfil</h2>
             <p className={styles.sectionDesc}>
-              Configurações gerais do perfil: metas de poupança, investimentos e estratégia de orçamento.
+              Configurações gerais do perfil: meta de poupança e exibição de cartão.
             </p>
           </div>
         </div>
@@ -908,36 +921,6 @@ function Settings({ onOpenWizard }) {
                 />
               </div>
               <span className={styles.profileFieldHint}>% da renda bruta</span>
-            </div>
-
-            <div className={styles.profileField}>
-              <span className={styles.profileFieldLabel}>Meta de Investimento (%)</span>
-              <div className={styles.profileFieldValue}>
-                <InlineEdit
-                  value={profileData?.investment_target_pct ?? 0}
-                  onSave={(val) => handleUpdateProfile('investment_target_pct', val)}
-                  prefix=""
-                  format="currency"
-                  color="var(--color-accent)"
-                  placeholder="0"
-                />
-              </div>
-              <span className={styles.profileFieldHint}>% da renda bruta</span>
-            </div>
-
-            <div className={styles.profileField}>
-              <span className={styles.profileFieldLabel}>Estratégia de Orçamento</span>
-              <div className={styles.profileFieldValue}>
-                <select
-                  className={styles.formSelect}
-                  value={profileData?.budget_strategy || 'percentual'}
-                  onChange={(e) => handleUpdateProfile('budget_strategy', e.target.value)}
-                >
-                  {BUDGET_STRATEGY_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
             </div>
 
             <div className={styles.profileField}>
@@ -963,62 +946,6 @@ function Settings({ onOpenWizard }) {
               </span>
             </div>
 
-            {/* Investment Allocation */}
-            <div className={styles.profileField} style={{ alignItems: 'flex-start' }}>
-              <span className={styles.profileFieldLabel}>Alocação de Investimentos</span>
-              <div className={styles.profileFieldValue}>
-                <div className={styles.itemList}>
-                  {investmentAllocation.map((item, idx) => (
-                    <div key={idx} className={styles.allocationRow}>
-                      <span className={styles.allocationName}>{item.name}</span>
-                      <div className={styles.allocationBar}>
-                        <div
-                          className={styles.allocationBarFill}
-                          style={{ width: `${Math.min(item.pct, 100)}%` }}
-                        />
-                      </div>
-                      <span className={styles.allocationPct}>{item.pct}%</span>
-                      <button
-                        className={styles.deleteBtn}
-                        onClick={() => handleRemoveAllocation(idx)}
-                        title="Remover"
-                      >
-                        {'\u00d7'}
-                      </button>
-                    </div>
-                  ))}
-                  {investmentAllocation.length === 0 && (
-                    <div className={styles.emptyState}>Nenhuma alocação definida</div>
-                  )}
-                </div>
-                <div className={styles.allocationAddRow}>
-                  <input
-                    className={styles.allocationInput}
-                    type="text"
-                    placeholder="Nome (ex: Renda Fixa)"
-                    value={allocName}
-                    onChange={(e) => setAllocName(e.target.value)}
-                  />
-                  <input
-                    className={styles.allocationPctInput}
-                    type="number"
-                    placeholder="%"
-                    value={allocPct}
-                    onChange={(e) => setAllocPct(e.target.value)}
-                    min="0"
-                    max="100"
-                  />
-                  <button
-                    className={styles.formSaveBtn}
-                    onClick={handleAddAllocation}
-                    disabled={allocSaving || !allocName.trim() || !allocPct}
-                    style={{ padding: '4px 12px', fontSize: '0.72rem' }}
-                  >
-                    {allocSaving ? '...' : '+'}
-                  </button>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -1516,26 +1443,6 @@ function Settings({ onOpenWizard }) {
             )}
           </div>
 
-          {/* Investment allocation visualization */}
-          {investmentAllocation.length > 0 && (
-            <>
-              <h4 className={styles.subheading}>Alocação de Investimentos</h4>
-              <div className={styles.itemList}>
-                {investmentAllocation.map((item, idx) => (
-                  <div key={idx} className={styles.allocationRow}>
-                    <span className={styles.allocationName}>{item.name}</span>
-                    <div className={styles.allocationBar}>
-                      <div
-                        className={styles.allocationBarFill}
-                        style={{ width: `${Math.min(item.pct, 100)}%` }}
-                      />
-                    </div>
-                    <span className={styles.allocationPct}>{item.pct}%</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
         </div>
       </div>
 
