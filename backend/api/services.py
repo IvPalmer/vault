@@ -2929,14 +2929,9 @@ def get_projection(start_month_str, num_months=0, profile=None):
     fixo_tpls = list(tpls.filter(template_type='Fixo'))
     invest_tpls = list(tpls.filter(template_type='Investimento'))
 
-    # Variable budget for future months (covers discretionary checking + CC spending)
-    variable_cats = Category.objects.filter(
-        category_type='Variavel', is_active=True, default_limit__gt=0,
-        profile=profile,
-    )
-    total_variable_default = float(
-        variable_cats.aggregate(t=Sum('default_limit'))['t'] or 0
-    )
+    # Variable spending is NOT projected separately — it's the default transaction
+    # type and not a committed outflow. CC spending covers most variable expenses
+    # via the fatura/installments columns.
 
     # Active installments — compute from all recent CC statements
     installment_schedule = _compute_installment_schedule(
@@ -3014,14 +3009,14 @@ def get_projection(start_month_str, num_months=0, profile=None):
 
             # Use fatura total (real CC bill) when available, else parcelas
             installments = current_fatura_total if current_fatura_total > 0 else current_installment_total
-            variable = 0.0  # Current month: fully handled by metricas saldo anchor
+            variable = 0.0
         else:
             # Future months: use defaults, applying BudgetConfig overrides per template
             income = sum(_tpl_amount(t, month) for t in income_tpls)
             fixo = sum(_tpl_amount(t, month) for t in fixo_tpls)
             invest = sum(_tpl_amount(t, month) for t in invest_tpls)
             installments = installment_schedule.get(month, 0)
-            variable = total_variable_default
+            variable = 0.0
 
         # Dynamic savings target: use max(template invest, target % of income)
         savings_target_amount = income * savings_target_pct / 100 if income > 0 else 0.0

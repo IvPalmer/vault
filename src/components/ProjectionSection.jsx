@@ -45,7 +45,7 @@ function ProjectionSection() {
       label: shortMonth(row.month),
       month: row.month,
       entradas: row.income,
-      gastos: row.fixo + row.investimento + row.installments + (row.variable || 0),
+      gastos: row.fixo + row.investimento + row.installments,
       saldo: row.cumulative,
     }))
     // Find breakeven: first month where saldo >= 0 after being negative
@@ -177,7 +177,6 @@ function ProjectionSection() {
               <th className={styles.numCol}>FIXOS</th>
               <th className={styles.numCol}>INVEST.</th>
               <th className={styles.numCol}>CARTAO</th>
-              <th className={styles.numCol}>VARIAVEL</th>
               <th className={styles.numCol}>SOBRA</th>
               <th className={styles.numCol}>SALDO</th>
             </tr>
@@ -188,7 +187,7 @@ function ProjectionSection() {
               <td className={styles.monthCell}>
                 <span className={styles.balanceLabel}>Saldo em Conta</span>
               </td>
-              <td colSpan={6}></td>
+              <td colSpan={5}></td>
               <td className={`${styles.numCol} ${styles.saldoCol} ${bal >= 0 ? styles.green : styles.red}`}>
                 <strong>{bal < 0 ? '-' : ''}R$ {fmt(bal)}</strong>
               </td>
@@ -224,9 +223,6 @@ function ProjectionSection() {
                   </td>
                   <td className={`${styles.numCol} ${styles.orange}`}>
                     R$ {fmt(row.installments)}
-                  </td>
-                  <td className={`${styles.numCol} ${styles.dimmed}`}>
-                    {row.variable > 0 ? `R$ ${fmt(row.variable)}` : '-'}
                   </td>
                   <td className={`${styles.numCol} ${row.net >= 0 ? styles.green : styles.red}`}>
                     {row.net < 0 ? '-' : ''}R$ {fmt(row.net)}
