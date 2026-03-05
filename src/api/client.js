@@ -18,13 +18,14 @@ export function getProfileId() {
 
 async function request(endpoint, options = {}) {
   const url = `${API_BASE_URL}${endpoint}`
+  const { headers: optionHeaders, ...restOptions } = options
   const config = {
+    ...restOptions,
     headers: {
       'Content-Type': 'application/json',
       ...(currentProfileId && { 'X-Profile-ID': currentProfileId }),
-      ...options.headers,
+      ...optionHeaders,
     },
-    ...options,
   }
 
   const response = await fetch(url, config)

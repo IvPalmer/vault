@@ -25,10 +25,11 @@ function getGreeting() {
 }
 
 function getVisitorName() {
+  // Use localStorage preference if set (persists across hostname changes)
+  const saved = localStorage.getItem('vaultUserName')
+  if (saved) return saved
   const host = window.location.hostname
-  // Accessing from the server itself → Palmer
   if (host === 'localhost' || host === '127.0.0.1') return 'Palmer'
-  // Accessing from another device on the network → Rafaella
   return 'Rafaella'
 }
 

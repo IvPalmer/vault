@@ -2106,6 +2106,7 @@ class SalaryConfigView(APIView):
                 'hourly_rate_usd': float(cfg.hourly_rate_usd),
                 'hours_per_day': float(cfg.hours_per_day),
                 'wise_fee_pct': float(cfg.wise_fee_pct),
+                'wise_fee_flat': float(cfg.wise_fee_flat),
                 'tax_hold_pct': float(cfg.tax_hold_pct),
                 'advance_recoup_pct': float(cfg.advance_recoup_pct),
                 'advance_start_date': cfg.advance_start_date,
@@ -2123,7 +2124,8 @@ class SalaryConfigView(APIView):
             defaults={
                 'hourly_rate_usd': data.get('hourly_rate_usd', 52),
                 'hours_per_day': data.get('hours_per_day', 8),
-                'wise_fee_pct': data.get('wise_fee_pct', 0.0116),
+                'wise_fee_pct': data.get('wise_fee_pct', 0.0091),
+                'wise_fee_flat': data.get('wise_fee_flat', 0.46),
                 'tax_hold_pct': data.get('tax_hold_pct', 0.08),
                 'advance_recoup_pct': data.get('advance_recoup_pct', 0),
                 'advance_start_date': data.get('advance_start_date', ''),

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useMonth } from '../context/MonthContext'
 import api from '../api/client'
@@ -48,6 +49,10 @@ function OrcamentoSection() {
 }
 
 function BudgetCard({ cat }) {
+  const [expanded, setExpanded] = useState(false)
+  const hasSubs = cat.subcategories && cat.subcategories.length > 0
+  const hasSubsWithData = hasSubs && cat.subcategories.some(s => s.spent > 0 || s.limit > 0)
+
   const pctClamped = Math.min(cat.pct, 100)
   const barColor =
     cat.status === 'over' ? 'var(--color-red)' :
@@ -64,8 +69,16 @@ function BudgetCard({ cat }) {
       className={styles.card}
       style={{ borderColor }}
     >
-      <div className={styles.cardHeader}>
-        <span className={styles.catName}>{cat.name}</span>
+      <div
+        className={`${styles.cardHeader} ${hasSubsWithData ? styles.clickable : ''}`}
+        onClick={() => hasSubsWithData && setExpanded(!expanded)}
+      >
+        <span className={styles.catName}>
+          {hasSubsWithData && (
+            <span className={styles.expandIcon}>{expanded ? '▾' : '▸'}</span>
+          )}
+          {cat.name}
+        </span>
         <span className={`${styles.catPct} ${styles[cat.status]}`}>
           {cat.pct.toFixed(0)}%
         </span>
@@ -109,6 +122,56 @@ function BudgetCard({ cat }) {
           </div>
         )}
       </div>
+
+      {/* Subcategory breakdown */}
+      {expanded && hasSubsWithData && (
+        <div className={styles.subBreakdown}>
+          {cat.subcategories
+            .filter(s => s.spent > 0 || s.limit > 0)
+            .sort((a, b) => b.spent - a.spent)
+            .map(sub => {
+              const subBarColor =
+                sub.status === 'over' ? 'var(--color-red)' :
+                sub.status === 'warning' ? 'var(--color-orange)' :
+                'var(--color-green)'
+              const subPctClamped = Math.min(sub.pct, 100)
+
+              return (
+                <div key={sub.id} className={styles.subRow}>
+                  <div className={styles.subHeader}>
+                    <span className={styles.subName}>{sub.name}</span>
+                    <span className={styles.subValues}>
+                      <span className={`${styles.subSpent} ${styles[sub.status]}`}>
+                        R$ {fmt(sub.spent)}
+                      </span>
+                      {sub.limit > 0 && (
+                        <span className={styles.subLimit}> / R$ {fmt(sub.limit)}</span>
+                      )}
+                    </span>
+                  </div>
+                  {sub.limit > 0 && (
+                    <div className={styles.subBarTrack}>
+                      <div
+                        className={styles.subBarFill}
+                        style={{ width: `${subPctClamped}%`, background: subBarColor }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          {cat.uncategorized_spent > 0 && (
+            <div className={styles.subRow}>
+              <div className={styles.subHeader}>
+                <span className={`${styles.subName} ${styles.subNameDim}`}>Sem subcategoria</span>
+                <span className={styles.subValues}>
+                  <span className={styles.subSpent}>R$ {fmt(cat.uncategorized_spent)}</span>
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

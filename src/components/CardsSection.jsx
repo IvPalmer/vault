@@ -240,7 +240,7 @@ function CardsSection() {
     },
   ], [invalidate])
 
-  // Filter transactions by active tab; compute bill total from ALL rows
+  // Filter transactions by active tab; use invoice total for "Total fatura"
   const { filteredData, billTotal } = useMemo(() => {
     if (!data?.transactions) return { filteredData: [], billTotal: 0 }
 
@@ -251,11 +251,21 @@ function CardsSection() {
       txns = txns.filter(t => t.account === currentTab.filter)
     }
 
-    return {
-      filteredData: txns,
-      // Sum of ALL transactions on the invoice (charges + refunds) = what you actually pay
-      billTotal: Math.abs(txns.reduce((s, t) => s + t.amount, 0)),
+    // Use invoice_by_account from API (always by invoice_month) for the
+    // "Total fatura" display so it matches the checking account payment.
+    let total = 0
+    if (data.invoice_by_account) {
+      if (currentTab?.filter) {
+        total = data.invoice_by_account[currentTab.filter] || 0
+      } else {
+        total = data.invoice_total || 0
+      }
+    } else {
+      // Fallback: client-side sum
+      total = Math.abs(txns.reduce((s, t) => s + t.amount, 0))
     }
+
+    return { filteredData: txns, billTotal: total }
   }, [data, effectiveTab, TABS])
 
   // Filter installments by active tab

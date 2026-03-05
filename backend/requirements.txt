@@ -1,3 +1,4 @@
+# Core
 Django==5.2
 djangorestframework==3.16.0
 django-cors-headers==4.7.0
@@ -5,13 +6,22 @@ django-filter==25.1
 djangorestframework-simplejwt==5.5.0
 psycopg2-binary==2.9.10
 gunicorn==21.2.0
-dj-database-url==2.1.0
 python-dotenv==1.0.1
-whitenoise==6.6.0
+
+# HTTP
+requests>=2.31.0
+
+# Data import / ETL
 pandas==2.2.3
 openpyxl==3.1.2
 ofxparse==0.21
 python-dateutil==2.9.0
+
+# Google Calendar integration
 google-api-python-client==2.190.0
 google-auth-httplib2==0.3.0
 google-auth-oauthlib==1.2.4
+
+# NOTE: Removed unused packages:
+# dj-database-url==2.1.0   (never imported — use if deploying to Heroku/Railway)
+# whitenoise==6.6.0        (never added to MIDDLEWARE — add if serving static in prod)

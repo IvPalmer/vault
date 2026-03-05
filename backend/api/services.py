@@ -21,15 +21,16 @@ from .models import (
 # ---------------------------------------------------------------------------
 
 def _extract_base_desc(description):
-    """Extract base description from installment description, handling both Itau and Nubank formats."""
+    """Extract base description from installment description, handling both Itau and Nubank formats.
+    Returns lowered result for case-insensitive dedup (Pluggy=uppercase, legacy=title case)."""
     desc = description.strip()
     # Nubank format: "Store Name - Parcela 1/6"
     cleaned = re.sub(r'\s*-\s*Parcela\s*\d{1,2}/\d{1,2}\s*$', '', desc, flags=re.IGNORECASE).strip()
     if cleaned != desc:
-        return cleaned
+        return cleaned.lower()
     # Itau format: "STORE NAME 01/06"
     cleaned = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', desc).strip()
-    return cleaned
+    return cleaned.lower()
 
 
 def _cc_month_field(profile):
@@ -106,6 +107,25 @@ def initialize_month(month_str, profile=None):
         'total': total,
         'initialized': created > 0,
     }
+
+
+def refresh_expected_amounts(template, profile=None, month_strs=None):
+    """
+    Update expected_amount on existing RecurringMappings from BudgetConfig
+    overrides, without touching status, matched transactions, or other fields.
+    Only updates mappings tied to the given template.
+    """
+    qs = RecurringMapping.objects.filter(template=template, profile=profile)
+    if month_strs:
+        qs = qs.filter(month_str__in=month_strs)
+    updated = 0
+    for mapping in qs:
+        new_expected = _get_expected_amount(template, mapping.month_str, profile=profile)
+        if mapping.expected_amount != new_expected:
+            mapping.expected_amount = new_expected
+            mapping.save(update_fields=['expected_amount'])
+            updated += 1
+    return updated
 
 
 # ---------------------------------------------------------------------------
@@ -952,13 +972,15 @@ def get_metricas(month_str, profile=None):
     visa_accounts = cc_accounts.exclude(name__icontains='Mastercard')
 
     def _build_cc_fatura_query(accounts_qs, month_str, profile):
-        """Build query for fatura metric — always by invoice_month."""
+        """Build query for fatura metric — always by invoice_month, excludes internal transfers."""
         account_ids = list(accounts_qs.values_list('id', flat=True))
         if not account_ids:
             return Q(pk__in=[])  # Empty result
         return (
-            Q(invoice_month=month_str, account_id__in=account_ids, profile=profile) |
-            Q(month_str=month_str, invoice_month='', account_id__in=account_ids, profile=profile)
+            Q(invoice_month=month_str, account_id__in=account_ids, profile=profile,
+              is_internal_transfer=False) |
+            Q(month_str=month_str, invoice_month='', account_id__in=account_ids, profile=profile,
+              is_internal_transfer=False)
         )
 
     _fatura_master_q = _build_cc_fatura_query(master_accounts, month_str, profile)
@@ -1866,10 +1888,12 @@ def get_installment_details(month_str, profile=None):
         items = []
         for (base_desc, acct, amt_group, total_inst), (current, _, txn, amt) in purchase_groups.items():
             parcela_str = f'{current}/{total_inst}'
+            # Use original description for display (base_desc is lowered for dedup)
+            display_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', txn.description).strip()
             items.append({
                 'id': str(txn.id),
                 'date': txn.date.strftime('%Y-%m-%d'),
-                'description': f'{base_desc} {parcela_str}',
+                'description': f'{display_desc} {parcela_str}',
                 'amount': amt,
                 'account': acct,
                 'category': txn.category.name if txn.category else 'Não categorizado',
@@ -1995,7 +2019,9 @@ def get_installment_details(month_str, profile=None):
                 last_day = _cal.monthrange(target_dt.year, target_dt.month)[1]
                 projected_date = txn.date.replace(year=target_dt.year, month=target_dt.month, day=last_day)
 
-            projected_desc = f'{base_desc} {parcela_str}'
+            # Use original description for display (base_desc is lowered for dedup)
+            display_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', txn.description).strip()
+            projected_desc = f'{display_desc} {parcela_str}'
 
             items.append({
                 'id': str(txn.id),
@@ -2585,10 +2611,10 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
             amt = round(float(abs(txn.amount)), 2)
             amt_group = round(float(abs(txn.amount)), 1)
 
-            # Include date so different purchases from the same merchant
-            # with the same amount aren't falsely deduped. Itaú lists all
-            # positions for one purchase with the same original date.
-            group_key = (base_desc, acct, amt_group, total_inst, txn.date)
+            # Don't include txn.date — Pluggy uses bill-listing date while
+            # legacy uses purchase date, causing false duplicates for the
+            # same purchase.
+            group_key = (base_desc, acct, amt_group, total_inst)
             if group_key not in purchase_groups or current < purchase_groups[group_key][0]:
                 purchase_groups[group_key] = (current, amt)
 
@@ -2621,19 +2647,19 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
             base_desc = _extract_base_desc(txn.description)
             acct = txn.account.name if txn.account else ''
 
-            group_key = (base_desc, acct, amt_group, total_inst, txn.date)
+            group_key = (base_desc, acct, amt_group, total_inst)
             if group_key not in purchase_groups or current < purchase_groups[group_key][0]:
                 purchase_groups[group_key] = (current, amt)
             purchase_max_pos[group_key] = max(
                 purchase_max_pos.get(group_key, 0), current
             )
 
-        for (base_desc, acct, amt_group, total_inst, _date), (current, amt) in purchase_groups.items():
+        for (base_desc, acct, amt_group, total_inst), (current, amt) in purchase_groups.items():
             # If all positions appear on the same bill (e.g., Itaú shows 01/03,
             # 02/03, 03/03 together), the full purchase was charged on that bill.
             # Don't project future installments — there are none.
             max_pos = purchase_max_pos.get(
-                (base_desc, acct, amt_group, total_inst, _date), current
+                (base_desc, acct, amt_group, total_inst), current
             )
             if max_pos >= total_inst:
                 continue
@@ -4836,9 +4862,23 @@ def _weekdays_in_month(year, month):
 
 
 def _get_usd_brl_rate():
-    """Fetch live USD/BRL mid-market rate. Falls back to 5.85 on error."""
+    """Fetch live USD/BRL mid-market rate from Wise, fallback to open.er-api.com."""
     import urllib.request
     import json as _json
+    # Try Wise gateway first (real-time mid-market rate)
+    try:
+        url = 'https://wise.com/gateway/v1/price?sourceAmount=1000&sourceCurrency=USD&targetCurrency=BRL'
+        req = urllib.request.Request(url, headers={'User-Agent': 'Vault/1.0'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = _json.loads(resp.read())
+            for item in data:
+                if item.get('payInMethod') == 'BALANCE':
+                    return float(item['midRate'])
+            if data:
+                return float(data[0]['midRate'])
+    except Exception:
+        pass
+    # Fallback to open.er-api.com (updates daily)
     try:
         url = 'https://open.er-api.com/v6/latest/USD'
         req = urllib.request.Request(url, headers={'User-Agent': 'Vault/1.0'})
@@ -4847,6 +4887,29 @@ def _get_usd_brl_rate():
             return float(data['rates']['BRL'])
     except Exception:
         return 5.85
+
+
+def _get_wise_fees(amount_usd):
+    """Fetch live Wise fee for a specific USD→BRL transfer amount from BALANCE."""
+    import urllib.request
+    import json as _json
+    try:
+        url = f'https://wise.com/gateway/v1/price?sourceAmount={amount_usd}&sourceCurrency=USD&targetCurrency=BRL'
+        req = urllib.request.Request(url, headers={'User-Agent': 'Vault/1.0'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = _json.loads(resp.read())
+            for item in data:
+                if item.get('payInMethod') == 'BALANCE':
+                    return {
+                        'total_fee': float(item['total']),
+                        'flat_fee': float(item['flatFee']),
+                        'variable_pct': float(item['variableFeePercent']) / 100,
+                        'mid_rate': float(item['midRate']),
+                        'target_amount': float(item['targetAmount']),
+                    }
+    except Exception:
+        pass
+    return None
 
 
 def compute_salary_projection(profile, num_months=12, start_month_str=None):
@@ -4874,12 +4937,24 @@ def compute_salary_projection(profile, num_months=12, start_month_str=None):
     rate = float(cfg.hourly_rate_usd)
     hours = float(cfg.hours_per_day)
     wise_pct = float(cfg.wise_fee_pct)
+    wise_flat = float(getattr(cfg, 'wise_fee_flat', 0) or 0)
     tax_pct = float(cfg.tax_hold_pct)
     recoup_pct = float(cfg.advance_recoup_pct)
     adv_start = cfg.advance_start_date  # e.g. '2026-02'
     adv_cycles = cfg.advance_num_cycles
 
     usd_brl = _get_usd_brl_rate()
+
+    # Try to get live Wise fee data for a typical transfer amount
+    # to verify our stored fee params are still accurate
+    live_wise = _get_wise_fees(round(rate * hours * 22 / 2))  # ~half month
+    wise_source = 'config'
+    if live_wise:
+        # Use live fee data: overrides stored config for accuracy
+        wise_pct = live_wise['variable_pct']
+        wise_flat = live_wise['flat_fee']
+        usd_brl = live_wise['mid_rate']
+        wise_source = 'wise_api'
 
     # Build deduction schedule: which (work_month, pay_num) get advance deducted
     # Advance deductions apply to pay dates, which are for the PREVIOUS month's work.
@@ -4931,7 +5006,7 @@ def compute_salary_projection(profile, num_months=12, start_month_str=None):
                 advance_total_recouped += adv_ded
 
             net_usd = half - adv_ded
-            wise_fee = net_usd * wise_pct
+            wise_fee = wise_flat + net_usd * wise_pct
             after_wise_usd = net_usd - wise_fee
             brl_enterprise = after_wise_usd * usd_brl
             tax_hold_brl = brl_enterprise * tax_pct
@@ -4963,11 +5038,13 @@ def compute_salary_projection(profile, num_months=12, start_month_str=None):
             'hourly_rate_usd': rate,
             'hours_per_day': hours,
             'wise_fee_pct': wise_pct,
+            'wise_fee_flat': wise_flat,
             'tax_hold_pct': tax_pct,
             'advance_recoup_pct': recoup_pct,
             'advance_cycles': adv_cycles,
         },
         'usd_brl': round(usd_brl, 4),
+        'wise_source': wise_source,
         'advance_total_recouped': round(advance_total_recouped, 2),
         'deduction_slots': [(m, p) for m, p in deduction_slots],
         'months': months,
@@ -5005,4 +5082,10 @@ def sync_salary_to_budget(profile, num_months=12, start_month_str=None):
         upserted += 1
 
     projection['budget_configs_upserted'] = upserted
+
+    # Refresh expected_amount on existing RecurringMappings
+    month_strs = [m['month'] for m in projection['months']]
+    refreshed = refresh_expected_amounts(cfg.income_template, profile=profile, month_strs=month_strs)
+    projection['mappings_refreshed'] = refreshed
+
     return projection

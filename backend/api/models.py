@@ -115,6 +115,8 @@ class Account(models.Model):
     closing_day = models.IntegerField(null=True, blank=True)
     due_day = models.IntegerField(null=True, blank=True)
     credit_limit = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    external_id = models.CharField(max_length=200, blank=True, default='',
+                                    help_text='External account ID (e.g. Pluggy account UUID)')
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -249,6 +251,7 @@ class Transaction(models.Model):
     invoice_close_date = models.DateField(null=True, blank=True)
     invoice_payment_date = models.DateField(null=True, blank=True)
     month_str = models.CharField(max_length=7, db_index=True)
+    external_id = models.CharField(max_length=200, blank=True, default='', db_index=True)
     is_manually_categorized = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -511,7 +514,8 @@ class SalaryConfig(models.Model):
     profile = models.OneToOneField(Profile, on_delete=models.CASCADE, related_name='salary_config')
     hourly_rate_usd = models.DecimalField(max_digits=8, decimal_places=2, help_text='USD per hour')
     hours_per_day = models.DecimalField(max_digits=4, decimal_places=1, default=8.0)
-    wise_fee_pct = models.DecimalField(max_digits=5, decimal_places=4, default=0.0116, help_text='Wise transfer fee as decimal (0.0116 = 1.16%)')
+    wise_fee_pct = models.DecimalField(max_digits=5, decimal_places=4, default=0.0091, help_text='Wise variable fee as decimal (0.0091 = 0.91%)')
+    wise_fee_flat = models.DecimalField(max_digits=6, decimal_places=2, default=0.46, help_text='Wise flat fee in USD per transfer')
     tax_hold_pct = models.DecimalField(max_digits=5, decimal_places=4, default=0.08, help_text='% of BRL kept in enterprise for taxes')
     income_template = models.ForeignKey(
         RecurringTemplate, on_delete=models.SET_NULL, null=True, blank=True,

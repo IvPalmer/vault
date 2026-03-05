@@ -21,12 +21,21 @@ import styles from './Analytics.module.css'
 
 function Analytics() {
   const { months } = useMonth()
+  // Derive startMonth from available data instead of hardcoding
+  const defaultStartMonth = useMemo(() => {
+    if (months && months.length > 0) return [...months].sort()[0]
+    return null
+  }, [months])
   const [filters, setFilters] = useState({
-    startMonth: '2025-12',
+    startMonth: null,
     endMonth: null,
     categories: [],
     accounts: '',
   })
+  // Set startMonth once months are loaded (only once)
+  if (filters.startMonth === null && defaultStartMonth) {
+    setFilters(f => ({ ...f, startMonth: defaultStartMonth }))
+  }
 
   const queryParams = useMemo(() => {
     const p = new URLSearchParams()

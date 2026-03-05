@@ -39,6 +39,19 @@ const ACCT_TYPE_LABELS = {
   credit_card: 'Cartao de Credito',
 }
 
+// Standard Brazilian expense categories for "Categorias Padrao" option
+const DEFAULT_CATEGORIES = [
+  { name: 'Alimentacao', type: 'Variavel', limit: 0 },
+  { name: 'Transporte', type: 'Variavel', limit: 0 },
+  { name: 'Lazer', type: 'Variavel', limit: 0 },
+  { name: 'Compras', type: 'Variavel', limit: 0 },
+  { name: 'Saude', type: 'Variavel', limit: 0 },
+  { name: 'Servicos', type: 'Variavel', limit: 0 },
+  { name: 'Casa', type: 'Variavel', limit: 0 },
+  { name: 'Contas', type: 'Variavel', limit: 0 },
+  { name: 'Outros', type: 'Variavel', limit: 0 },
+]
+
 const STEP_TITLES = {
   1: 'Dados do Perfil',
   2: 'Selecionar Bancos',
@@ -68,7 +81,7 @@ const initialState = {
   categories: [],
   budgetLimits: [],
   savingsTarget: 20,
-  investmentTarget: 10,
+  investmentTarget: 0,
   investmentAllocation: [],
   renameRules: [],
   categorizationRules: [],
@@ -149,6 +162,26 @@ function reducer(state, action) {
         i === action.payload.index ? { ...b, suggested_limit: action.payload.value } : b
       )
       return { ...state, budgetLimits: limits }
+    }
+    case 'ADD_BUDGET_ITEM':
+      return {
+        ...state,
+        budgetLimits: [...state.budgetLimits, action.payload],
+        categories: [...state.categories, action.payload.category || action.payload.name],
+      }
+    case 'REMOVE_BUDGET_ITEM': {
+      const removed = state.budgetLimits[action.payload]
+      return {
+        ...state,
+        budgetLimits: state.budgetLimits.filter((_, i) => i !== action.payload),
+        categories: state.categories.filter(c => c !== (removed?.category || removed?.name)),
+      }
+    }
+    case 'UPDATE_BUDGET_ITEM': {
+      const budgetItems = state.budgetLimits.map((b, i) =>
+        i === action.payload.index ? { ...b, ...action.payload.data } : b
+      )
+      return { ...state, budgetLimits: budgetItems }
     }
     case 'SET_SAVINGS_TARGET':
       return { ...state, savingsTarget: action.payload }
@@ -357,7 +390,8 @@ export default function SetupWizard({ onClose, editMode = false }) {
     queryFn: () => api.get('/bank-templates/'),
   })
 
-  const [analyzeTriggered, setAnalyzeTriggered] = useState(false)
+  // Auto-trigger analysis on wizard open so results are ready when user reaches step 5/6
+  const [analyzeTriggered, setAnalyzeTriggered] = useState(true)
   const { data: analyzeData, isLoading: loadingAnalyze, error: analyzeError } = useQuery({
     queryKey: ['analyze-setup'],
     queryFn: () => api.get('/analytics/analyze-setup/'),
@@ -442,22 +476,35 @@ export default function SetupWizard({ onClose, editMode = false }) {
   const handleSmartRecurring = useCallback(() => {
     dispatch({ type: 'SET_RECURRING_SOURCE', payload: 'smart' })
     setAnalyzeTriggered(true)
-    if (analyzeData?.recurring_items) {
+    // Map backend field names: suggested_recurring → recurring items
+    if (analyzeData?.suggested_recurring) {
       dispatch({
         type: 'SET_RECURRING_ITEMS',
-        payload: analyzeData.recurring_items.map(r => ({ ...r, included: true })),
+        payload: analyzeData.suggested_recurring.map(r => ({
+          ...r,
+          amount: r.amount || r.avg_amount || 0,
+          included: true,
+        })),
       })
+    }
+    // Also apply suggested savings target
+    if (analyzeData?.suggested_savings_target) {
+      dispatch({ type: 'SET_SAVINGS_TARGET', payload: analyzeData.suggested_savings_target })
     }
   }, [analyzeData])
 
   const handleSmartCategories = useCallback(() => {
     dispatch({ type: 'SET_CATEGORY_SOURCE', payload: 'smart' })
     setAnalyzeTriggered(true)
-    if (analyzeData?.budget_analysis) {
-      dispatch({ type: 'SET_BUDGET_LIMITS', payload: analyzeData.budget_analysis })
+    // Map backend field names: suggested_budget_limits → budget limits
+    if (analyzeData?.suggested_budget_limits) {
+      dispatch({ type: 'SET_BUDGET_LIMITS', payload: analyzeData.suggested_budget_limits })
     }
-    if (analyzeData?.categories) {
-      dispatch({ type: 'SET_CATEGORIES', payload: analyzeData.categories })
+    if (analyzeData?.suggested_categories) {
+      dispatch({ type: 'SET_CATEGORIES', payload: analyzeData.suggested_categories })
+    }
+    if (analyzeData?.suggested_savings_target) {
+      dispatch({ type: 'SET_SAVINGS_TARGET', payload: analyzeData.suggested_savings_target })
     }
   }, [analyzeData])
 
@@ -466,17 +513,22 @@ export default function SetupWizard({ onClose, editMode = false }) {
   useEffect(() => {
     if (analyzeData && analyzeData !== prevAnalyzeRef.current) {
       prevAnalyzeRef.current = analyzeData
-      if (state.recurringSource === 'smart' && analyzeData.recurring_items && state.recurringItems.length === 0) {
+      // Map backend field names to frontend expectations
+      if (state.recurringSource === 'smart' && analyzeData.suggested_recurring && state.recurringItems.length === 0) {
         dispatch({
           type: 'SET_RECURRING_ITEMS',
-          payload: analyzeData.recurring_items.map(r => ({ ...r, included: true })),
+          payload: analyzeData.suggested_recurring.map(r => ({
+            ...r,
+            amount: r.amount || r.avg_amount || 0,
+            included: true,
+          })),
         })
       }
-      if (state.categorySource === 'smart' && analyzeData.budget_analysis && state.budgetLimits.length === 0) {
-        dispatch({ type: 'SET_BUDGET_LIMITS', payload: analyzeData.budget_analysis })
+      if (state.categorySource === 'smart' && analyzeData.suggested_budget_limits && state.budgetLimits.length === 0) {
+        dispatch({ type: 'SET_BUDGET_LIMITS', payload: analyzeData.suggested_budget_limits })
       }
-      if (state.categorySource === 'smart' && analyzeData.categories && state.categories.length === 0) {
-        dispatch({ type: 'SET_CATEGORIES', payload: analyzeData.categories })
+      if (state.categorySource === 'smart' && analyzeData.suggested_categories && state.categories.length === 0) {
+        dispatch({ type: 'SET_CATEGORIES', payload: analyzeData.suggested_categories })
       }
     }
   }, [analyzeData, state.recurringSource, state.categorySource, state.recurringItems.length, state.budgetLimits.length, state.categories.length])
@@ -1100,6 +1152,7 @@ function Step5({ state, dispatch, profiles, onSmartSelect, loading, error }) {
               : (item.confidence || 0) >= 50
                 ? styles.confMed
                 : styles.confLow
+            const isManual = !item.confidence // Manual items have no confidence score
             return (
               <div key={i} className={styles.dataRow}>
                 <input
@@ -1108,9 +1161,37 @@ function Step5({ state, dispatch, profiles, onSmartSelect, loading, error }) {
                   checked={item.included}
                   onChange={() => dispatch({ type: 'TOGGLE_RECURRING_ITEM', payload: i })}
                 />
-                <span className={styles.dataName}>{item.name}</span>
+                <span className={styles.dataName}>
+                  {isManual ? (
+                    <input
+                      className={styles.textInput}
+                      style={{ padding: '4px 8px', fontSize: '0.82rem' }}
+                      type="text"
+                      placeholder="Nome do item"
+                      value={item.name || ''}
+                      onChange={e =>
+                        dispatch({ type: 'UPDATE_RECURRING_ITEM', payload: { index: i, data: { name: e.target.value } } })
+                      }
+                    />
+                  ) : item.name}
+                </span>
                 <span style={{ width: 80 }}>
-                  <span className={`${styles.dataBadge} ${badge.cls}`}>{badge.label}</span>
+                  {isManual ? (
+                    <select
+                      className={styles.profileSelect}
+                      style={{ marginBottom: 0, padding: '4px 6px', fontSize: '0.72rem' }}
+                      value={item.type || 'Fixo'}
+                      onChange={e =>
+                        dispatch({ type: 'UPDATE_RECURRING_ITEM', payload: { index: i, data: { type: e.target.value } } })
+                      }
+                    >
+                      <option value="Fixo">Fixo</option>
+                      <option value="Income">Entrada</option>
+                      <option value="Investimento">Invest.</option>
+                    </select>
+                  ) : (
+                    <span className={`${styles.dataBadge} ${badge.cls}`}>{badge.label}</span>
+                  )}
                 </span>
                 <span className={styles.dataAmount}>
                   <input
@@ -1126,7 +1207,21 @@ function Step5({ state, dispatch, profiles, onSmartSelect, loading, error }) {
                     style={{ width: 90 }}
                   />
                 </span>
-                <span className={styles.dataFreq}>{item.frequency || 'Mensal'}</span>
+                <span className={styles.dataFreq}>
+                  {isManual ? (
+                    <button
+                      className={styles.skipLink}
+                      onClick={() => {
+                        const items = state.recurringItems.filter((_, idx) => idx !== i)
+                        dispatch({ type: 'SET_RECURRING_ITEMS', payload: items })
+                      }}
+                      style={{ textDecoration: 'none', color: 'var(--color-red)', fontSize: '0.85rem' }}
+                      title="Remover"
+                    >
+                      &#10005;
+                    </button>
+                  ) : (item.frequency || 'Mensal')}
+                </span>
                 {state.recurringSource === 'smart' && (
                   <span className={`${styles.dataConf} ${confClass}`}>
                     {item.confidence || 0}%
@@ -1138,9 +1233,23 @@ function Step5({ state, dispatch, profiles, onSmartSelect, loading, error }) {
         </div>
       )}
 
-      {(state.recurringSource === 'blank' || (state.recurringSource === 'existing' && state.recurringItems.length === 0)) && (
+      {/* Always show "+ Adicionar" button when any source is active (including blank) */}
+      {state.recurringSource && (
+        <button
+          className={styles.allocAddBtn}
+          style={{ marginTop: 16 }}
+          onClick={() => dispatch({
+            type: 'SET_RECURRING_ITEMS',
+            payload: [...state.recurringItems, { name: '', type: 'Fixo', amount: 0, due_day: null, included: true }],
+          })}
+        >
+          + Adicionar Item
+        </button>
+      )}
+
+      {state.recurringSource === 'blank' && state.recurringItems.length === 0 && (
         <p className={styles.emptyState}>
-          Voce podera adicionar itens recorrentes nas configuracoes do perfil depois.
+          Clique em "+ Adicionar Item" para adicionar seus gastos e receitas recorrentes.
         </p>
       )}
     </>
@@ -1149,6 +1258,39 @@ function Step5({ state, dispatch, profiles, onSmartSelect, loading, error }) {
 
 // ── Step 6: Categories & Budget ────────────────────────────────
 function Step6({ state, dispatch, onSmartSelect, loading, error }) {
+  const handleDefaultCategories = () => {
+    dispatch({ type: 'SET_CATEGORY_SOURCE', payload: 'default' })
+    dispatch({
+      type: 'SET_BUDGET_LIMITS',
+      payload: DEFAULT_CATEGORIES.map(c => ({
+        category: c.name,
+        type: c.type,
+        avg_monthly: 0,
+        suggested_limit: c.limit,
+      })),
+    })
+    dispatch({
+      type: 'SET_CATEGORIES',
+      payload: DEFAULT_CATEGORIES.map(c => c.name),
+    })
+  }
+
+  const handleBlankCategories = () => {
+    dispatch({ type: 'SET_CATEGORY_SOURCE', payload: 'blank' })
+    dispatch({ type: 'SET_CATEGORIES', payload: [] })
+    dispatch({ type: 'SET_BUDGET_LIMITS', payload: [] })
+  }
+
+  const handleAddCategory = () => {
+    dispatch({
+      type: 'ADD_BUDGET_ITEM',
+      payload: { category: '', type: 'Variavel', avg_monthly: 0, suggested_limit: 0, _manual: true },
+    })
+  }
+
+  // Show the table whenever a source is selected (even blank, once items are added)
+  const showTable = state.budgetLimits.length > 0 && !loading
+
   return (
     <>
       <div className={styles.stepLabel}>Passo 6 de {TOTAL_STEPS}</div>
@@ -1169,24 +1311,20 @@ function Step6({ state, dispatch, onSmartSelect, loading, error }) {
 
         <div
           className={`${styles.sourceCard} ${state.categorySource === 'default' ? styles.sourceCardActive : ''}`}
-          onClick={() => dispatch({ type: 'SET_CATEGORY_SOURCE', payload: 'default' })}
+          onClick={handleDefaultCategories}
         >
           <div className={styles.sourceIcon}>&#128195;</div>
           <div className={styles.sourceTitle}>Categorias Padrao</div>
-          <div className={styles.sourceDesc}>Use o conjunto padrao de categorias</div>
+          <div className={styles.sourceDesc}>Categorias variaveis comuns ja configuradas</div>
         </div>
 
         <div
           className={`${styles.sourceCard} ${state.categorySource === 'blank' ? styles.sourceCardActive : ''}`}
-          onClick={() => {
-            dispatch({ type: 'SET_CATEGORY_SOURCE', payload: 'blank' })
-            dispatch({ type: 'SET_CATEGORIES', payload: [] })
-            dispatch({ type: 'SET_BUDGET_LIMITS', payload: [] })
-          }}
+          onClick={handleBlankCategories}
         >
           <div className={styles.sourceIcon}>&#128221;</div>
           <div className={styles.sourceTitle}>Comecar Vazio</div>
-          <div className={styles.sourceDesc}>Configure tudo manualmente depois</div>
+          <div className={styles.sourceDesc}>Adicione categorias manualmente abaixo</div>
         </div>
       </div>
 
@@ -1201,19 +1339,59 @@ function Step6({ state, dispatch, onSmartSelect, loading, error }) {
         <div className={styles.errorMsg}>Erro ao analisar dados: {error.message}</div>
       )}
 
-      {state.budgetLimits.length > 0 && !loading && (
+      {showTable && (
         <div className={styles.dataTable}>
           <div className={styles.dataTableHead}>
             <span className={styles.dataColFlex}>Categoria</span>
-            <span className={styles.dataColSm}>Media Mensal</span>
-            <span className={styles.dataColSm}>Limite Sugerido</span>
+            <span className={styles.dataColSm}>Tipo</span>
+            {state.categorySource === 'smart' && (
+              <span className={styles.dataColSm}>Media Mensal</span>
+            )}
+            <span className={styles.dataColSm}>Limite</span>
+            <span style={{ width: 32 }} />
           </div>
           {state.budgetLimits.map((b, i) => (
             <div key={i} className={styles.dataRow}>
-              <span className={styles.dataColFlex}>{b.category || b.name}</span>
-              <span className={styles.dataColSm} style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
-                R$ {(b.avg_monthly || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
+              <span className={styles.dataColFlex}>
+                {b._manual ? (
+                  <input
+                    className={styles.textInput}
+                    style={{ width: '100%', padding: '4px 8px', fontSize: '0.82rem' }}
+                    type="text"
+                    value={b.category || b.name || ''}
+                    placeholder="Nome da categoria"
+                    onChange={e =>
+                      dispatch({
+                        type: 'UPDATE_BUDGET_ITEM',
+                        payload: { index: i, data: { category: e.target.value, name: e.target.value } },
+                      })
+                    }
+                  />
+                ) : (
+                  b.category || b.name
+                )}
               </span>
+              <span className={styles.dataColSm}>
+                <select
+                  className={styles.amtInput}
+                  style={{ width: 90, fontSize: '0.75rem' }}
+                  value={b.type || 'Variavel'}
+                  onChange={e =>
+                    dispatch({
+                      type: 'UPDATE_BUDGET_ITEM',
+                      payload: { index: i, data: { type: e.target.value } },
+                    })
+                  }
+                >
+                  <option value="Variavel">Variavel</option>
+                  <option value="Fixo">Fixo</option>
+                </select>
+              </span>
+              {state.categorySource === 'smart' && (
+                <span className={styles.dataColSm} style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
+                  R$ {(b.avg_monthly || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
+                </span>
+              )}
               <span className={styles.dataColSm}>
                 <input
                   className={styles.amtInput}
@@ -1228,16 +1406,39 @@ function Step6({ state, dispatch, onSmartSelect, loading, error }) {
                   style={{ width: 90 }}
                 />
               </span>
+              <span style={{ width: 32, display: 'flex', justifyContent: 'center' }}>
+                <button
+                  className={styles.skipLink}
+                  onClick={() => dispatch({ type: 'REMOVE_BUDGET_ITEM', payload: i })}
+                  style={{ textDecoration: 'none', color: 'var(--color-red)', cursor: 'pointer', background: 'none', border: 'none', fontSize: '0.9rem' }}
+                >
+                  &#10005;
+                </button>
+              </span>
             </div>
           ))}
         </div>
       )}
 
-      {state.categorySource && state.categorySource !== 'blank' && (
+      {/* Inline add button — always visible once a source is selected */}
+      {state.categorySource && (
+        <button className={styles.allocAddBtn} onClick={handleAddCategory}>
+          + Adicionar Categoria
+        </button>
+      )}
+
+      {state.categorySource === 'blank' && state.budgetLimits.length === 0 && (
+        <p className={styles.emptyState}>
+          Clique em "+ Adicionar Categoria" para criar suas categorias de gastos.
+        </p>
+      )}
+
+      {/* Savings target — single "Meta de Reserva" replaces old split poupanca/investimento */}
+      {state.categorySource && (
         <>
           <div className={styles.targetRow}>
             <div className={styles.targetGroup}>
-              <span className={styles.targetLabel}>Meta de Poupanca</span>
+              <span className={styles.targetLabel}>Meta de Reserva (% da renda para guardar)</span>
               <input
                 className={styles.targetPct}
                 type="number"
@@ -1248,70 +1449,55 @@ function Step6({ state, dispatch, onSmartSelect, loading, error }) {
               />
               <span className={styles.targetUnit}>%</span>
             </div>
-            <div className={styles.targetGroup}>
-              <span className={styles.targetLabel}>Meta de Investimento</span>
-              <input
-                className={styles.targetPct}
-                type="number"
-                min={0}
-                max={100}
-                value={state.investmentTarget}
-                onChange={e => dispatch({ type: 'SET_INVESTMENT_TARGET', payload: parseFloat(e.target.value) || 0 })}
-              />
-              <span className={styles.targetUnit}>%</span>
+          </div>
+
+          {/* Investment allocation — optional, for specifying WHERE savings go */}
+          {state.investmentAllocation.length > 0 && (
+            <div className={styles.allocSection}>
+              <div className={styles.allocTitle}>Alocacao de Investimentos (opcional)</div>
+              {state.investmentAllocation.map((a, i) => (
+                <div key={i} className={styles.allocRow}>
+                  <input
+                    className={styles.textInput}
+                    style={{ flex: 1, padding: '6px 10px', fontSize: '0.82rem' }}
+                    type="text"
+                    value={a.name}
+                    onChange={e =>
+                      dispatch({ type: 'UPDATE_ALLOCATION', payload: { index: i, data: { name: e.target.value } } })
+                    }
+                  />
+                  <input
+                    className={styles.targetPct}
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={a.percentage}
+                    onChange={e =>
+                      dispatch({
+                        type: 'UPDATE_ALLOCATION',
+                        payload: { index: i, data: { percentage: parseFloat(e.target.value) || 0 } },
+                      })
+                    }
+                  />
+                  <span className={styles.targetUnit}>%</span>
+                  <button
+                    className={styles.skipLink}
+                    onClick={() => dispatch({ type: 'REMOVE_ALLOCATION', payload: i })}
+                    style={{ textDecoration: 'none', color: 'var(--color-red)' }}
+                  >
+                    &#10005;
+                  </button>
+                </div>
+              ))}
             </div>
-          </div>
-
-          <div className={styles.allocSection}>
-            <div className={styles.allocTitle}>Alocacao de Investimentos</div>
-            {state.investmentAllocation.map((a, i) => (
-              <div key={i} className={styles.allocRow}>
-                <input
-                  className={styles.textInput}
-                  style={{ flex: 1, padding: '6px 10px', fontSize: '0.82rem' }}
-                  type="text"
-                  value={a.name}
-                  onChange={e =>
-                    dispatch({ type: 'UPDATE_ALLOCATION', payload: { index: i, data: { name: e.target.value } } })
-                  }
-                />
-                <input
-                  className={styles.targetPct}
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={a.percentage}
-                  onChange={e =>
-                    dispatch({
-                      type: 'UPDATE_ALLOCATION',
-                      payload: { index: i, data: { percentage: parseFloat(e.target.value) || 0 } },
-                    })
-                  }
-                />
-                <span className={styles.targetUnit}>%</span>
-                <button
-                  className={styles.skipLink}
-                  onClick={() => dispatch({ type: 'REMOVE_ALLOCATION', payload: i })}
-                  style={{ textDecoration: 'none', color: 'var(--color-red)' }}
-                >
-                  &#10005;
-                </button>
-              </div>
-            ))}
-            <button
-              className={styles.allocAddBtn}
-              onClick={() => dispatch({ type: 'ADD_ALLOCATION', payload: { name: '', percentage: 0 } })}
-            >
-              + Adicionar Alocacao
-            </button>
-          </div>
+          )}
+          <button
+            className={styles.allocAddBtn}
+            onClick={() => dispatch({ type: 'ADD_ALLOCATION', payload: { name: '', percentage: 0 } })}
+          >
+            + Adicionar Alocacao de Investimento
+          </button>
         </>
-      )}
-
-      {state.categorySource === 'blank' && (
-        <p className={styles.emptyState}>
-          Voce podera configurar categorias e orcamento nas configuracoes do perfil depois.
-        </p>
       )}
     </>
   )
@@ -1622,12 +1808,8 @@ function Step10Review({
             <span className={styles.reviewValueAccent}>{validCatRules}</span>
           </div>
           <div className={styles.reviewRow}>
-            <span className={styles.reviewLabel}>Meta poupanca</span>
+            <span className={styles.reviewLabel}>Meta de reserva</span>
             <span className={styles.reviewValue}>{state.savingsTarget}%</span>
-          </div>
-          <div className={styles.reviewRow}>
-            <span className={styles.reviewLabel}>Meta investimento</span>
-            <span className={styles.reviewValue}>{state.investmentTarget}%</span>
           </div>
         </div>
       </div>

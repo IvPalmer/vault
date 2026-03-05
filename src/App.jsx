@@ -6,6 +6,7 @@ import MonthlyOverview from './components/MonthlyOverview'
 import Analytics from './components/Analytics'
 import Settings from './components/Settings'
 import SetupWizard from './components/SetupWizard'
+import ErrorBoundary from './components/ErrorBoundary'
 import { useProfile } from './context/ProfileContext'
 import './App.css'
 
@@ -37,12 +38,12 @@ function App() {
       <Layout>
         <Routes>
           {/* Shared home (no profile slug) */}
-          <Route path="/home" element={<Home />} />
+          <Route path="/home" element={<ErrorBoundary fallbackMessage="Erro ao carregar Home"><Home /></ErrorBoundary>} />
 
           {/* Profile-scoped routes */}
-          <Route path="/:profileSlug/overview" element={<MonthlyOverview />} />
-          <Route path="/:profileSlug/analytics" element={<Analytics />} />
-          <Route path="/:profileSlug/settings" element={<Settings onOpenWizard={handleOpenWizardFromSettings} />} />
+          <Route path="/:profileSlug/overview" element={<ErrorBoundary fallbackMessage="Erro ao carregar Visão Mensal"><MonthlyOverview /></ErrorBoundary>} />
+          <Route path="/:profileSlug/analytics" element={<ErrorBoundary fallbackMessage="Erro ao carregar Analytics"><Analytics /></ErrorBoundary>} />
+          <Route path="/:profileSlug/settings" element={<ErrorBoundary fallbackMessage="Erro ao carregar Configurações"><Settings onOpenWizard={handleOpenWizardFromSettings} /></ErrorBoundary>} />
 
           {/* Legacy routes — redirect to profile-scoped versions */}
           <Route path="/overview" element={profileSlug ? <Navigate to={`/${profileSlug}/overview`} replace /> : null} />

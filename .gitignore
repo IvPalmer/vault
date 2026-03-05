@@ -48,5 +48,8 @@ reminders-helper
 backend/credentials.json
 backend/token.json
 
+# Auto-generated secret key
+backend/.secret_key
+
 # Docker
 postgres_data/

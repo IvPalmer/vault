@@ -1,4 +1,5 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useMonth } from '../context/MonthContext'
 import useInvalidateAnalytics from '../hooks/useInvalidateAnalytics'
@@ -32,9 +33,12 @@ function AmountCell({ value, positive }) {
   return <span className={cls}>R$ {fmt(value)}</span>
 }
 
-/** Inline type selector — click to cycle through types */
+/** Inline type selector — portal-based dropdown to escape table overflow:hidden */
 function TypeSelector({ value, onChange, disabled }) {
   const [isOpen, setIsOpen] = useState(false)
+  const [dropdownPos, setDropdownPos] = useState(null)
+  const triggerRef = useRef(null)
+  const dropdownRef = useRef(null)
 
   const typeMap = {
     Fixo: { label: 'Fixo', cls: styles.typeFixo },
@@ -46,6 +50,38 @@ function TypeSelector({ value, onChange, disabled }) {
   const types = ['Fixo', 'Variavel', 'Income', 'Investimento']
   const t = typeMap[value] || { label: value, cls: '' }
 
+  // Position dropdown using fixed positioning (portal)
+  useEffect(() => {
+    if (!isOpen || !triggerRef.current) return
+    const rect = triggerRef.current.getBoundingClientRect()
+    let left = rect.left
+    const dropdownWidth = 130
+    if (left + dropdownWidth > window.innerWidth - 16) {
+      left = window.innerWidth - dropdownWidth - 16
+    }
+    let top = rect.bottom + 4
+    const dropdownHeight = 160
+    if (top + dropdownHeight > window.innerHeight - 16) {
+      top = rect.top - dropdownHeight - 4
+    }
+    setDropdownPos({ top, left, width: dropdownWidth })
+  }, [isOpen])
+
+  // Close on outside click
+  useEffect(() => {
+    if (!isOpen) return
+    function handleClick(e) {
+      if (
+        dropdownRef.current && !dropdownRef.current.contains(e.target) &&
+        triggerRef.current && !triggerRef.current.contains(e.target)
+      ) {
+        setIsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [isOpen])
+
   if (disabled) {
     return <span className={`${styles.typeBadge} ${t.cls}`}>{t.label}</span>
   }
@@ -53,14 +89,25 @@ function TypeSelector({ value, onChange, disabled }) {
   return (
     <div className={styles.typeSelectWrap}>
       <button
+        ref={triggerRef}
         className={`${styles.typeBadge} ${t.cls} ${styles.typeBadgeClickable}`}
         onClick={() => setIsOpen(!isOpen)}
         title="Clique para alterar tipo"
       >
         {t.label} ▾
       </button>
-      {isOpen && (
-        <div className={styles.typeDropdown}>
+      {isOpen && dropdownPos && createPortal(
+        <div
+          ref={dropdownRef}
+          className={styles.typeDropdown}
+          style={{
+            position: 'fixed',
+            top: dropdownPos.top,
+            left: dropdownPos.left,
+            width: dropdownPos.width,
+            zIndex: 9999,
+          }}
+        >
           {types.map((type) => {
             const ti = typeMap[type]
             return (
@@ -77,7 +124,8 @@ function TypeSelector({ value, onChange, disabled }) {
               </button>
             )
           })}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

@@ -24,7 +24,7 @@ from django.db import transaction as db_transaction
 from api.models import (
     Profile,
     Account, Category, Subcategory, CategorizationRule,
-    RenameRule, Transaction, BalanceOverride,
+    RenameRule, Transaction, BalanceOverride, BalanceAnchor,
     RecurringTemplate, RecurringMapping, BudgetConfig,
     MetricasOrderConfig, CustomMetric,
 )
@@ -120,6 +120,7 @@ class Command(BaseCommand):
         self._import_subcategory_rules(profile_name)
         self._import_transactions(profile_name)
         self._import_balance_overrides(profile_name)
+        self._extract_balance_anchors(profile_name)
         self._restore_from_backup()
         self._print_verification()
 
@@ -552,6 +553,59 @@ class Command(BaseCommand):
                 imported += 1
 
         self.stdout.write(f'  Imported {imported} balance overrides')
+
+    def _extract_balance_anchors(self, profile_name):
+        """Extract LEDGERBAL from OFX files to create balance anchors for checking accounts."""
+        import re
+        import glob
+        from datetime import date as dt_date
+
+        self.stdout.write('\n=== Extracting Balance Anchors from OFX files ===')
+        data_dir = os.path.join(LEGACY_DIR, 'SampleData', profile_name)
+        if not os.path.isdir(data_dir):
+            self.stdout.write('  No SampleData dir found, skipping')
+            return
+
+        ofx_files = glob.glob(os.path.join(data_dir, '*.ofx'))
+        if not ofx_files:
+            self.stdout.write('  No OFX files found, skipping')
+            return
+
+        imported = 0
+        for path in ofx_files:
+            try:
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                except UnicodeDecodeError:
+                    with open(path, 'r', encoding='latin1', errors='ignore') as f:
+                        content = f.read()
+
+                # Only process checking account OFX files (not credit card)
+                # Check if it's a BANKACCTFROM (checking) vs CCACCTFROM (credit card)
+                if '<CCACCTFROM>' in content:
+                    continue
+
+                bal_match = re.search(r'<BALAMT>([-0-9.]+)', content)
+                date_match = re.search(r'<DTASOF>(\d{8})', content)
+                if bal_match and date_match:
+                    balance = Decimal(bal_match.group(1))
+                    dt_str = date_match.group(1)
+                    anchor_date = dt_date(int(dt_str[:4]), int(dt_str[4:6]), int(dt_str[6:8]))
+                    filename = os.path.basename(path)
+
+                    _, created = BalanceAnchor.objects.update_or_create(
+                        profile=self.profile,
+                        date=anchor_date,
+                        defaults={'balance': balance, 'source_file': filename},
+                    )
+                    if created:
+                        imported += 1
+                    self.stdout.write(f'  {filename}: R$ {balance} on {anchor_date}')
+            except Exception as e:
+                self.stdout.write(self.style.WARNING(f'  Error parsing {os.path.basename(path)}: {e}'))
+
+        self.stdout.write(f'  Extracted {imported} balance anchors')
 
     def _restore_from_backup(self):
         """Restore RecurringMapping and BudgetConfig from backup if it exists."""

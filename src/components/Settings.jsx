@@ -53,6 +53,223 @@ function TemplateTypeSelector({ value, onChange }) {
 }
 
 
+function SalarySection({ config, projection, templates, editing, setEditing, syncing, syncResult, onSync, onSave }) {
+  const [form, setForm] = useState({})
+  const incomeTemplates = templates.filter(t => t.template_type === 'Income')
+
+  const startEdit = () => {
+    setForm({
+      hourly_rate_usd: config?.hourly_rate_usd || 52,
+      hours_per_day: config?.hours_per_day || 8,
+      wise_fee_pct: config?.wise_fee_pct || 0.0091,
+      wise_fee_flat: config?.wise_fee_flat || 0.46,
+      tax_hold_pct: config?.tax_hold_pct || 0.08,
+      advance_recoup_pct: config?.advance_recoup_pct || 0.125,
+      advance_start_date: config?.advance_start_date || '',
+      advance_num_cycles: config?.advance_num_cycles || 0,
+      income_template_id: config?.income_template_id || '',
+    })
+    setEditing(true)
+  }
+
+  const fmtBrl = (v) => v != null ? `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '—'
+  const fmtUsd = (v) => v != null ? `$ ${Number(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '—'
+
+  const currentMonth = projection?.months?.[0]
+  const nextMonth = projection?.months?.[1]
+
+  return (
+    <div className={styles.section}>
+      <div className={styles.sectionHeader}>
+        <div className={styles.sectionIcon}>💰</div>
+        <div>
+          <h2 className={styles.sectionTitle}>Projecao Salarial</h2>
+          <p className={styles.sectionDesc}>
+            Calculo automatico: USD/h &rarr; Wise &rarr; BRL &rarr; conta pessoal
+          </p>
+        </div>
+        {!editing && config != null && (
+          <button className={styles.sectionAction} onClick={startEdit}>Editar</button>
+        )}
+      </div>
+
+      <div className={styles.sectionBody}>
+        {config == null ? (
+          <p className={styles.emptyMsg}>Nenhuma configuracao salarial encontrada.</p>
+        ) : editing ? (
+          <div className={styles.salaryForm}>
+            <div className={styles.salaryFormGrid}>
+              <label>
+                <span>Taxa horaria (USD)</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  className={styles.formInput}
+                  value={form.hourly_rate_usd}
+                  onChange={(e) => setForm({ ...form, hourly_rate_usd: e.target.value })}
+                />
+              </label>
+              <label>
+                <span>Horas/dia</span>
+                <input
+                  type="number"
+                  step="0.5"
+                  className={styles.formInput}
+                  value={form.hours_per_day}
+                  onChange={(e) => setForm({ ...form, hours_per_day: e.target.value })}
+                />
+              </label>
+              <label>
+                <span>Wise variavel (%)</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  className={styles.formInput}
+                  value={(form.wise_fee_pct * 100).toFixed(2)}
+                  onChange={(e) => setForm({ ...form, wise_fee_pct: parseFloat(e.target.value) / 100 || 0 })}
+                />
+              </label>
+              <label>
+                <span>Wise fixa (USD)</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  className={styles.formInput}
+                  value={form.wise_fee_flat}
+                  onChange={(e) => setForm({ ...form, wise_fee_flat: parseFloat(e.target.value) || 0 })}
+                />
+              </label>
+              <label>
+                <span>Retenção fiscal (%)</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  className={styles.formInput}
+                  value={(form.tax_hold_pct * 100).toFixed(0)}
+                  onChange={(e) => setForm({ ...form, tax_hold_pct: parseFloat(e.target.value) / 100 || 0 })}
+                />
+              </label>
+              <label>
+                <span>Template de Entrada</span>
+                <select
+                  className={styles.formSelect}
+                  value={form.income_template_id}
+                  onChange={(e) => setForm({ ...form, income_template_id: e.target.value })}
+                >
+                  <option value="">— Selecionar —</option>
+                  {incomeTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Adiantamento recoup (%)</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  className={styles.formInput}
+                  value={(form.advance_recoup_pct * 100).toFixed(1)}
+                  onChange={(e) => setForm({ ...form, advance_recoup_pct: parseFloat(e.target.value) / 100 || 0 })}
+                />
+              </label>
+              <label>
+                <span>Inicio recoup (YYYY-MM)</span>
+                <input
+                  type="text"
+                  className={styles.formInput}
+                  value={form.advance_start_date}
+                  onChange={(e) => setForm({ ...form, advance_start_date: e.target.value })}
+                  placeholder="2026-02"
+                />
+              </label>
+              <label>
+                <span>Ciclos de recoup</span>
+                <input
+                  type="number"
+                  className={styles.formInput}
+                  value={form.advance_num_cycles}
+                  onChange={(e) => setForm({ ...form, advance_num_cycles: parseInt(e.target.value) || 0 })}
+                />
+              </label>
+            </div>
+            <div className={styles.salaryFormActions}>
+              <button className={styles.formSaveBtn} onClick={() => onSave(form)}>Salvar</button>
+              <button className={styles.cancelBtn} onClick={() => setEditing(false)}>Cancelar</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Summary stats */}
+            <div className={styles.statsGrid}>
+              <div className={styles.stat}>
+                <span className={styles.statValue}>{fmtUsd(config?.hourly_rate_usd)}/h</span>
+                <span className={styles.statLabel}>Taxa</span>
+              </div>
+              <div className={styles.stat}>
+                <span className={styles.statValue}>{projection?.usd_brl?.toFixed(2) || '—'}</span>
+                <span className={styles.statLabel}>USD/BRL {projection?.wise_source === 'wise_api' ? '(live)' : ''}</span>
+              </div>
+              <div className={styles.stat}>
+                <span className={styles.statValue}>{fmtBrl(currentMonth?.brl_personal)}</span>
+                <span className={styles.statLabel}>Este Mes</span>
+              </div>
+              <div className={styles.stat}>
+                <span className={styles.statValue}>{fmtBrl(nextMonth?.brl_personal)}</span>
+                <span className={styles.statLabel}>Proximo</span>
+              </div>
+            </div>
+
+            {/* Monthly breakdown */}
+            {projection?.months && (
+              <div className={styles.salaryTable}>
+                <div className={styles.salaryTableHeader}>
+                  <span>Mes</span>
+                  <span>Dias Uteis</span>
+                  <span>Bruto USD</span>
+                  <span>Liquido BRL</span>
+                </div>
+                {projection.months.slice(0, 6).map((m) => (
+                  <div key={m.month} className={styles.salaryTableRow}>
+                    <span>{m.month}</span>
+                    <span>{m.weekdays}</span>
+                    <span>{fmtUsd(m.gross_usd)}</span>
+                    <span className={styles.salaryBrl}>{fmtBrl(m.brl_personal)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Sync button */}
+            <div className={styles.importSection}>
+              <button
+                className={styles.importBtn}
+                onClick={onSync}
+                disabled={syncing}
+              >
+                {syncing ? 'Sincronizando...' : 'Sincronizar Projecao'}
+              </button>
+              <span className={styles.importHint}>
+                Atualiza BudgetConfig com valores salariais projetados
+              </span>
+            </div>
+
+            {syncResult && (
+              <div className={syncResult.success ? styles.successMsg : styles.errorMsg}>
+                {syncResult.success ? (
+                  <span>Sincronizado: {syncResult.months} meses atualizados (USD/BRL {syncResult.rate})</span>
+                ) : (
+                  <span>Erro: {syncResult.error}</span>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+
 function Settings({ onOpenWizard }) {
   const queryClient = useQueryClient()
   const fileRef = useRef(null)
@@ -102,6 +319,11 @@ function Settings({ onOpenWizard }) {
   const [newAcctClosingDay, setNewAcctClosingDay] = useState('')
   const [newAcctDueDay, setNewAcctDueDay] = useState('')
   const [newAcctSaving, setNewAcctSaving] = useState(false)
+
+  // Salary config
+  const [salaryEditing, setSalaryEditing] = useState(false)
+  const [salarySyncing, setSalarySyncing] = useState(false)
+  const [salarySyncResult, setSalarySyncResult] = useState(null)
 
   // Rename rules
   const [showNewRenameForm, setShowNewRenameForm] = useState(false)
@@ -156,6 +378,23 @@ function Settings({ onOpenWizard }) {
       )
     )
   }, [renamesData, renameSearch])
+
+  // Salary config + projection
+  const { data: salaryConfig, refetch: refetchSalaryConfig } = useQuery({
+    queryKey: ['salary-config'],
+    queryFn: async () => {
+      try { return await api.get('/salary/config/') }
+      catch (e) { if (e.status === 404) return null; throw e }
+    },
+  })
+  const { data: salaryProjection, refetch: refetchSalaryProjection } = useQuery({
+    queryKey: ['salary-projection'],
+    queryFn: async () => {
+      try { return await api.get('/salary/projection/') }
+      catch (e) { if (e.status === 404) return null; throw e }
+    },
+    enabled: salaryConfig != null,
+  })
 
   // Bank templates query (for dynamic import instructions)
   const { data: bankTemplatesData } = useQuery({
@@ -402,6 +641,33 @@ function Settings({ onOpenWizard }) {
       setImportResult({ success: false, error: err.message })
     } finally {
       setImporting(false)
+    }
+  }
+
+  // Salary config handlers
+  const handleSalarySync = async () => {
+    setSalarySyncing(true)
+    setSalarySyncResult(null)
+    try {
+      const res = await api.post('/salary/sync/')
+      setSalarySyncResult({ success: true, months: res.budget_configs_upserted, rate: res.usd_brl })
+      refetchSalaryProjection()
+      queryClient.invalidateQueries({ queryKey: ['analytics-metricas'] })
+    } catch (err) {
+      setSalarySyncResult({ success: false, error: err.message })
+    } finally {
+      setSalarySyncing(false)
+    }
+  }
+
+  const handleSalaryConfigSave = async (updates) => {
+    try {
+      await api.put('/salary/config/', updates)
+      refetchSalaryConfig()
+      refetchSalaryProjection()
+      setSalaryEditing(false)
+    } catch (err) {
+      console.error('Failed to save salary config:', err)
     }
   }
 
@@ -1718,7 +1984,22 @@ function Settings({ onOpenWizard }) {
       </div>
 
       {/* ============================================================ */}
-      {/* SECTION 9: STATUS                                            */}
+      {/* SECTION 9: SALARY PROJECTION                                 */}
+      {/* ============================================================ */}
+      <SalarySection
+        config={salaryConfig}
+        projection={salaryProjection}
+        templates={templatesData?.templates || []}
+        editing={salaryEditing}
+        setEditing={setSalaryEditing}
+        syncing={salarySyncing}
+        syncResult={salarySyncResult}
+        onSync={handleSalarySync}
+        onSave={handleSalaryConfigSave}
+      />
+
+      {/* ============================================================ */}
+      {/* SECTION 10: STATUS                                           */}
       {/* ============================================================ */}
       {status && (
         <div className={styles.section}>

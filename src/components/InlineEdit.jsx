@@ -3,15 +3,46 @@ import styles from './InlineEdit.module.css'
 
 /**
  * Safely evaluate a math expression (supports +, -, *, /, parentheses).
+ * Uses a recursive descent parser instead of eval/new Function for CSP safety.
  * Returns the result or NaN if invalid.
  */
 function evalFormula(expr) {
   const cleaned = expr.replace(/\s/g, '').replace(/,/g, '.')
-  // Only allow digits, decimal points, operators, and parentheses
   if (!/^[\d.+\-*/()]+$/.test(cleaned)) return NaN
   try {
-    // Use Function constructor to evaluate (safe since we validated the charset)
-    const result = new Function(`return (${cleaned})`)()
+    let pos = 0
+    const peek = () => cleaned[pos]
+    const consume = (ch) => { if (cleaned[pos] === ch) pos++; else throw new Error('parse') }
+
+    function parseExpr() {
+      let left = parseTerm()
+      while (peek() === '+' || peek() === '-') {
+        const op = cleaned[pos++]
+        const right = parseTerm()
+        left = op === '+' ? left + right : left - right
+      }
+      return left
+    }
+    function parseTerm() {
+      let left = parseFactor()
+      while (peek() === '*' || peek() === '/') {
+        const op = cleaned[pos++]
+        const right = parseFactor()
+        left = op === '*' ? left * right : left / right
+      }
+      return left
+    }
+    function parseFactor() {
+      if (peek() === '(') { consume('('); const val = parseExpr(); consume(')'); return val }
+      if (peek() === '-') { pos++; return -parseFactor() }
+      const start = pos
+      while (pos < cleaned.length && /[\d.]/.test(cleaned[pos])) pos++
+      if (pos === start) throw new Error('parse')
+      return parseFloat(cleaned.slice(start, pos))
+    }
+
+    const result = parseExpr()
+    if (pos !== cleaned.length) return NaN
     return typeof result === 'number' && isFinite(result) ? result : NaN
   } catch {
     return NaN

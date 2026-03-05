@@ -34,6 +34,7 @@ class CategorySerializer(serializers.ModelSerializer):
 
 class CategorizationRuleSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
+    subcategory_name = serializers.CharField(source='subcategory.name', read_only=True, default=None)
 
     class Meta:
         model = CategorizationRule

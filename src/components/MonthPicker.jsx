@@ -8,6 +8,7 @@ const MONTH_LABELS = {
   '09': 'Set', '10': 'Out', '11': 'Nov', '12': 'Dez',
 }
 
+// Earliest month to show in the picker — set to when financial data starts
 const MIN_MONTH = '2025-12'
 
 function formatMonth(month) {

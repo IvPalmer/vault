@@ -144,6 +144,79 @@
   color: var(--color-red);
 }
 
+/* Clickable header */
+.clickable {
+  cursor: pointer;
+}
+.clickable:hover .catName {
+  color: var(--color-accent);
+}
+
+.expandIcon {
+  font-size: 0.6rem;
+  margin-right: 4px;
+  opacity: 0.6;
+}
+
+/* Subcategory breakdown */
+.subBreakdown {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.subRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.subHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.68rem;
+}
+
+.subName {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.subNameDim {
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+.subValues {
+  font-variant-numeric: tabular-nums;
+}
+
+.subSpent {
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.subLimit {
+  color: var(--color-text-secondary);
+  font-weight: 400;
+}
+
+.subBarTrack {
+  height: 2px;
+  background: var(--color-surface-hover);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.subBarFill {
+  height: 100%;
+  border-radius: 1px;
+  transition: width 0.3s ease;
+}
+
 /* Loading / error */
 .loading,
 .error {

@@ -595,6 +595,11 @@
   min-width: 80px;
 }
 
+.ruleSubcat {
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+}
+
 /* ============================================================ */
 /* SECTION 4: IMPORT                                            */
 /* ============================================================ */
@@ -1258,6 +1263,82 @@
   white-space: pre-line;
 }
 
+/* ===== Salary Section ===== */
+.salaryForm {
+  padding: var(--space-sm) 0;
+}
+
+.salaryFormGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-sm);
+}
+
+.salaryFormGrid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.salaryFormActions {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.cancelBtn {
+  padding: 6px 16px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-family: var(--font-sans);
+  cursor: pointer;
+}
+
+.cancelBtn:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.emptyMsg {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  padding: var(--space-sm) 0;
+}
+
+.salaryTable {
+  margin-top: var(--space-sm);
+}
+
+.salaryTableHeader {
+  display: grid;
+  grid-template-columns: 1fr 0.7fr 1fr 1fr;
+  padding: 6px 0;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-secondary);
+  border-bottom: 2px solid var(--color-border);
+}
+
+.salaryTableRow {
+  display: grid;
+  grid-template-columns: 1fr 0.7fr 1fr 1fr;
+  padding: 6px 0;
+  font-size: 0.8rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.salaryBrl {
+  font-weight: 600;
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+}
+
 /* ===== Responsive ===== */
 @media (max-width: 768px) {
   .formatGrid {
@@ -1288,5 +1369,13 @@
   }
   .sectionHeader {
     flex-wrap: wrap;
+  }
+  .salaryFormGrid {
+    grid-template-columns: 1fr;
+  }
+  .salaryTableHeader,
+  .salaryTableRow {
+    grid-template-columns: 1fr 0.5fr 1fr 1fr;
+    font-size: 0.7rem;
   }
 }
