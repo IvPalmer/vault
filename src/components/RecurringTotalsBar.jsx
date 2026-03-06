@@ -73,6 +73,7 @@ function RecurringTotalsBar() {
   const investHint = investExpected > invest.expected ? `(meta ${recData?.savings_target_pct ?? 20}%)` : null
 
   const cartao = metricasData?.fatura_total ?? 0
+  const cartaoPaid = cartao - (metricasData?.fatura_remaining ?? cartao)
   const sobra = income.expected - fixo.expected - investExpected - cartao
 
   return (
@@ -80,6 +81,16 @@ function RecurringTotalsBar() {
       <TotalRow label="Entradas" expected={income.expected} actual={income.actual} paid={income.paid} pending={income.pending} color="var(--color-green)" isIncome />
       <TotalRow label="Fixos" expected={fixo.expected} actual={fixo.actual} paid={fixo.paid} pending={fixo.pending} color="var(--color-red)" />
       <TotalRow label="Investimentos" expected={investExpected} actual={invest.actual} paid={invest.paid} pending={invest.pending} color="#6366f1" hint={investHint} />
+      <div className={styles.totalsRow}>
+        <span className={styles.totalsLabel} style={{ color: 'var(--color-orange)' }}>Cartão</span>
+        <span className={styles.totalsExpected}>Fatura: <strong>R$ {fmt(cartao)}</strong></span>
+        <span className={styles.totalsActual}>
+          Pago: <strong style={{ color: cartaoPaid > 0 ? 'var(--color-orange)' : 'var(--color-text-secondary)' }}>R$ {fmt(cartaoPaid)}</strong>
+        </span>
+        <span className={styles.totalsStatus}>
+          {cartaoPaid >= cartao ? <span className={styles.totalsPaid}>quitado</span> : <span className={styles.totalsPending}>pendente</span>}
+        </span>
+      </div>
       <div className={styles.totalsDivider} />
       <div className={styles.totalsNet}>
         <span className={styles.totalsNetLabel}>ORÇAMENTO VARIÁVEL</span>
