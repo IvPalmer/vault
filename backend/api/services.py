@@ -1058,6 +1058,10 @@ def get_metricas(month_str, profile=None):
     projected_cc = parcelas_total if fatura_total == 0 else fatura_total
     # Base expenses WITHOUT investment (used to determine affordable invest)
     gastos_base = fixo_expected_total + projected_cc
+    # For current month: include actual variable spending already incurred
+    # (checking debit + CC purchases this month) so saldo reflects reality.
+    if is_current:
+        gastos_base = gastos_base + gastos_variaveis
     gastos_projetados = gastos_base + invest_expected_total
 
     # =====================================================================
@@ -2995,11 +2999,11 @@ def get_projection(start_month_str, num_months=0, profile=None):
     )
     current_installment_total = installment_schedule.get(start_month_str, 0)
 
-    # Current month fatura total (actual CC bill) — use instead of parcelas
-    # when available, since fatura is the real amount debited from checking.
+    # Current month fatura total (actual CC bill) — always uses invoice_month
+    # since fatura is the real amount debited from checking.
     cc_accounts = Account.objects.filter(profile=profile, account_type='credit_card')
-    fatura_q = Q()
     cc_ids = list(cc_accounts.values_list('id', flat=True))
+    current_fatura_total = 0.0
     if cc_ids:
         fatura_q = (
             Q(invoice_month=start_month_str, account_id__in=cc_ids, profile=profile,
@@ -3007,10 +3011,10 @@ def get_projection(start_month_str, num_months=0, profile=None):
             Q(month_str=start_month_str, invoice_month='', account_id__in=cc_ids, profile=profile,
               is_internal_transfer=False)
         )
-    current_fatura_total = float(abs(
-        Transaction.objects.filter(fatura_q).aggregate(
-            total=Sum('amount'))['total'] or Decimal('0')
-    )) if cc_ids else 0.0
+        current_fatura_total = float(abs(
+            Transaction.objects.filter(fatura_q).aggregate(
+                total=Sum('amount'))['total'] or Decimal('0')
+        ))
 
     # Prefetch BudgetConfig overrides for all future months in one query
     future_months = [_month_str_add(start_month_str, i) for i in range(1, num_months)]
