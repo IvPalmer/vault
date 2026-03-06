@@ -6,7 +6,7 @@ import Skeleton from './Skeleton'
 import styles from './OrcamentoSection.module.css'
 
 function fmt(n) {
-  return n.toLocaleString('pt-BR', { maximumFractionDigits: 0 })
+  return Math.abs(n).toLocaleString('pt-BR', { maximumFractionDigits: 0 })
 }
 
 function OrcamentoSection() {
@@ -27,7 +27,8 @@ function OrcamentoSection() {
   if (error) return <div className={styles.error}>Erro ao carregar orçamento</div>
   if (!data) return null
 
-  const totalStatus = data.total_pct > 100 ? 'over' : data.total_pct > 80 ? 'warning' : 'ok'
+  const noBudget = data.total_available <= 0
+  const totalStatus = noBudget ? 'over' : data.total_pct > 100 ? 'over' : data.total_pct > 80 ? 'warning' : 'ok'
 
   return (
     <section className={styles.section}>
@@ -35,9 +36,24 @@ function OrcamentoSection() {
         <h3 className={styles.title}>ORÇAMENTO VARIÁVEL</h3>
         <span className={`${styles.headerTotal} ${styles[totalStatus]}`}>
           R$ {fmt(data.total_spent)} / R$ {fmt(data.total_limit)}
-          <span className={styles.headerPct}>({data.total_pct}%)</span>
+          <span className={styles.headerPct}>({data.total_pct.toFixed(0)}%)</span>
         </span>
       </div>
+
+      {noBudget && (
+        <div className={styles.noBudgetBanner}>
+          Sem orçamento disponível — despesas comprometidas excedem a receita projetada.
+        </div>
+      )}
+
+      {data.total_available > 0 && (
+        <div className={styles.availableBanner}>
+          Disponível: R$ {fmt(data.total_available)}
+          <span className={styles.availableDetail}>
+            (receita − fixo − investimentos − cartão)
+          </span>
+        </div>
+      )}
 
       <div className={styles.grid}>
         {data.categories.map(cat => (
@@ -51,7 +67,6 @@ function OrcamentoSection() {
 function BudgetCard({ cat }) {
   const [expanded, setExpanded] = useState(false)
   const hasSubs = cat.subcategories && cat.subcategories.length > 0
-  const hasSubsWithData = hasSubs && cat.subcategories.some(s => s.spent > 0 || s.limit > 0)
 
   const pctClamped = Math.min(cat.pct, 100)
   const barColor =
@@ -65,22 +80,24 @@ function BudgetCard({ cat }) {
     'var(--color-border)'
 
   return (
-    <div
-      className={styles.card}
-      style={{ borderColor }}
-    >
+    <div className={styles.card} style={{ borderColor }}>
       <div
-        className={`${styles.cardHeader} ${hasSubsWithData ? styles.clickable : ''}`}
-        onClick={() => hasSubsWithData && setExpanded(!expanded)}
+        className={`${styles.cardHeader} ${hasSubs ? styles.clickable : ''}`}
+        onClick={() => hasSubs && setExpanded(!expanded)}
       >
         <span className={styles.catName}>
-          {hasSubsWithData && (
+          {hasSubs && (
             <span className={styles.expandIcon}>{expanded ? '▾' : '▸'}</span>
           )}
           {cat.name}
         </span>
-        <span className={`${styles.catPct} ${styles[cat.status]}`}>
-          {cat.pct.toFixed(0)}%
+        <span className={styles.catMeta}>
+          {cat.share_pct > 0 && (
+            <span className={styles.sharePct}>{cat.share_pct.toFixed(0)}%</span>
+          )}
+          <span className={`${styles.catPct} ${styles[cat.status]}`}>
+            {cat.pct.toFixed(0)}%
+          </span>
         </span>
       </div>
 
@@ -124,49 +141,21 @@ function BudgetCard({ cat }) {
       </div>
 
       {/* Subcategory breakdown */}
-      {expanded && hasSubsWithData && (
+      {expanded && hasSubs && (
         <div className={styles.subBreakdown}>
-          {cat.subcategories
-            .filter(s => s.spent > 0 || s.limit > 0)
-            .sort((a, b) => b.spent - a.spent)
-            .map(sub => {
-              const subBarColor =
-                sub.status === 'over' ? 'var(--color-red)' :
-                sub.status === 'warning' ? 'var(--color-orange)' :
-                'var(--color-green)'
-              const subPctClamped = Math.min(sub.pct, 100)
-
-              return (
-                <div key={sub.id} className={styles.subRow}>
-                  <div className={styles.subHeader}>
-                    <span className={styles.subName}>{sub.name}</span>
-                    <span className={styles.subValues}>
-                      <span className={`${styles.subSpent} ${styles[sub.status]}`}>
-                        R$ {fmt(sub.spent)}
-                      </span>
-                      {sub.limit > 0 && (
-                        <span className={styles.subLimit}> / R$ {fmt(sub.limit)}</span>
-                      )}
-                    </span>
-                  </div>
-                  {sub.limit > 0 && (
-                    <div className={styles.subBarTrack}>
-                      <div
-                        className={styles.subBarFill}
-                        style={{ width: `${subPctClamped}%`, background: subBarColor }}
-                      />
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+          {cat.subcategories.map(sub => (
+            <div key={sub.id} className={styles.subRow}>
+              <div className={styles.subHeader}>
+                <span className={styles.subName}>{sub.name}</span>
+                <span className={styles.subSpent}>R$ {fmt(sub.spent)}</span>
+              </div>
+            </div>
+          ))}
           {cat.uncategorized_spent > 0 && (
             <div className={styles.subRow}>
               <div className={styles.subHeader}>
                 <span className={`${styles.subName} ${styles.subNameDim}`}>Sem subcategoria</span>
-                <span className={styles.subValues}>
-                  <span className={styles.subSpent}>R$ {fmt(cat.uncategorized_spent)}</span>
-                </span>
+                <span className={styles.subSpent}>R$ {fmt(cat.uncategorized_spent)}</span>
               </div>
             </div>
           )}

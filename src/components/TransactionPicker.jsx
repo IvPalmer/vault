@@ -585,7 +585,7 @@ function TransactionPicker({
                         isCrossMonthMoved
                           ? `Movida para ${txn.cross_month_target}`
                           : isGloballyLinked
-                            ? 'Vinculada a outro item recorrente'
+                            ? `Vinculada a: ${txn.linked_to || 'outro item recorrente'}`
                             : txn.is_cross_month
                               ? 'Transação do mês anterior'
                               : ''
@@ -603,6 +603,9 @@ function TransactionPicker({
                         )}
                         {isCrossMonthMoved && (
                           <span className={styles.candMovedTo}>movida → {txn.cross_month_target?.slice(5)}/{txn.cross_month_target?.slice(0,4)}</span>
+                        )}
+                        {isGloballyLinked && !isCrossMonthMoved && txn.linked_to && (
+                          <span className={styles.candLinkedTo}>← {txn.linked_to}</span>
                         )}
                         {txn.installment_info && (
                           <span className={styles.candInstallment}>{txn.installment_info}</span>

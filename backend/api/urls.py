@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ProfileViewSet, BankTemplateViewSet,
     AccountViewSet, CategoryViewSet, SubcategoryViewSet,
+    CategoryTreeView, CategoryBulkReassignView,
     PluggyCategoryMappingViewSet, CategorizationRuleViewSet, RenameRuleViewSet,
     TransactionViewSet, RecurringMappingViewSet,
     BudgetConfigViewSet, BalanceOverrideViewSet,
@@ -54,6 +55,9 @@ router.register(r'setup-templates', SetupTemplateViewSet, basename='setuptemplat
 router.register(r'home/notes', FamilyNoteViewSet, basename='familynote')
 
 urlpatterns = [
+    # Category manager
+    path('categories/tree/', CategoryTreeView.as_view(), name='category-tree'),
+    path('categories/bulk/', CategoryBulkReassignView.as_view(), name='category-bulk'),
     # Transaction rename + similar must be BEFORE router include
     # (router's transactions/<pk>/ would capture "rename" and "similar" as pk values)
     path('transactions/rename/', TransactionRenameView.as_view(), name='transaction-rename'),

@@ -5,6 +5,7 @@ import api from '../api/client'
 import VaultTable from './VaultTable'
 import CategoryDropdown from './CategoryDropdown'
 import DescriptionEdit from './DescriptionEdit'
+import TypeBadge from './TypeBadge'
 import tableStyles from './VaultTable.module.css'
 import styles from './CardsSection.module.css'
 
@@ -100,6 +101,12 @@ function CardsSection() {
       size: 160,
     },
     {
+      accessorKey: 'transaction_type',
+      header: 'TIPO',
+      size: 90,
+      cell: ({ getValue }) => <TypeBadge value={getValue()} />,
+    },
+    {
       accessorKey: 'category',
       header: 'CATEGORIA',
       size: 150,
@@ -174,6 +181,12 @@ function CardsSection() {
       size: 160,
     },
     {
+      accessorKey: 'transaction_type',
+      header: 'TIPO',
+      size: 90,
+      cell: ({ getValue }) => <TypeBadge value={getValue()} />,
+    },
+    {
       accessorKey: 'category',
       header: 'CATEGORIA',
       size: 150,
@@ -240,33 +253,19 @@ function CardsSection() {
     },
   ], [invalidate])
 
-  // Filter transactions by active tab; use invoice total for "Total fatura"
-  const { filteredData, billTotal } = useMemo(() => {
-    if (!data?.transactions) return { filteredData: [], billTotal: 0 }
-
+  // Filter transactions by active tab
+  const filteredData = useMemo(() => {
+    if (!data?.transactions) return []
     const currentTab = TABS.find(t => t.key === effectiveTab)
-    let txns = data.transactions
-
-    if (currentTab?.filter) {
-      txns = txns.filter(t => t.account === currentTab.filter)
-    }
-
-    // Use invoice_by_account from API (always by invoice_month) for the
-    // "Total fatura" display so it matches the checking account payment.
-    let total = 0
-    if (data.invoice_by_account) {
-      if (currentTab?.filter) {
-        total = data.invoice_by_account[currentTab.filter] || 0
-      } else {
-        total = data.invoice_total || 0
-      }
-    } else {
-      // Fallback: client-side sum
-      total = Math.abs(txns.reduce((s, t) => s + t.amount, 0))
-    }
-
-    return { filteredData: txns, billTotal: total }
+    return currentTab?.filter
+      ? data.transactions.filter(t => t.account === currentTab.filter)
+      : data.transactions
   }, [data, effectiveTab, TABS])
+
+  // Variable total (non-installment transactions)
+  const variableTotal = useMemo(() =>
+    Math.abs(filteredData.reduce((s, t) => s + t.amount, 0)),
+  [filteredData])
 
   // Filter installments by active tab
   const filteredInstallments = useMemo(() => {
@@ -291,7 +290,7 @@ function CardsSection() {
   const cols = showAllCards ? cardColumns : cardColumns.filter(c => c.accessorKey !== 'account')
   const instCols = showAllCards
     ? installmentColumns
-    : installmentColumns.filter(c => c.accessorKey !== 'account' && c.accessorKey !== 'subcategory')
+    : installmentColumns.filter(c => c.accessorKey !== 'account')
 
   return (
     <div className={styles.section}>
@@ -312,6 +311,19 @@ function CardsSection() {
         </div>
       )}
 
+      {/* Totals bar — like Conta Corrente summary */}
+      <div className={styles.cardSummary}>
+        <span>
+          Parcelas: <span className={tableStyles.negative}>R$ {fmt(instTotal)}</span>
+        </span>
+        <span>
+          Compras: <span className={tableStyles.negative}>R$ {fmt(variableTotal)}</span>
+        </span>
+        <span>
+          Total: <span className={tableStyles.negative}>R$ {fmt(instTotal + variableTotal)}</span>
+        </span>
+      </div>
+
       {/* Installment breakdown */}
       {instData && filteredInstallments.length > 0 && (
         <div className={styles.installmentSection}>
@@ -324,14 +336,11 @@ function CardsSection() {
               {instData.source === 'projected' && (
                 <span className={styles.projectedBadge}>PROJETADO</span>
               )}
-            </span>
-            <span className={styles.installmentMeta}>
-              <span className={tableStyles.negative}>R$ {fmt(instTotal)}</span>
               <span className={styles.summaryCount}>
-                {' '}{effectiveTab === 'all' && instData?.count != null ? instData.count : filteredInstallments.length} parcelas
+                {effectiveTab === 'all' && instData?.count != null ? instData.count : filteredInstallments.length} parcelas
               </span>
-              <span className={styles.chevron}>{showInstallments ? '▾' : '▸'}</span>
             </span>
+            <span className={styles.chevron}>{showInstallments ? '▾' : '▸'}</span>
           </button>
           {showInstallments && (
             <VaultTable
@@ -345,20 +354,21 @@ function CardsSection() {
         </div>
       )}
 
-      {/* Summary — Total = sum of all invoice transactions (what you actually pay) */}
-      <div className={styles.cardSummary}>
-        <span>
-          Total fatura: <span className={tableStyles.negative}>R$ {fmt(billTotal)}</span>
-        </span>
+      {/* Variable transactions */}
+      <div className={styles.installmentSection}>
+        <div className={styles.installmentHeader} style={{ cursor: 'default' }}>
+          <span className={styles.installmentTitle}>
+            COMPRAS
+            <span className={styles.summaryCount}>{filteredData.length} transações</span>
+          </span>
+        </div>
+        <VaultTable
+          columns={cols}
+          data={filteredData}
+          emptyMessage="Sem transações de cartão neste mês."
+          maxHeight={500}
+        />
       </div>
-
-      {/* Table */}
-      <VaultTable
-        columns={cols}
-        data={filteredData}
-        emptyMessage="Sem transações de cartão neste mês."
-        maxHeight={500}
-      />
     </div>
   )
 }

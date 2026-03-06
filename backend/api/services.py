@@ -1182,12 +1182,14 @@ def get_metricas(month_str, profile=None):
     if not _closed_with_ofx and invest_expected_total > 0:
         # saldo_before_invest: what balance would be without any investment
         saldo_before_invest = saldo_projetado + invest_expected_total
+        # Floor: mandatory investments from templates (consórcio, etc.) can't be skipped
+        invest_floor = invest_template_total
         if saldo_before_invest <= 0:
-            # Can't afford any investment
-            invest_expected_total = Decimal('0')
+            # Can't afford discretionary investment, but mandatory ones remain
+            invest_expected_total = invest_floor
         elif saldo_before_invest < invest_expected_total:
-            # Can only afford partial investment
-            invest_expected_total = saldo_before_invest
+            # Can only afford partial — at least keep mandatory template amount
+            invest_expected_total = max(invest_floor, saldo_before_invest)
         # else: full target is affordable, keep as-is
 
         # Recompute derived values with clamped investment
@@ -1295,6 +1297,11 @@ def get_metricas(month_str, profile=None):
         'gastos_projetados': float(gastos_projetados),
         'gastos_fixos': float(gastos_fixos),
         'gastos_variaveis': float(gastos_variaveis),
+        'gastos_variaveis_checking': round(
+            (prev_month_saldo_float or 0) + float(entradas_projetadas)
+            - float(fixo_expected_total) - float(invest_expected_total)
+            - float(fatura_total) - float(saldo_projetado), 2
+        ) if not is_future else 0.0,
         'fatura_by_card': {name: float(val) for name, val in fatura_by_card.items()},
         'parcelas': float(parcelas_total),
         'a_entrar': float(a_entrar),
@@ -1320,25 +1327,29 @@ def get_metricas(month_str, profile=None):
     savings_target_pct = float(profile.savings_target_pct) if profile else 20.0
     savings_target_amount = income_ref * savings_target_pct / 100
 
-    # Actual invested = sum of actual amounts from investment mappings
+    # Actual invested = sum of actual amounts from investment mappings only.
+    # Unlinked Investimentos-category transactions are NOT included here because
+    # they're often internal transfers (e.g. boleto payments for consórcio that
+    # are already captured by the CC-side mapping).
     invest_actual = 0.0
     for mapping in invest_mappings_all:
         actual = _get_actual_for_mapping(mapping, is_income=False)
         invest_actual += float(actual)
 
-    # Achievement: what % of the dynamic target has been invested
+    # Achievement: what % of the dynamic clamped target has been invested
+    _invest_target = float(invest_expected_total)
     savings_achievement = round(
-        (invest_actual / savings_target_amount * 100) if savings_target_amount > 0 else 0.0, 1
+        (invest_actual / _invest_target * 100) if _invest_target > 0 else 0.0, 1
     )
 
     # Headroom: after all non-investment expenses, can the full target be met?
     # saldo already includes invest_expected in gastos_projetados, so add it back
     # to see what's available before investment decisions
     saldo_before_invest = float(saldo_projetado) + float(invest_expected_total)
-    savings_affordable = saldo_before_invest >= savings_target_amount
+    savings_affordable = saldo_before_invest >= _invest_target
 
     result_dict['savings_rate'] = savings_achievement
-    result_dict['savings_target_amount'] = round(savings_target_amount, 2)
+    result_dict['savings_target_amount'] = round(_invest_target, 2)
     result_dict['invest_actual'] = round(invest_actual, 2)
     result_dict['savings_affordable'] = savings_affordable
     result_dict['savings_headroom'] = round(saldo_before_invest - savings_target_amount, 2)
@@ -1916,9 +1927,11 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
             ),
         })
 
-    # Always compute invoice totals per account (by invoice_month) so the
-    # frontend can show the real fatura amount regardless of cc_display_mode.
-    # Exclude transactions that have been cross-month-moved to another month.
+    # Compute totals per account using the SAME filter mode as the transaction list.
+    # In 'transaction' mode (month_str), total reflects displayed purchases.
+    # In 'invoice' mode (invoice_month), total reflects the actual CC bill.
+    cc_field = _cc_month_field(profile)
+
     cross_moved_ids = set()
     for cm in RecurringMapping.objects.filter(
         profile=profile,
@@ -1926,14 +1939,23 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
         for t in cm.cross_month_transactions.all():
             cross_moved_ids.add(t.id)
 
-    invoice_qs = Transaction.objects.filter(
-        account__account_type='credit_card',
-        is_internal_transfer=False,
-        profile=profile,
-    ).filter(
-        Q(invoice_month=month_str) |
-        Q(month_str=month_str, invoice_month='')
-    ).exclude(id__in=cross_moved_ids)
+    if cc_field == 'month_str':
+        invoice_qs = Transaction.objects.filter(
+            month_str=month_str,
+            account__account_type='credit_card',
+            is_internal_transfer=False,
+            profile=profile,
+        )
+    else:
+        invoice_qs = Transaction.objects.filter(
+            account__account_type='credit_card',
+            is_internal_transfer=False,
+            profile=profile,
+        ).filter(
+            Q(invoice_month=month_str) |
+            Q(month_str=month_str, invoice_month='')
+        )
+    invoice_qs = invoice_qs.exclude(id__in=cross_moved_ids)
     if account_filter:
         invoice_qs = invoice_qs.filter(account__name__icontains=account_filter)
 
@@ -2315,17 +2337,41 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile
             str(tid) for tid in mapping.transactions.values_list('id', flat=True)
         )
 
-    # Build set of GLOBALLY linked transaction IDs (any mapping this month)
+    # Build set of GLOBALLY linked transaction IDs across nearby months.
+    # CC transactions can appear in multiple months' candidate pools
+    # (e.g., month_str=2026-02, invoice_month=2026-03 shows in both).
+    # A transaction mapped in Feb should appear greyed out in March.
     globally_linked_ids = set()
+    globally_linked_mapping = {}  # txn_id -> mapping month_str + name
+    # Check ±2 months to catch cross-month CC invoice overlaps
+    _y, _m = int(month_str[:4]), int(month_str[5:7])
+    nearby_months = set()
+    for offset in range(-2, 3):
+        nm = _m + offset
+        ny = _y
+        while nm < 1:
+            nm += 12
+            ny -= 1
+        while nm > 12:
+            nm -= 12
+            ny += 1
+        nearby_months.add(f'{ny}-{nm:02d}')
     all_mappings = RecurringMapping.objects.filter(
-        month_str=month_str,
+        month_str__in=nearby_months,
         profile=profile,
-    ).prefetch_related('transactions')
-    for m in all_mappings:
-        for t in m.transactions.all():
-            globally_linked_ids.add(str(t.id))
-        if m.transaction_id:
-            globally_linked_ids.add(str(m.transaction_id))
+    ).prefetch_related('transactions').select_related('template')
+    for mp in all_mappings:
+        m_name = mp.custom_name if mp.is_custom else (mp.template.name if mp.template else '?')
+        for t in mp.transactions.all():
+            tid = str(t.id)
+            globally_linked_ids.add(tid)
+            if tid not in linked_ids:
+                globally_linked_mapping[tid] = f'{m_name} ({mp.month_str})'
+        if mp.transaction_id:
+            tid = str(mp.transaction_id)
+            globally_linked_ids.add(tid)
+            if tid not in linked_ids:
+                globally_linked_mapping[tid] = f'{m_name} ({mp.month_str})'
 
     # Compute previous month string for cross-month linking
     y, m = int(month_str[:4]), int(month_str[5:7])
@@ -2417,6 +2463,7 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile
             'installment_info': txn.installment_info or '',
             'is_linked': txn_id_str in linked_ids,
             'is_globally_linked': txn_id_str in globally_linked_ids and txn_id_str not in linked_ids,
+            'linked_to': globally_linked_mapping.get(txn_id_str, None),
             'is_cross_month': source_pool == 'prior_month',
             'cross_month_moved': txn_id_str in cross_month_moved_ids and txn_id_str not in linked_ids,
             'cross_month_target': cross_month_target.get(txn_id_str, None),
@@ -2431,12 +2478,17 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile
         txn_id_str = str(txn.id)
         if txn_id_str in seen_ids:
             continue
+        # Skip transactions linked to OTHER mappings (they belong elsewhere)
+        if txn_id_str in globally_linked_ids and txn_id_str not in linked_ids:
+            continue
         seen_ids.add(txn_id_str)
         results.append(_build_candidate(txn, 'current'))
 
     for txn in prior_qs:
         txn_id_str = str(txn.id)
         if txn_id_str in seen_ids:
+            continue
+        if txn_id_str in globally_linked_ids and txn_id_str not in linked_ids:
             continue
         seen_ids.add(txn_id_str)
         results.append(_build_candidate(txn, 'prior_month'))
@@ -2897,19 +2949,19 @@ def get_projection(start_month_str, num_months=0, profile=None):
       current month → max(last_installment_month, Dec of current year)
     """
 
-    # Current month saldo uses the same formula as metricas:
-    # BO + a_entrar - a_pagar (grounded in real checking balance).
-    # This accounts for ALL checking activity, not just tracked categories.
-    # We compute current-month saldo here and cascade future months from it.
-    #
-    # For display, starting_balance = BalanceOverride or prev-month EOM.
-    try:
-        bo = BalanceOverride.objects.get(month_str=start_month_str, profile=profile)
-        starting_balance = float(bo.balance)
-    except BalanceOverride.DoesNotExist:
-        prev_month = _month_str_add(start_month_str, -1)
-        eom = _get_checking_balance_eom(prev_month, profile=profile)
-        starting_balance = float(eom) if eom is not None else 0.0
+    # Starting balance = previous month's end-of-month saldo.
+    # This ensures the table math is consistent: starting + sobra = saldo.
+    prev_month = _month_str_add(start_month_str, -1)
+    eom = _get_checking_balance_eom(prev_month, profile=profile)
+    if eom is not None:
+        starting_balance = float(eom)
+    else:
+        # Fall back to BO or prev-month projected saldo
+        try:
+            prev_bo = BalanceOverride.objects.get(month_str=start_month_str, profile=profile)
+            starting_balance = float(prev_bo.balance)
+        except BalanceOverride.DoesNotExist:
+            starting_balance = 0.0
 
     # Auto-compute range if num_months not specified
     if num_months <= 0:
@@ -3027,10 +3079,15 @@ def get_projection(start_month_str, num_months=0, profile=None):
         invest_goal = max(invest, savings_target_amount)
 
         if i == 0:
-            # Current month: use metricas clamped invest (already in saldo)
+            # Current month: use metricas clamped invest and saldo.
+            # metricas saldo is the most accurate (BO + a_entrar - a_pagar)
+            # because it accounts for variable spending already incurred.
             invest = float(metricas.get('invest_expected_total', invest_goal))
-            net = income - fixo - invest - installments - variable
             cumulative = current_month_saldo
+            # Variable = plug that makes columns add up:
+            # starting + income - fixo - invest - installments - variable = saldo
+            variable = starting_balance + income - fixo - invest - installments - cumulative
+            net = cumulative - starting_balance
         else:
             # Future months: only invest if balance stays non-negative
             net_before_invest = income - fixo - installments - variable
@@ -3070,7 +3127,8 @@ def get_orcamento(month_str, profile=None):
     """
     ORÇAMENTO — Dynamic variable spending budget.
 
-    Available budget = projected income − committed expenses (fixo + invest).
+    Available budget = income − all committed expenses (fixo + invest + cartão).
+    This is how much you can freely spend and still cover all obligations.
     Distributed across categories proportionally based on 6-month spending profile.
     Shows all categories with current or historical variable spending.
     """
@@ -3081,7 +3139,8 @@ def get_orcamento(month_str, profile=None):
     entradas = metricas['entradas_projetadas']
     fixo = metricas['fixo_expected_total']
     invest = metricas['invest_expected_total']
-    total_available = max(0.0, entradas - fixo - invest)
+    cartao = metricas['fatura_total']
+    total_available = max(0.0, entradas - fixo - invest - cartao)
 
     # ── 2. Identify committed (fixo/invest/income) transaction IDs ───
     all_months = [month_str] + [_month_str_add(month_str, -i) for i in range(1, 7)]

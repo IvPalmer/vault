@@ -45,7 +45,7 @@ function ProjectionSection() {
       label: shortMonth(row.month),
       month: row.month,
       entradas: row.income,
-      gastos: row.fixo + row.investimento + row.installments,
+      gastos: row.fixo + row.investimento + row.installments + (row.variable || 0),
       saldo: row.cumulative,
     }))
     // Find breakeven: first month where saldo >= 0 after being negative
@@ -177,17 +177,18 @@ function ProjectionSection() {
               <th className={styles.numCol}>FIXOS</th>
               <th className={styles.numCol}>INVEST.</th>
               <th className={styles.numCol}>CARTAO</th>
-              <th className={styles.numCol}>SOBRA</th>
-              <th className={styles.numCol}>SALDO</th>
+              <th className={styles.numCol} title="Gastos variáveis na conta corrente (PIX, boletos, etc.)">VARIAVEL</th>
+              <th className={styles.numCol} title="Variação do saldo no mês">SOBRA</th>
+              <th className={styles.numCol} title="Saldo projetado ao fim do mês">SALDO</th>
             </tr>
           </thead>
           <tbody>
-            {/* Starting balance row */}
+            {/* Starting balance row — previous month's closing balance */}
             <tr className={styles.balanceRow}>
               <td className={styles.monthCell}>
-                <span className={styles.balanceLabel}>Saldo em Conta</span>
+                <span className={styles.balanceLabel}>Saldo Anterior</span>
               </td>
-              <td colSpan={5}></td>
+              <td colSpan={6}></td>
               <td className={`${styles.numCol} ${styles.saldoCol} ${bal >= 0 ? styles.green : styles.red}`}>
                 <strong>{bal < 0 ? '-' : ''}R$ {fmt(bal)}</strong>
               </td>
@@ -223,6 +224,9 @@ function ProjectionSection() {
                   </td>
                   <td className={`${styles.numCol} ${styles.orange}`}>
                     R$ {fmt(row.installments)}
+                  </td>
+                  <td className={`${styles.numCol} ${row.variable > 0 ? styles.red : ''}`}>
+                    {row.variable > 0 ? <>R$ {fmt(row.variable)}</> : <span style={{ color: 'var(--color-text-secondary)' }}>—</span>}
                   </td>
                   <td className={`${styles.numCol} ${row.net >= 0 ? styles.green : styles.red}`}>
                     {row.net < 0 ? '-' : ''}R$ {fmt(row.net)}

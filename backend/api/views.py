@@ -219,6 +219,248 @@ class SubcategoryViewSet(viewsets.ModelViewSet):
         serializer.save(profile=self.request.profile)
 
 
+class CategoryTreeView(APIView):
+    """GET /api/categories/tree/ — Full category tree with transaction counts and Pluggy mapping info."""
+
+    def get(self, request):
+        profile = request.profile
+        cats = Category.objects.filter(profile=profile, is_active=True).order_by('name')
+        subs = Subcategory.objects.filter(profile=profile, category__in=cats)
+        pluggy_maps = PluggyCategoryMapping.objects.filter(profile=profile).select_related('category', 'subcategory')
+
+        # Count transactions per category and subcategory
+        from django.db.models import Count
+        cat_counts = dict(
+            Transaction.objects.filter(profile=profile, category__in=cats)
+            .values_list('category_id')
+            .annotate(cnt=Count('id'))
+            .values_list('category_id', 'cnt')
+        )
+        sub_counts = dict(
+            Transaction.objects.filter(profile=profile, subcategory__in=subs)
+            .values_list('subcategory_id')
+            .annotate(cnt=Count('id'))
+            .values_list('subcategory_id', 'cnt')
+        )
+        # Uncategorized count
+        uncat_count = Transaction.objects.filter(profile=profile, category__isnull=True).count()
+        # Transactions with category but no subcategory
+        no_sub_counts = dict(
+            Transaction.objects.filter(profile=profile, category__in=cats, subcategory__isnull=True)
+            .values_list('category_id')
+            .annotate(cnt=Count('id'))
+            .values_list('category_id', 'cnt')
+        )
+
+        # Index pluggy mappings by category and subcategory
+        pluggy_by_cat = {}
+        pluggy_by_sub = {}
+        for pm in pluggy_maps:
+            pluggy_by_cat.setdefault(pm.category_id, []).append({
+                'id': str(pm.id),
+                'pluggy_id': pm.pluggy_category_id,
+                'pluggy_name': pm.pluggy_category_name,
+                'subcategory_id': str(pm.subcategory_id) if pm.subcategory_id else None,
+            })
+            if pm.subcategory_id:
+                pluggy_by_sub.setdefault(pm.subcategory_id, []).append({
+                    'id': str(pm.id),
+                    'pluggy_id': pm.pluggy_category_id,
+                    'pluggy_name': pm.pluggy_category_name,
+                })
+
+        # Build tree
+        tree = []
+        for cat in cats:
+            cat_subs = []
+            for sub in subs:
+                if sub.category_id != cat.id:
+                    continue
+                cat_subs.append({
+                    'id': str(sub.id),
+                    'name': sub.name,
+                    'transaction_count': sub_counts.get(sub.id, 0),
+                    'pluggy_mappings': pluggy_by_sub.get(sub.id, []),
+                })
+            cat_subs.sort(key=lambda s: s['name'])
+            tree.append({
+                'id': str(cat.id),
+                'name': cat.name,
+                'category_type': cat.category_type,
+                'transaction_count': cat_counts.get(cat.id, 0),
+                'no_subcategory_count': no_sub_counts.get(cat.id, 0),
+                'pluggy_mappings': pluggy_by_cat.get(cat.id, []),
+                'subcategories': cat_subs,
+            })
+
+        return Response({
+            'categories': tree,
+            'uncategorized_count': uncat_count,
+        })
+
+
+class CategoryBulkReassignView(APIView):
+    """POST /api/categories/bulk-reassign/ — Move transactions between categories/subcategories."""
+
+    def post(self, request):
+        profile = request.profile
+        action = request.data.get('action')  # 'reassign_category', 'reassign_subcategory', 'clear_subcategory'
+
+        if action == 'reassign_subcategory':
+            # Move transactions from one subcategory to another (can be cross-category)
+            from_sub_id = request.data.get('from_subcategory_id')
+            to_sub_id = request.data.get('to_subcategory_id')
+            to_cat_id = request.data.get('to_category_id')
+
+            if not from_sub_id or not to_sub_id:
+                return Response({'error': 'from_subcategory_id and to_subcategory_id required'}, status=400)
+
+            from_sub = Subcategory.objects.get(id=from_sub_id, profile=profile)
+            to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile)
+            to_cat = to_sub.category
+
+            count = Transaction.objects.filter(
+                profile=profile, subcategory=from_sub
+            ).update(subcategory=to_sub, category=to_cat)
+
+            # Update pluggy mappings pointing to old subcategory
+            PluggyCategoryMapping.objects.filter(
+                profile=profile, subcategory=from_sub
+            ).update(subcategory=to_sub, category=to_cat)
+
+            return Response({'updated': count, 'action': action})
+
+        elif action == 'reassign_category':
+            # Move ALL transactions from one category to another (keeps subcategory names, creates if needed)
+            from_cat_id = request.data.get('from_category_id')
+            to_cat_id = request.data.get('to_category_id')
+
+            if not from_cat_id or not to_cat_id:
+                return Response({'error': 'from_category_id and to_category_id required'}, status=400)
+
+            from_cat = Category.objects.get(id=from_cat_id, profile=profile)
+            to_cat = Category.objects.get(id=to_cat_id, profile=profile)
+
+            # Map subcategories: for each sub in from_cat, find or create matching in to_cat
+            sub_map = {}
+            for from_sub in Subcategory.objects.filter(category=from_cat):
+                to_sub, _ = Subcategory.objects.get_or_create(
+                    name=from_sub.name, category=to_cat,
+                    defaults={'profile': profile}
+                )
+                sub_map[from_sub.id] = to_sub
+
+            # Reassign transactions
+            count = 0
+            for from_sub_id, to_sub in sub_map.items():
+                count += Transaction.objects.filter(
+                    profile=profile, subcategory_id=from_sub_id
+                ).update(subcategory=to_sub, category=to_cat)
+
+            # Transactions with category but no subcategory
+            count += Transaction.objects.filter(
+                profile=profile, category=from_cat, subcategory__isnull=True
+            ).update(category=to_cat)
+
+            # Update pluggy mappings
+            for from_sub_id, to_sub in sub_map.items():
+                PluggyCategoryMapping.objects.filter(
+                    profile=profile, subcategory_id=from_sub_id
+                ).update(subcategory=to_sub, category=to_cat)
+            PluggyCategoryMapping.objects.filter(
+                profile=profile, category=from_cat, subcategory__isnull=True
+            ).update(category=to_cat)
+
+            return Response({'updated': count, 'action': action})
+
+        elif action == 'merge_subcategories':
+            # Merge source into target subcategory (move txns, delete source)
+            source_id = request.data.get('source_subcategory_id')
+            target_id = request.data.get('target_subcategory_id')
+
+            if not source_id or not target_id:
+                return Response({'error': 'source_subcategory_id and target_subcategory_id required'}, status=400)
+
+            source = Subcategory.objects.get(id=source_id, profile=profile)
+            target = Subcategory.objects.get(id=target_id, profile=profile)
+
+            count = Transaction.objects.filter(
+                profile=profile, subcategory=source
+            ).update(subcategory=target, category=target.category)
+
+            PluggyCategoryMapping.objects.filter(
+                profile=profile, subcategory=source
+            ).update(subcategory=target)
+
+            source.delete()
+            return Response({'updated': count, 'merged_into': str(target.id), 'action': action})
+
+        elif action == 'rename_subcategory':
+            sub_id = request.data.get('subcategory_id')
+            new_name = request.data.get('name', '').strip()
+            if not sub_id or not new_name:
+                return Response({'error': 'subcategory_id and name required'}, status=400)
+            sub = Subcategory.objects.get(id=sub_id, profile=profile)
+            sub.name = new_name
+            sub.save(update_fields=['name'])
+            return Response({'id': str(sub.id), 'name': sub.name, 'action': action})
+
+        elif action == 'move_uncategorized':
+            # Move uncategorized transactions to a specific category + optional subcategory
+            to_cat_id = request.data.get('to_category_id')
+            to_sub_id = request.data.get('to_subcategory_id')
+            if not to_cat_id:
+                return Response({'error': 'to_category_id required'}, status=400)
+            to_cat = Category.objects.get(id=to_cat_id, profile=profile)
+            to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile) if to_sub_id else None
+            count = Transaction.objects.filter(
+                profile=profile, category__isnull=True
+            ).update(category=to_cat, subcategory=to_sub)
+            return Response({'updated': count, 'action': action})
+
+        elif action == 'set_subcategory':
+            # Assign subcategory to transactions that have category but no subcategory
+            cat_id = request.data.get('category_id')
+            to_sub_id = request.data.get('to_subcategory_id')
+            if not cat_id or not to_sub_id:
+                return Response({'error': 'category_id and to_subcategory_id required'}, status=400)
+            cat = Category.objects.get(id=cat_id, profile=profile)
+            to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile)
+            count = Transaction.objects.filter(
+                profile=profile, category=cat, subcategory__isnull=True
+            ).update(subcategory=to_sub)
+            return Response({'updated': count, 'action': action})
+
+        elif action == 'get_sample_transactions':
+            # Return sample transactions for a subcategory or uncategorized
+            sub_id = request.data.get('subcategory_id')
+            cat_id = request.data.get('category_id')
+            uncategorized = request.data.get('uncategorized', False)
+            limit = int(request.data.get('limit', 20))
+
+            if uncategorized:
+                qs = Transaction.objects.filter(profile=profile, category__isnull=True)
+            elif sub_id:
+                qs = Transaction.objects.filter(profile=profile, subcategory_id=sub_id)
+            elif cat_id:
+                qs = Transaction.objects.filter(profile=profile, category_id=cat_id, subcategory__isnull=True)
+            else:
+                return Response({'error': 'subcategory_id, category_id, or uncategorized required'}, status=400)
+
+            txns = qs.select_related('account').order_by('-date')[:limit]
+            return Response({
+                'transactions': [{
+                    'id': str(t.id),
+                    'date': str(t.date),
+                    'description': t.description,
+                    'amount': float(t.amount),
+                    'account': t.account.name if t.account else '',
+                } for t in txns]
+            })
+
+        return Response({'error': f'Unknown action: {action}'}, status=400)
+
+
 class PluggyCategoryMappingViewSet(viewsets.ModelViewSet):
     serializer_class = PluggyCategoryMappingSerializer
     pagination_class = None

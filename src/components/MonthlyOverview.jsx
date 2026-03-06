@@ -1,5 +1,7 @@
 import MetricasSection from './MetricasSection'
 import RecurringSection from './RecurringSection'
+import InvestmentSection from './InvestmentSection'
+import RecurringTotalsBar from './RecurringTotalsBar'
 import OrcamentoSection from './OrcamentoSection'
 import CardsSection from './CardsSection'
 import CheckingSection from './CheckingSection'
@@ -12,10 +14,10 @@ function MonthlyOverview() {
     <div className={styles.container}>
       <MetricasSection />
       <SmartCategorizeBar />
-      <div className={styles.twoCol}>
-        <RecurringSection />
-        <OrcamentoSection />
-      </div>
+      <RecurringSection />
+      <InvestmentSection />
+      <RecurringTotalsBar />
+      <OrcamentoSection />
       <ProjectionSection />
       <div className={styles.twoColEven}>
         <CardsSection />

@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import api, { getProfileId } from '../api/client'
 import { useProfile } from '../context/ProfileContext'
 import InlineEdit from './InlineEdit'
@@ -299,7 +300,7 @@ function Settings({ onOpenWizard }) {
   const [expandedBudgetCat, setExpandedBudgetCat] = useState(null)
 
   // Profile settings
-  const { profileId, currentProfile } = useProfile()
+  const { profileId, currentProfile, profileSlug } = useProfile()
 
   // Account management
   const [showNewAcctForm, setShowNewAcctForm] = useState(false)
@@ -1230,12 +1231,21 @@ function Settings({ onOpenWizard }) {
               Taxonomia de classificação de transações. Clique no ▸ para ver e adicionar subcategorias.
             </p>
           </div>
-          <button
-            className={styles.sectionAction}
-            onClick={() => setShowNewCatForm(!showNewCatForm)}
-          >
-            {showNewCatForm ? 'Cancelar' : '+ Nova'}
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Link
+              to={`/${profileSlug}/categories`}
+              className={styles.sectionAction}
+              style={{ textDecoration: 'none' }}
+            >
+              Gerenciador
+            </Link>
+            <button
+              className={styles.sectionAction}
+              onClick={() => setShowNewCatForm(!showNewCatForm)}
+            >
+              {showNewCatForm ? 'Cancelar' : '+ Nova'}
+            </button>
+          </div>
         </div>
 
         {/* New category form */}

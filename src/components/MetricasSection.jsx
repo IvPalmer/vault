@@ -144,10 +144,10 @@ function buildCards(data) {
     },
     gastos_variaveis: {
       label: 'GASTOS VARIAVEIS',
-      value: `R$ ${fmt(data.gastos_variaveis)}`,
-      subtitle: 'categoria variavel na conta',
+      value: `R$ ${fmt(data.gastos_variaveis_checking ?? data.gastos_variaveis)}`,
+      subtitle: 'exceto fixos, investimentos e cartão',
       color: 'var(--color-orange)',
-      tooltip: 'Despesas na conta corrente categorizadas como "Variavel" (supermercado, restaurantes, etc). Nao inclui fixos nem cartao.',
+      tooltip: 'Gastos variáveis na conta corrente (PIX, boletos, etc). CC variável já está no cartão.',
     },
     // Dynamic per-card fatura entries are injected below after cards object is built
     parcelas: {

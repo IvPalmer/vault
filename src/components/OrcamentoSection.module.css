@@ -33,11 +33,39 @@
   opacity: 0.7;
 }
 
+/* Banners */
+.noBudgetBanner {
+  background: rgba(var(--color-red-rgb, 220, 53, 69), 0.1);
+  color: var(--color-red);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-align: center;
+}
+
+.availableBanner {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  padding: var(--space-xs) var(--space-md);
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-green);
+  font-variant-numeric: tabular-nums;
+}
+
+.availableDetail {
+  font-weight: 400;
+  color: var(--color-text-secondary);
+  margin-left: var(--space-xs);
+}
+
 /* Grid of budget cards */
 .grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: var(--space-sm);
+  grid-template-columns: repeat(6, 1fr);
+  gap: var(--space-xs);
   align-content: start;
 }
 
@@ -45,11 +73,11 @@
 .card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: var(--space-md);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-sm);
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: 4px;
   transition: border-color 0.15s ease;
 }
 
@@ -60,15 +88,28 @@
 }
 
 .catName {
-  font-size: 0.75rem;
+  font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.03em;
   color: var(--color-text);
   text-transform: uppercase;
 }
 
+.catMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.sharePct {
+  font-size: 0.65rem;
+  font-weight: 400;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
 .catPct {
-  font-size: 0.85rem;
+  font-size: 0.72rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -107,14 +148,14 @@
 .cardBody {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .cardRow {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 0.72rem;
+  font-size: 0.65rem;
 }
 
 .cardLabel {

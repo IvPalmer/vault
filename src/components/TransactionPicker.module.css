@@ -463,6 +463,18 @@
   letter-spacing: 0.02em;
 }
 
+.candLinkedTo {
+  flex-shrink: 0;
+  font-size: 0.55rem;
+  font-weight: 500;
+  padding: 1px 5px;
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  letter-spacing: 0.02em;
+  font-style: italic;
+}
+
 /* Installment badge */
 .candInstallment {
   flex-shrink: 0;

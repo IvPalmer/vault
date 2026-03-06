@@ -5,6 +5,7 @@ import Home from './components/Home'
 import MonthlyOverview from './components/MonthlyOverview'
 import Analytics from './components/Analytics'
 import Settings from './components/Settings'
+import CategoryManager from './components/CategoryManager'
 import SetupWizard from './components/SetupWizard'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useProfile } from './context/ProfileContext'
@@ -44,6 +45,7 @@ function App() {
           <Route path="/:profileSlug/overview" element={<ErrorBoundary fallbackMessage="Erro ao carregar Visão Mensal"><MonthlyOverview /></ErrorBoundary>} />
           <Route path="/:profileSlug/analytics" element={<ErrorBoundary fallbackMessage="Erro ao carregar Analytics"><Analytics /></ErrorBoundary>} />
           <Route path="/:profileSlug/settings" element={<ErrorBoundary fallbackMessage="Erro ao carregar Configurações"><Settings onOpenWizard={handleOpenWizardFromSettings} /></ErrorBoundary>} />
+          <Route path="/:profileSlug/categories" element={<ErrorBoundary fallbackMessage="Erro ao carregar Categorias"><CategoryManager /></ErrorBoundary>} />
 
           {/* Legacy routes — redirect to profile-scoped versions */}
           <Route path="/overview" element={profileSlug ? <Navigate to={`/${profileSlug}/overview`} replace /> : null} />

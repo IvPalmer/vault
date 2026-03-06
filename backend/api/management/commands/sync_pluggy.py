@@ -340,6 +340,8 @@ class Command(BaseCommand):
         existing_legacy_by_key = {}  # key -> (amount, description) for updating
         # Also index by (amount, norm_desc) for date-tolerant matching
         existing_legacy_by_amt = {}  # (abs_amt, norm_desc) -> list of (date, amount, description)
+        # Index by (date, abs_amount) for amount-only matching (handles renamed PIX descriptions)
+        existing_legacy_by_date_amt = {}  # (date, abs_amt) -> list of (amount, description)
         for t in Transaction.objects.filter(
             account=vault_acct, profile=self.profile, external_id=''
         ).values_list('date', 'amount', 'description'):
@@ -348,6 +350,8 @@ class Command(BaseCommand):
             existing_legacy_by_key[key] = (t[1], t[2])
             amt_key = (abs(t[1]), _norm(t[2]))
             existing_legacy_by_amt.setdefault(amt_key, []).append((t[0], t[1], t[2]))
+            da_key = (t[0], abs(t[1]))
+            existing_legacy_by_date_amt.setdefault(da_key, []).append((t[1], t[2]))
 
         batch_create = []
         is_cc = vault_acct.account_type == 'credit_card'
@@ -397,6 +401,21 @@ class Command(BaseCommand):
                             txn_date_match = ldate
                             matched = True
                             break
+
+            # Fallback: match on (date, abs_amount) only when there's exactly
+            # one legacy txn with that combo. Handles PIX descriptions where
+            # legacy OFX uses abbreviated names (e.g. "Antanio02 03") and
+            # Pluggy uses full names (e.g. "PIX TRANSF Antônio02/03").
+            if not matched:
+                da_key = (txn_date, abs(amount))
+                candidates = existing_legacy_by_date_amt.get(da_key, [])
+                if len(candidates) == 1:
+                    matched_amount, matched_desc = candidates[0]
+                    fuzzy_key = (txn_date, abs(matched_amount), _norm(matched_desc))
+                    if fuzzy_key in existing_legacy:
+                        matched = True
+                        if self.verbosity >= 2:
+                            self.stdout.write(f'  Date+amount dedup: "{matched_desc}" -> "{description}"')
 
             if matched:
                 if not self.dry_run:

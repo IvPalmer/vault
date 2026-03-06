@@ -9,7 +9,7 @@ function Layout({ children }) {
   const { profileSlug } = useProfile()
 
   const isHome = pathname === '/home' || pathname.startsWith('/home/')
-  const isSettings = pathname.endsWith('/settings')
+  const isSettings = pathname.endsWith('/settings') || pathname.endsWith('/categories')
   const isAnalytics = pathname.endsWith('/analytics')
   const showMonthPicker = !isHome && !isSettings && !isAnalytics
 

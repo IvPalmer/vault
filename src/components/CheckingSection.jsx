@@ -5,6 +5,7 @@ import api from '../api/client'
 import VaultTable from './VaultTable'
 import CategoryDropdown from './CategoryDropdown'
 import DescriptionEdit from './DescriptionEdit'
+import TypeBadge from './TypeBadge'
 import tableStyles from './VaultTable.module.css'
 import styles from './CheckingSection.module.css'
 
@@ -85,6 +86,12 @@ function CheckingSection() {
       cell: ({ getValue, row }) => <DescriptionCell value={getValue()} row={row} onUpdated={invalidate} />,
     },
     {
+      accessorKey: 'transaction_type',
+      header: 'TIPO',
+      size: 90,
+      cell: ({ getValue }) => <TypeBadge value={getValue()} />,
+    },
+    {
       accessorKey: 'category',
       header: 'CATEGORIA',
       size: 160,
@@ -162,6 +169,7 @@ function CheckingSection() {
         data={data.transactions}
         emptyMessage="Sem transações de conta corrente neste mês."
         rowClassName={rowClassName}
+        maxHeight={500}
       />
     </div>
   )
