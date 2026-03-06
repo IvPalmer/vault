@@ -124,6 +124,7 @@ class Command(BaseCommand):
                             help='Create BalanceAnchor from current checking balance')
 
     def handle(self, *args, **options):
+        self.verbosity = options.get('verbosity', 1)
         # Load credentials
         client_id = os.environ.get('PLUGGY_CLIENT_ID', '')
         client_secret = os.environ.get('PLUGGY_CLIENT_SECRET', '')
