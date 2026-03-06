@@ -260,12 +260,20 @@ class Command(BaseCommand):
         for pm in PluggyCategoryMapping.objects.filter(profile=profile).select_related('category', 'subcategory'):
             self.pluggy_mappings[pm.pluggy_category_id] = (pm.category, pm.subcategory)
         # Categorization rules (pre-loaded, sorted by priority desc)
-        from api.models import CategorizationRule
+        from api.models import CategorizationRule, Subcategory
         self.categorization_rules = list(
             CategorizationRule.objects.filter(
                 profile=profile, is_active=True
             ).select_related('category', 'subcategory').order_by('-priority')
         )
+        # Additional card routing: card_last4 -> Account
+        # Purchases on additional cards get routed to their own account
+        self.card_account_map = {}
+        try:
+            rafa_acc = Account.objects.get(profile=profile, name='Mastercard - Rafa')
+            self.card_account_map['5780'] = rafa_acc
+        except Account.DoesNotExist:
+            pass
 
     def _apply_rename(self, description):
         """Apply rename rules to a description."""
@@ -482,10 +490,18 @@ class Command(BaseCommand):
             pluggy_category = ptxn.get('category') or ''
             pluggy_category_id = ptxn.get('categoryId') or ''
 
+            # Card last 4 digits from creditCardMetadata
+            card_last4 = (cc_meta or {}).get('cardNumber', '') or ''
+
             # Categorization: Pluggy category mapping + description refinement + rules
             category, subcategory = self._apply_pluggy_categorization(
                 pluggy_category_id, description=display_desc
             )
+
+            # Route additional card purchases to their own account
+            target_account = vault_acct
+            if card_last4 and card_last4 in self.card_account_map:
+                target_account = self.card_account_map[card_last4]
 
             txn = Transaction(
                 profile=self.profile,
@@ -494,7 +510,7 @@ class Command(BaseCommand):
                 description_original=description,
                 raw_description=raw_desc,
                 amount=amount,
-                account=vault_acct,
+                account=target_account,
                 category=category,
                 subcategory=subcategory,
                 source_file=f'pluggy:{ext_id[:8]}',
@@ -507,6 +523,7 @@ class Command(BaseCommand):
                 external_id=ext_id,
                 pluggy_category=pluggy_category,
                 pluggy_category_id=pluggy_category_id,
+                card_last4=card_last4,
             )
             batch_create.append(txn)
             new_count += 1

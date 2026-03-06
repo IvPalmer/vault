@@ -279,6 +279,8 @@ class Transaction(models.Model):
     pluggy_category_id = models.CharField(max_length=20, blank=True, default='',
                                            help_text='Pluggy category ID (e.g. 10000000)')
     is_manually_categorized = models.BooleanField(default=False)
+    card_last4 = models.CharField(max_length=4, blank=True, default='',
+                                   help_text='Last 4 digits of credit card (from Pluggy creditCardMetadata)')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
