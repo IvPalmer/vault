@@ -77,11 +77,13 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        echo "$$SYNC_SCHEDULE python manage.py sync_pluggy --profile Palmer --save-balance >> /proc/1/fd/1 2>&1" > /tmp/crontab
-        echo "$$SYNC_SCHEDULE python manage.py sync_pluggy --profile Rafa --save-balance >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        apt-get update -qq && apt-get install -y -qq cron > /dev/null 2>&1
+        echo "$$SYNC_SCHEDULE cd /app && python manage.py sync_pluggy --profile Palmer --save-balance >> /proc/1/fd/1 2>&1" > /tmp/crontab
+        echo "$$SYNC_SCHEDULE cd /app && python manage.py sync_pluggy --profile Rafa --save-balance >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        echo "" >> /tmp/crontab
         crontab /tmp/crontab
         echo "Cron started with schedule: $$SYNC_SCHEDULE"
-        crond -f -l 2
+        cron -f
 
 volumes:
   postgres_data:
