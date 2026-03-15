@@ -170,6 +170,7 @@ function CheckingSection() {
         emptyMessage="Sem transações de conta corrente neste mês."
         rowClassName={rowClassName}
         maxHeight={500}
+        initialSorting={[{ id: 'date', desc: true }]}
       />
     </div>
   )

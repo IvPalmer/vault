@@ -253,16 +253,18 @@ function CardsSection() {
     },
   ], [invalidate])
 
-  // Filter transactions by active tab
+  // Filter transactions by active tab, excluding installments (shown in Parcelas)
   const filteredData = useMemo(() => {
     if (!data?.transactions) return []
     const currentTab = TABS.find(t => t.key === effectiveTab)
-    return currentTab?.filter
-      ? data.transactions.filter(t => t.account === currentTab.filter)
-      : data.transactions
+    let txns = data.transactions.filter(t => !t.is_installment)
+    if (currentTab?.filter) {
+      txns = txns.filter(t => t.account === currentTab.filter)
+    }
+    return txns
   }, [data, effectiveTab, TABS])
 
-  // Variable total (non-installment transactions)
+  // Variable total (non-installment purchases only)
   const variableTotal = useMemo(() =>
     Math.abs(filteredData.reduce((s, t) => s + t.amount, 0)),
   [filteredData])
@@ -367,6 +369,7 @@ function CardsSection() {
           data={filteredData}
           emptyMessage="Sem transações de cartão neste mês."
           maxHeight={500}
+          initialSorting={[{ id: 'date', desc: true }]}
         />
       </div>
     </div>

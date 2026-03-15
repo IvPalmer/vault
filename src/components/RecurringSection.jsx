@@ -372,8 +372,8 @@ function RecurringSection() {
     if (!recData) return []
     switch (activeTab) {
       case 'all':
-        // Exclude investments — they have their own section
-        return (recData.all || []).filter(item => item.template_type !== 'Investimento')
+        // Exclude investments and cartão — they have their own sections
+        return (recData.all || []).filter(item => item.template_type !== 'Investimento' && item.template_type !== 'Cartao')
       case 'income':
         return recData.income || []
       case 'fixo':

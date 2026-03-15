@@ -521,6 +521,15 @@ function TransactionPicker({
                       <span className={styles.sourceCount}>{candidateData.prior_count}</span>
                     </button>
                   )}
+                  {candidateData?.next_count > 0 && (
+                    <button
+                      className={`${styles.sourceBtn} ${styles.sourceBtnPrior} ${sourceFilter === 'next_month' ? styles.sourceBtnActive : ''}`}
+                      onClick={() => setSourceFilter('next_month')}
+                    >
+                      Mês Seg.
+                      <span className={styles.sourceCount}>{candidateData.next_count}</span>
+                    </button>
+                  )}
                 </div>
                 <div className={styles.sortControls}>
                   {[

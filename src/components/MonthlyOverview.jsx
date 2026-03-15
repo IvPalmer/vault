@@ -1,6 +1,7 @@
 import MetricasSection from './MetricasSection'
 import RecurringSection from './RecurringSection'
 import InvestmentSection from './InvestmentSection'
+import CartaoSection from './CartaoSection'
 import RecurringTotalsBar from './RecurringTotalsBar'
 import OrcamentoSection from './OrcamentoSection'
 import CardsSection from './CardsSection'
@@ -16,6 +17,7 @@ function MonthlyOverview() {
       <SmartCategorizeBar />
       <RecurringSection />
       <InvestmentSection />
+      <CartaoSection />
       <RecurringTotalsBar />
       <OrcamentoSection />
       <ProjectionSection />

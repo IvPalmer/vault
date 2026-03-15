@@ -57,6 +57,16 @@ def _cc_month_q(month_str, profile, account_type_field='account__account_type'):
         )
 
 
+def _build_cc_fatura_query_single(account_id, month_str, profile):
+    """Build query for fatura metric — always by invoice_month, excludes internal transfers."""
+    return (
+        Q(invoice_month=month_str, account_id=account_id, profile=profile,
+          is_internal_transfer=False) |
+        Q(month_str=month_str, invoice_month='', account_id=account_id, profile=profile,
+          is_internal_transfer=False)
+    )
+
+
 def _get_expected_amount(template, month_str, profile=None):
     """
     Return the expected amount for a recurring template in a month.
@@ -81,8 +91,9 @@ def initialize_month(month_str, profile=None):
     """
     templates = RecurringTemplate.objects.filter(
         is_active=True,
-        default_limit__gt=0,
         profile=profile,
+    ).filter(
+        Q(default_limit__gt=0) | Q(template_type='Cartao')
     )
     created = 0
     for tpl in templates:
@@ -144,12 +155,9 @@ def get_recurring_data(month_str, profile=None):
     Returns: dict with items grouped by type (fixo, income, investimento),
     plus 'all' list, and 'initialized' flag.
     """
-    # Auto-initialize if no mappings exist for this month
-    existing = RecurringMapping.objects.filter(month_str=month_str, profile=profile).count()
-    was_initialized = False
-    if existing == 0:
-        result = initialize_month(month_str, profile=profile)
-        was_initialized = result['initialized']
+    # Auto-initialize: always run to pick up newly added templates (idempotent)
+    result = initialize_month(month_str, profile=profile)
+    was_initialized = result['initialized']
 
     # Fetch all mappings for this month
     mappings = RecurringMapping.objects.filter(
@@ -365,6 +373,7 @@ def get_recurring_data(month_str, profile=None):
     fixo_items = []
     income_items = []
     investimento_items = []
+    cartao_items = []
 
     for mapping in mappings:
         cat_type = _get_type(mapping)
@@ -408,9 +417,38 @@ def get_recurring_data(month_str, profile=None):
             income_items.append(item)
         elif cat_type == 'Investimento':
             investimento_items.append(item)
+        elif cat_type == 'Cartao':
+            cartao_items.append(item)
         else:
             # Fixo + Variavel + any other type go into fixo list
             fixo_items.append(item)
+
+    # Cartao expected: use Pluggy bill total (from sync), fall back to
+    # purchase sum + projected installments for full expected bill.
+    if cartao_items:
+        cc_accounts_map = {
+            a.name: a for a in Account.objects.filter(profile=profile, account_type='credit_card')
+        }
+        _inst_schedule = _compute_installment_schedule(month_str, num_future_months=0, profile=profile)
+        _parcelas_by_card = _inst_schedule.get('_by_card', {}).get(month_str, {})
+        for item in cartao_items:
+            fatura = item['expected']  # From Pluggy bill total (authoritative)
+            if fatura == 0 and item['name'] in cc_accounts_map:
+                # No Pluggy bill — use purchase sum (authoritative when imported)
+                # or projected installments (fallback for future months).
+                cc_acct = cc_accounts_map[item['name']]
+                q = _build_cc_fatura_query_single(cc_acct.id, month_str, profile)
+                purchases = float(abs(Transaction.objects.filter(q).aggregate(
+                    total=Sum('amount'))['total'] or Decimal('0')))
+                card_parcelas = float(_parcelas_by_card.get(cc_acct.name, 0))
+                fatura = max(purchases, card_parcelas)
+                item['expected'] = fatura
+            if fatura > 0 and item['actual'] >= fatura * 0.9:
+                item['status'] = 'Pago'
+            elif item['actual'] > 0:
+                item['status'] = 'Parcial'
+            elif fatura == 0:
+                item['status'] = 'N/A'
 
     # Dynamic savings target: 20% of income
     # Must use TOTAL actual income (same as metricas entradas_atuais) for closed months,
@@ -438,7 +476,8 @@ def get_recurring_data(month_str, profile=None):
         'fixo': fixo_items,
         'income': income_items,
         'investimento': investimento_items,
-        'all': income_items + fixo_items + investimento_items,
+        'cartao': cartao_items,
+        'all': income_items + fixo_items + investimento_items + cartao_items,
         'initialized': was_initialized,
         'savings_target_pct': savings_target_pct,
         'savings_target_amount': round(savings_target_amount, 2),
@@ -755,26 +794,26 @@ def delete_recurring_template(template_id, profile=None):
 def _get_checking_balance_eom(month_str, profile=None):
     """
     Compute end-of-month checking account balance for a closed month.
-    Uses the most recent BalanceAnchor (from OFX LEDGERBAL) and works
-    backwards by subtracting all checking transactions between month-end
-    and the anchor date.
 
-    Returns the balance as a Decimal, or None if no anchor exists.
+    Strategy (in priority order):
+    1. BalanceAnchor ON the last day of the month — exact.
+    2. BalanceAnchor WITHIN the month — adjust by transactions between
+       anchor date and month-end (short, reliable gap).
+    3. BalanceAnchor shortly AFTER month-end (within 7 days) — backtrack
+       a small number of days (more reliable than long backtracking).
+    4. Return None — caller falls through to transaction-based estimate.
+
+    Long backtracking (weeks/months) is unreliable when transaction
+    history is incomplete, so we avoid it.
     """
     import calendar
-
-    anchor = BalanceAnchor.objects.filter(profile=profile).order_by('-date').first()
-    if not anchor:
-        return None
+    from datetime import date
 
     year = int(month_str[:4])
     month = int(month_str[5:7])
     last_day_num = calendar.monthrange(year, month)[1]
-    from datetime import date
     month_end = date(year, month, last_day_num)
-
-    if month_end >= anchor.date:
-        return None  # Can't compute for months at or after the anchor
+    month_start = date(year, month, 1)
 
     checking = Account.objects.filter(
         profile=profile, account_type='checking'
@@ -782,15 +821,39 @@ def _get_checking_balance_eom(month_str, profile=None):
     if not checking:
         return None
 
-    # Sum all checking transactions AFTER month-end up to anchor date
-    txns_after = Transaction.objects.filter(
-        profile=profile,
-        account=checking,
-        date__gt=month_end,
-        date__lte=anchor.date,
-    ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+    # 1. Exact anchor on month-end
+    exact = BalanceAnchor.objects.filter(
+        profile=profile, date=month_end
+    ).first()
+    if exact:
+        return exact.balance
 
-    return anchor.balance - txns_after
+    # 2. Anchor within the month — roll forward to month-end
+    in_month = BalanceAnchor.objects.filter(
+        profile=profile, date__gte=month_start, date__lt=month_end
+    ).order_by('-date').first()
+    if in_month:
+        txns_after = Transaction.objects.filter(
+            profile=profile, account=checking,
+            date__gt=in_month.date, date__lte=month_end,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        return in_month.balance + txns_after
+
+    # 3. Anchor shortly after month-end (max 7 days) — backtrack
+    from datetime import timedelta
+    cutoff = month_end + timedelta(days=7)
+    after = BalanceAnchor.objects.filter(
+        profile=profile, date__gt=month_end, date__lte=cutoff
+    ).order_by('date').first()
+    if after:
+        txns_between = Transaction.objects.filter(
+            profile=profile, account=checking,
+            date__gt=month_end, date__lte=after.date,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        return after.balance - txns_between
+
+    # 4. No reliable anchor — return None
+    return None
 
 
 def get_metricas(month_str, profile=None):
@@ -921,16 +984,30 @@ def get_metricas(month_str, profile=None):
         invest_template_total += m.expected_amount
 
     # Dynamic savings target: use max(template total, savings_target_pct × income)
-    # For closed months with actual data, use actuals; otherwise projections
+    # but ONLY when previous month's projected balance is positive (room to save).
+    # Otherwise, invest = template items only (consórcio, etc.).
     _savings_pct = Decimal(str(profile.savings_target_pct)) / Decimal('100') if profile else Decimal('0.20')
     _income_ref = entradas_atuais if (not is_current and entradas_atuais > 0) else entradas_projetadas
     _savings_target = _income_ref * _savings_pct if _income_ref > 0 else Decimal('0')
-    invest_goal = max(invest_template_total, _savings_target)
+
+    # 20% savings target only applies when previous month balance is positive.
+    # Otherwise invest = just template items (consórcio, etc.).
+    # For future months: projected_balance is resolved later from projection;
+    # start with full goal, then clamp in section 12b.
+    _prev_m_str = _month_str_add(month_str, -1)
+    _prev_saldo = _get_checking_balance_eom(_prev_m_str, profile=profile)
+    _prev_balance_positive = _prev_saldo is not None and _prev_saldo > 0
+
+    if _prev_balance_positive:
+        invest_goal = max(invest_template_total, _savings_target)
+    else:
+        invest_goal = invest_template_total
     # Actual invest_expected_total will be clamped after saldo_before_invest is known
     invest_expected_total = invest_goal  # placeholder, clamped below
 
     schedule = _compute_installment_schedule(month_str, num_future_months=0, profile=profile)
     parcelas_total = Decimal(str(schedule.get(month_str, 0)))
+    parcelas_by_card = schedule.get('_by_card', {}).get(month_str, {})
 
     # gastos_projetados = all committed checking outflows for the month.
     # Fixo (recurring debits) + Investimento (transfer debits) + CC fatura total
@@ -1028,33 +1105,68 @@ def get_metricas(month_str, profile=None):
     # =====================================================================
     cc_accounts = Account.objects.filter(profile=profile, account_type='credit_card')
 
-    def _build_cc_fatura_query_single(account_id, month_str, profile):
-        """Build query for fatura metric — always by invoice_month, excludes internal transfers."""
-        return (
-            Q(invoice_month=month_str, account_id=account_id, profile=profile,
-              is_internal_transfer=False) |
-            Q(month_str=month_str, invoice_month='', account_id=account_id, profile=profile,
-              is_internal_transfer=False)
-        )
+    # Use Pluggy bill totals from Cartao mappings (exact bank amounts).
+    # Falls back to summing CC purchases if no Cartao mapping exists.
+    cartao_bill_mappings = {
+        m.template.name: m.expected_amount
+        for m in RecurringMapping.objects.filter(
+            month_str=month_str, profile=profile,
+            template__template_type='Cartao', template__is_active=True,
+        ).select_related('template')
+        if m.expected_amount > 0
+    }
 
-    fatura_by_card = {}
+    # Cards with active Cartao templates have their own bill (counted in total).
+    # Additional cards (e.g. Rafa on MC Black) shown for visibility only.
+    cartao_account_names = set(
+        RecurringTemplate.objects.filter(
+            profile=profile, template_type='Cartao', is_active=True,
+        ).values_list('name', flat=True)
+    )
+
+    fatura_by_card = {}       # Cards with own bill (counted in fatura_total)
+    fatura_sub_cards = {}     # Additional cards (visibility only, NOT counted)
     for cc_acct in cc_accounts:
-        q = _build_cc_fatura_query_single(cc_acct.id, month_str, profile)
-        total = abs(Transaction.objects.filter(q).aggregate(
-            total=Sum('amount'))['total'] or Decimal('0.00'))
-        fatura_by_card[cc_acct.name] = total
+        if cc_acct.name in cartao_bill_mappings:
+            # Authoritative Pluggy bill total
+            fatura_by_card[cc_acct.name] = cartao_bill_mappings[cc_acct.name]
+        elif cartao_account_names and cc_acct.name in cartao_account_names:
+            # Active Cartao template but no Pluggy bill — use purchase sum
+            # or projected installments for THIS card only.
+            q = _build_cc_fatura_query_single(cc_acct.id, month_str, profile)
+            purchases = abs(Transaction.objects.filter(q).aggregate(
+                total=Sum('amount'))['total'] or Decimal('0.00'))
+            card_parcelas = Decimal(str(parcelas_by_card.get(cc_acct.name, 0)))
+            # Real purchases already include installment txns — use whichever
+            # is larger (purchases for imported months, parcelas for future).
+            estimated_total = max(purchases, card_parcelas)
+            if estimated_total > 0:
+                fatura_by_card[cc_acct.name] = estimated_total
+        else:
+            # Additional card (no own bill) — visibility only
+            q = _build_cc_fatura_query_single(cc_acct.id, month_str, profile)
+            purchases = abs(Transaction.objects.filter(q).aggregate(
+                total=Sum('amount'))['total'] or Decimal('0.00'))
+            card_parcelas = Decimal(str(parcelas_by_card.get(cc_acct.name, 0)))
+            # Real purchases already include installment txns — use whichever
+            # is larger (purchases for imported months, parcelas for future).
+            total = max(purchases, card_parcelas)
+            if total > 0:
+                fatura_sub_cards[cc_acct.name] = total
 
     # =====================================================================
     # 8. PARCELAS + GASTOS PROJETADOS
-    #    fatura_by_card (invoice_month=this month) = the CC bill DUE this
-    #    month (contains previous month's purchases). This is what will be
-    #    paid from checking via internal transfer.
-    #    gastos_projetados = fixo + fatura (all committed checking outflows).
-    #    Parcelas are a detail view (installments within the fatura).
+    #    fatura_by_card = CC bills that are paid from checking (own bills).
+    #    fatura_sub_cards = additional cards whose charges are already
+    #    included in another card's bill (visibility only).
     # =====================================================================
-    fatura_total = sum(fatura_by_card.values(), Decimal('0.00'))
-    # For future months with no imported CC data, use projected installments
-    # for gastos_projetados calculation only. Fatura cards stay 0 — no real bill yet.
+    # Sub-card charges are included in the parent's Pluggy bill total, so only
+    # add sub_cards when NO main card used a Pluggy bill (i.e. purchase-sum mode).
+    has_pluggy_bills = bool(cartao_bill_mappings)
+    sub_card_total = Decimal('0.00') if has_pluggy_bills else sum(fatura_sub_cards.values(), Decimal('0.00'))
+    fatura_total = sum(fatura_by_card.values(), Decimal('0.00')) + sub_card_total
+    # When the bill has an authoritative Pluggy total, use it.
+    # Otherwise fatura_by_card already includes projected installments.
     projected_cc = parcelas_total if fatura_total == 0 else fatura_total
     # Base expenses WITHOUT investment (used to determine affordable invest)
     gastos_base = fixo_expected_total + projected_cc
@@ -1104,22 +1216,87 @@ def get_metricas(month_str, profile=None):
     a_pagar_invest = max(Decimal('0'), invest_expected_total - _invest_actual_total)
 
     # Previous month's CC bill due this month, minus what's been paid.
+    # Derives cc_paid from Cartao recurring mappings (linked transactions).
     # For closed months, everything is settled (reflected in OFX balance).
     if is_current:
-        checking_acct = Account.objects.filter(
-            profile=profile, account_type='checking'
-        ).first()
         cc_paid = Decimal('0')
-        if checking_acct:
-            cc_paid = abs(Transaction.objects.filter(
-                month_str=month_str, profile=profile, account=checking_acct,
-                is_internal_transfer=True, amount__lt=0,
-            ).aggregate(total=Sum('amount'))['total'] or Decimal('0'))
+        cartao_mappings = RecurringMapping.objects.filter(
+            month_str=month_str, profile=profile,
+        ).filter(
+            Q(template__template_type='Cartao') | Q(is_custom=True, custom_type='Cartao')
+        ).prefetch_related('transactions')
+        if cartao_mappings.exists():
+            for cm in cartao_mappings:
+                cm_actual = _get_actual_for_mapping(cm, is_income=False)
+                cc_paid += cm_actual
+        else:
+            # Fallback: broad internal transfer detection for profiles without Cartao templates
+            checking_acct = Account.objects.filter(
+                profile=profile, account_type='checking'
+            ).first()
+            if checking_acct:
+                cc_paid = abs(Transaction.objects.filter(
+                    month_str=month_str, profile=profile, account=checking_acct,
+                    is_internal_transfer=True, amount__lt=0,
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0'))
         fatura_remaining = max(Decimal('0'), fatura_total - cc_paid)
     else:
         fatura_remaining = Decimal('0')
 
     a_pagar = a_pagar_fixo + a_pagar_invest + fatura_remaining
+
+    # Carryover debt: previous month's recurring items not paid within that month.
+    # Only for the CURRENT month — future months already account for pending
+    # items via the projection cascade (projected_balance).
+    # Checks ALL recurring types (Fixo, Cartao, Investimento), not just CC.
+    # Split into paid_late (paid from current month) vs still_pending.
+    _prev_m = _month_str_add(month_str, -1)
+    carryover_debt = Decimal('0')
+    carryover_paid_late = Decimal('0')
+    carryover_pending = Decimal('0')
+    if is_current:
+        _prev_mappings = RecurringMapping.objects.filter(
+            month_str=_prev_m, profile=profile,
+        ).exclude(
+            status__in=['skipped', 'Pulado']
+        ).select_related('template').prefetch_related('transactions', 'cross_month_transactions')
+        for _cm in _prev_mappings:
+            _ttype = _cm.template.template_type if _cm.template else (_cm.custom_type or '')
+            if _ttype == 'Income':
+                continue  # Income carryover doesn't reduce budget
+            # Check how/when it was paid:
+            # - Paid in its own month → no carryover (on time)
+            # - Paid from an earlier month (cross-month to past) → no carryover
+            # - Paid from THIS month (cross-month to current) → carryover (late)
+            # - Not paid at all → carryover (still pending)
+            _paid_in_own_month = any(
+                _t.month_str == _prev_m for _t in _cm.transactions.all()
+            )
+            if _paid_in_own_month:
+                continue
+            _paid_from_other = any(
+                _t.month_str != month_str for _t in _cm.cross_month_transactions.all()
+            )
+            _paid_from_current = any(
+                _t.month_str == month_str for _t in _cm.cross_month_transactions.all()
+            )
+            if _paid_from_other and not _paid_from_current:
+                continue  # Paid from an older month, already reflected in past balances
+            # Determine expected amount
+            if _ttype == 'Cartao':
+                _prev_fatura = Decimal('0')
+                for cc_acct in cc_accounts:
+                    q = _build_cc_fatura_query_single(cc_acct.id, _prev_m, profile)
+                    _prev_fatura += abs(Transaction.objects.filter(q).aggregate(
+                        total=Sum('amount'))['total'] or Decimal('0'))
+                _debt_amount = _prev_fatura
+            else:
+                _debt_amount = _cm.expected_amount or (_cm.template.default_limit if _cm.template else Decimal('0'))
+            carryover_debt += _debt_amount
+            if _paid_from_current:
+                carryover_paid_late += _debt_amount
+            else:
+                carryover_pending += _debt_amount
 
     # =====================================================================
     # 12. BALANCE OVERRIDE + SALDO PROJETADO
@@ -1131,6 +1308,19 @@ def get_metricas(month_str, profile=None):
         balance_override = float(bo.balance)
     except BalanceOverride.DoesNotExist:
         pass
+
+    # Auto-fill from latest Pluggy BalanceAnchor for the current month
+    balance_anchor_value = None
+    balance_anchor_date = None
+    if is_current:
+        anchor = BalanceAnchor.objects.filter(
+            profile=profile,
+            date__year=year,
+            date__month=month,
+        ).order_by('-date').first()
+        if anchor:
+            balance_anchor_value = float(anchor.balance)
+            balance_anchor_date = anchor.date.isoformat()
 
     # Compute checking_balance_eom for closed months (moved here from later)
     checking_balance_eom = None
@@ -1146,6 +1336,9 @@ def get_metricas(month_str, profile=None):
     # Determine if this is a future month (after today)
     is_future = (year > today.year or (year == today.year and month > today.month))
 
+    # Effective starting balance: Pluggy anchor (real bank data) > manual override > None
+    effective_balance = balance_anchor_value if balance_anchor_value is not None else balance_override
+
     # For future months, cascade from the current month's projection.
     # This uses get_projection which anchors to the real current-month saldo.
     projected_balance = None  # Starting balance for this month from projection cascade
@@ -1156,61 +1349,42 @@ def get_metricas(month_str, profile=None):
         prev_month_str = _month_str_add(month_str, -1)
         if prev_month_str in proj_months:
             projected_balance = proj_months[prev_month_str]['cumulative']
+            # Re-evaluate invest goal: 20% target only when prev month ended positive
+            if projected_balance > 0:
+                invest_goal = max(invest_template_total, _savings_target)
+            else:
+                invest_goal = invest_template_total
+            invest_expected_total = invest_goal
+            gastos_projetados = gastos_base + invest_expected_total
+            a_pagar_invest = max(Decimal('0'), invest_expected_total - _invest_actual_total)
+            a_pagar = a_pagar_fixo + a_pagar_invest + fatura_remaining
         if month_str in proj_months:
             saldo_projetado = Decimal(str(proj_months[month_str]['cumulative']))
         else:
             saldo_projetado = entradas_projetadas - gastos_projetados
-    elif balance_override is not None:
-        # User manually set balance = current checking balance.
+    elif effective_balance is not None:
+        # Starting balance from manual override or Pluggy anchor.
         # Add pending income, subtract all pending outflows (fixo + CC bill).
-        saldo_projetado = Decimal(str(balance_override)) + a_entrar - a_pagar
+        saldo_projetado = Decimal(str(effective_balance)) + a_entrar - a_pagar
     elif not is_current and checking_balance_eom is not None:
         # Closed month: use actual bank balance from OFX
         saldo_projetado = checking_balance_eom
     elif is_current and prev_checking is not None:
         # Current month without BO: prev real balance + income - all expenses
         saldo_projetado = prev_checking + entradas_projetadas - gastos_projetados
-    elif not is_current and float(entradas_atuais) > 0:
-        # Closed month without OFX anchor — use actual transactions
-        saldo_projetado = entradas_atuais - gastos_atuais
+    elif not is_current:
+        # Closed month without balance anchor — no reliable data
+        saldo_projetado = None
     else:
         saldo_projetado = entradas_projetadas - gastos_projetados
 
     # =====================================================================
-    # 12b. CLAMP INVESTMENT TO AFFORDABLE AMOUNT
-    #      Only invest if it won't push balance negative (avoid overdraft juros).
-    #      For closed months with OFX, actuals are final — don't clamp.
+    # 12b. INVESTMENT EXPECTED — no affordability clamping.
+    #      invest_expected_total is already set:
+    #        - max(template, 20% income) when prev month positive
+    #        - template_total when prev month negative
+    #      For closed months with OFX, actuals are final — don't override.
     # =====================================================================
-    # Skip clamping only for closed months with real OFX balance (actuals are final)
-    _closed_with_ofx = (not is_current and checking_balance_eom is not None)
-    if not _closed_with_ofx and invest_expected_total > 0:
-        # saldo_before_invest: what balance would be without any investment
-        saldo_before_invest = saldo_projetado + invest_expected_total
-        # Floor: mandatory investments from templates (consórcio, etc.) can't be skipped
-        invest_floor = invest_template_total
-        if saldo_before_invest <= 0:
-            # Can't afford discretionary investment, but mandatory ones remain
-            invest_expected_total = invest_floor
-        elif saldo_before_invest < invest_expected_total:
-            # Can only afford partial — at least keep mandatory template amount
-            invest_expected_total = max(invest_floor, saldo_before_invest)
-        # else: full target is affordable, keep as-is
-
-        # Recompute derived values with clamped investment
-        gastos_projetados = gastos_base + invest_expected_total
-        a_pagar_invest = max(Decimal('0'), invest_expected_total - _invest_actual_total)
-        a_pagar = a_pagar_fixo + a_pagar_invest + fatura_remaining
-
-        # Recompute saldo with clamped values
-        if balance_override is not None:
-            saldo_projetado = Decimal(str(balance_override)) + a_entrar - a_pagar
-        elif is_current and prev_checking is not None:
-            saldo_projetado = prev_checking + entradas_projetadas - gastos_projetados
-        elif not is_current and float(entradas_atuais) > 0:
-            saldo_projetado = entradas_atuais - gastos_atuais
-        elif not is_future:
-            saldo_projetado = entradas_projetadas - gastos_projetados
-        # For future months, saldo came from projection — don't recompute here
 
     # =====================================================================
     # 13. DIAS ATÉ O FECHAMENTO
@@ -1254,12 +1428,12 @@ def get_metricas(month_str, profile=None):
         else:
             next_month = datetime(year, month + 1, 1)
         days_in_month = (next_month - timedelta(days=1)).day
-        diario_recomendado = float(saldo_projetado / days_in_month) if days_in_month > 0 else 0.0
+        diario_recomendado = float((saldo_projetado or 0) / days_in_month) if days_in_month > 0 else 0.0
 
     # =====================================================================
     # 15. SAÚDE DO MÊS
     # =====================================================================
-    if float(saldo_projetado) <= 0:
+    if saldo_projetado is not None and float(saldo_projetado) <= 0:
         saude = 'CRÍTICO'
         saude_level = 'danger'
     elif float(gastos_atuais) > float(gastos_projetados) * 0.9:
@@ -1291,6 +1465,8 @@ def get_metricas(month_str, profile=None):
     result_dict = {
         'month_str': month_str,
         'balance_override': balance_override,
+        'balance_anchor_value': balance_anchor_value,
+        'balance_anchor_date': balance_anchor_date,
         'projected_balance': projected_balance,
         'is_future': is_future,
         'prev_month_saldo': prev_month_saldo_float,
@@ -1304,10 +1480,12 @@ def get_metricas(month_str, profile=None):
         'gastos_variaveis_checking': round(
             (prev_month_saldo_float or 0) + float(entradas_projetadas)
             - float(fixo_expected_total) - float(invest_expected_total)
-            - float(fatura_total) - float(saldo_projetado), 2
+            - float(fatura_total) - float(saldo_projetado or 0), 2
         ) if not is_future else 0.0,
         'fatura_by_card': {name: float(val) for name, val in fatura_by_card.items()},
+        'fatura_sub_cards': {name: float(val) for name, val in fatura_sub_cards.items()},
         'parcelas': float(parcelas_total),
+        'parcelas_by_card': {name: float(val) for name, val in parcelas_by_card.items()},
         'a_entrar': float(a_entrar),
         'a_pagar': float(a_pagar),
         'a_pagar_fixo': float(a_pagar_fixo),
@@ -1316,7 +1494,7 @@ def get_metricas(month_str, profile=None):
         'fatura_total': float(fatura_total),
         'fixo_expected_total': float(fixo_expected_total),
         'invest_expected_total': float(invest_expected_total),
-        'saldo_projetado': float(saldo_projetado),
+        'saldo_projetado': float(saldo_projetado) if saldo_projetado is not None else None,
         'dias_fechamento': dias_fechamento,
         'is_current_month': is_current,
         'diario_recomendado': round(diario_recomendado, 2),
@@ -1324,6 +1502,9 @@ def get_metricas(month_str, profile=None):
         'saude_level': saude_level,
         'cross_month_moved': cross_month_info,
         'savings_target_pct': float(profile.savings_target_pct) if profile else 20.0,
+        'carryover_debt': float(carryover_debt),
+        'carryover_paid_late': float(carryover_paid_late),
+        'carryover_pending': float(carryover_pending),
     }
 
     # --- Meta Poupança: investment achievement vs dynamic target ---
@@ -1349,7 +1530,7 @@ def get_metricas(month_str, profile=None):
     # Headroom: after all non-investment expenses, can the full target be met?
     # saldo already includes invest_expected in gastos_projetados, so add it back
     # to see what's available before investment decisions
-    saldo_before_invest = float(saldo_projetado) + float(invest_expected_total)
+    saldo_before_invest = float(saldo_projetado or 0) + float(invest_expected_total)
     savings_affordable = saldo_before_invest >= _invest_target
 
     result_dict['savings_rate'] = savings_achievement
@@ -2032,7 +2213,7 @@ def get_installment_details(month_str, profile=None):
                 base_desc = _extract_base_desc(txn.description)
                 acct = txn.account.name if txn.account else ''
                 amt = round(float(abs(txn.amount)), 2)
-                amt_group = round(float(abs(txn.amount)), 1)
+                amt_group = round(float(abs(txn.amount)), 0)
 
                 group_key = (base_desc, acct, amt_group, total_inst)
                 if group_key not in purchase_groups or current < purchase_groups[group_key][0]:
@@ -2103,9 +2284,31 @@ def get_installment_details(month_str, profile=None):
     #      different source months yields the same target position; keep only
     #      the most recent source (lowest lookback).
     import calendar as _cal
+    from dateutil.relativedelta import relativedelta as _rdelta
 
     items = []
     seen = set()  # (base_desc, account, amount, total_inst) — one entry per purchase
+
+    # Pre-load CC account billing cycle info for invoice_month calculation.
+    _cc_accounts = {
+        a.name: a for a in Account.objects.filter(
+            profile=profile, account_type='credit_card'
+        )
+    }
+
+    def _projected_invoice_month(projected_date, acct_name):
+        """Compute invoice_month for a projected installment date."""
+        acct = _cc_accounts.get(acct_name)
+        closing_day = (acct.closing_day if acct and acct.closing_day else 25)
+        due_day = acct.due_day if acct else None
+        due_offset = 0 if (due_day and closing_day and due_day > closing_day) else 1
+
+        if projected_date.day <= closing_day:
+            cycle = date(projected_date.year, projected_date.month, 1)
+        else:
+            cycle = date(projected_date.year, projected_date.month, 1) + _rdelta(months=1)
+        payment = cycle + _rdelta(months=due_offset)
+        return payment.strftime('%Y-%m')
 
     # Batch fetch all lookback months' installment transactions.
     # Always use invoice_month (matches _compute_installment_schedule).
@@ -2157,7 +2360,7 @@ def get_installment_details(month_str, profile=None):
             base_desc = _extract_base_desc(txn.description)
             acct = txn.account.name if txn.account else ''
             amt = round(float(abs(txn.amount)), 2)
-            amt_group = round(float(abs(txn.amount)), 1)
+            amt_group = round(float(abs(txn.amount)), 0)
 
             group_key = (base_desc, acct, amt_group, total_inst)
 
@@ -2252,7 +2455,7 @@ def categorize_installment_siblings(transaction_id, category_id, subcategory_id=
     total_installments = int(m_match.group(2))
     base_desc = _extract_base_desc(txn.description)
     acct_id = txn.account_id
-    amt_group = round(float(abs(txn.amount)), 1)
+    amt_group = round(float(abs(txn.amount)), 0)
 
     # Find all siblings: same base description, same account, similar |amount|,
     # is_installment=True, and installment count matches total
@@ -2377,12 +2580,16 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile
             if tid not in linked_ids:
                 globally_linked_mapping[tid] = f'{m_name} ({mp.month_str})'
 
-    # Compute previous month string for cross-month linking
+    # Compute adjacent month strings for cross-month linking
     y, m = int(month_str[:4]), int(month_str[5:7])
     if m == 1:
         prev_month_str = f'{y - 1}-12'
     else:
         prev_month_str = f'{y}-{m - 1:02d}'
+    if m == 12:
+        next_month_str = f'{y + 1}-01'
+    else:
+        next_month_str = f'{y}-{m + 1:02d}'
 
     # Three separate pools:
     # 1. Checking transactions: month_str = target month (bank transactions in Feb)
@@ -2390,15 +2597,15 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile
     # 3. Prior month: checking/manual from previous month (for cross-month linking)
     from django.db.models import Q
     _cand_cc_q = _cc_month_q(month_str, profile)
-    # Also include CC transactions where invoice_month matches (catches installments
-    # whose month_str is the purchase date but invoice_month is the billing month)
-    _cand_cc_invoice_q = Q(invoice_month=month_str, account__account_type='credit_card')
+    cc_filter = _cand_cc_q
+    if _cc_month_field(profile) == 'invoice_month':
+        # In invoice mode, also include CC transactions where invoice_month matches
+        # (catches installments whose month_str differs from billing month)
+        cc_filter = cc_filter | Q(invoice_month=month_str, account__account_type='credit_card')
     qs = Transaction.objects.filter(
         Q(month_str=month_str, account__account_type='checking') |
         Q(month_str=month_str, account__account_type='manual') |
-        _cand_cc_q |
-        _cand_cc_invoice_q |
-        Q(month_str=month_str, account__account_type='credit_card'),
+        cc_filter,
         profile=profile,
     ).select_related('account', 'category').order_by('-date').distinct()
 
@@ -2408,18 +2615,18 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile
         profile=profile,
     ).select_related('account', 'category').order_by('-date').distinct()
 
+    next_qs = Transaction.objects.filter(
+        Q(month_str=next_month_str, account__account_type='checking') |
+        Q(month_str=next_month_str, account__account_type='manual'),
+        profile=profile,
+    ).select_related('account', 'category').order_by('-date').distinct()
+
     # Build set of transactions already cross-month-moved to ANY mapping.
     # We need to check mappings from OTHER months that pulled transactions
     # from the current month (e.g., January's mapping pulling a December txn).
     # Also check if the current month's mappings pulled from the prior month.
     cross_month_moved_ids = set()
     cross_month_target = {}  # txn_id -> target month_str
-
-    # Compute next month for forward cross-month detection
-    if m == 12:
-        next_month_str = f'{y + 1}-01'
-    else:
-        next_month_str = f'{y}-{m + 1:02d}'
 
     # Check all mappings that have cross-month transactions (current, next, and prev months)
     for cm in RecurringMapping.objects.filter(
@@ -2450,9 +2657,9 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile
         if source == 'credit_card' and txn.invoice_month:
             display_date = f'{txn.invoice_month}-01'
 
-        # Override source for prior month pool
-        if source_pool == 'prior_month':
-            source = 'prior_month'
+        # Override source for adjacent month pools
+        if source_pool in ('prior_month', 'next_month'):
+            source = source_pool
 
         return {
             'id': txn_id_str,
@@ -2468,7 +2675,7 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile
             'is_linked': txn_id_str in linked_ids,
             'is_globally_linked': txn_id_str in globally_linked_ids and txn_id_str not in linked_ids,
             'linked_to': globally_linked_mapping.get(txn_id_str, None),
-            'is_cross_month': source_pool == 'prior_month',
+            'is_cross_month': source_pool in ('prior_month', 'next_month'),
             'cross_month_moved': txn_id_str in cross_month_moved_ids and txn_id_str not in linked_ids,
             'cross_month_target': cross_month_target.get(txn_id_str, None),
             '_diff_pct': diff_pct,
@@ -2497,6 +2704,15 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile
         seen_ids.add(txn_id_str)
         results.append(_build_candidate(txn, 'prior_month'))
 
+    for txn in next_qs:
+        txn_id_str = str(txn.id)
+        if txn_id_str in seen_ids:
+            continue
+        if txn_id_str in globally_linked_ids and txn_id_str not in linked_ids:
+            continue
+        seen_ids.add(txn_id_str)
+        results.append(_build_candidate(txn, 'next_month'))
+
     # Sort: best amount matches first, then by date
     results.sort(key=lambda r: (r['_diff_pct'], r['date']))
 
@@ -2508,10 +2724,12 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile
     checking_count = sum(1 for r in results if r['source'] == 'checking')
     cc_count = sum(1 for r in results if r['source'] == 'credit_card')
     prior_count = sum(1 for r in results if r['source'] == 'prior_month')
+    next_count = sum(1 for r in results if r['source'] == 'next_month')
 
     return {
         'month_str': month_str,
         'prev_month_str': prev_month_str,
+        'next_month_str': next_month_str,
         'category_id': str(cat.id) if cat else None,
         'category_name': cat_name,
         'expected': expected,
@@ -2520,6 +2738,7 @@ def get_mapping_candidates(month_str, category_id=None, mapping_id=None, profile
         'checking_count': checking_count,
         'cc_count': cc_count,
         'prior_count': prior_count,
+        'next_count': next_count,
     }
 
 
@@ -2737,8 +2956,11 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
     that bill — we deduplicate before summing.
 
     Returns: dict { month_str: total_installment_amount }
+    Also sets schedule_by_card: dict { month_str: { account_name: amount } }
+    accessible via schedule attribute on returned dict.
     """
     schedule = {}  # month_str -> total amount
+    schedule_by_card = {}  # month_str -> { account_name -> amount }
 
     # Pre-compute all month strings we'll need
     target_months = [_month_str_add(target_month_str, i) for i in range(num_future_months + 1)]
@@ -2808,7 +3030,7 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
             base_desc = _extract_base_desc(txn.description)
             acct = txn.account.name if txn.account else ''
             amt = round(float(abs(txn.amount)), 2)
-            amt_group = round(float(abs(txn.amount)), 1)
+            amt_group = round(float(abs(txn.amount)), 0)
 
             # Don't include txn.date — Pluggy uses bill-listing date while
             # legacy uses purchase date, causing false duplicates for the
@@ -2822,6 +3044,17 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
         if real_total > 0:
             schedule[check_month] = real_total
             months_with_real_data.add(check_month)
+        # Per-card breakdown from real data
+        card_totals = {}
+        for (base_desc, acct, amt_group, total_inst), (_, amt) in purchase_groups.items():
+            card_totals[acct] = card_totals.get(acct, 0) + amt
+        # Add non-parseable per-card
+        for txn in inst_txns:
+            if not _parse_installment(txn):
+                acct = txn.account.name if txn.account else ''
+                card_totals[acct] = card_totals.get(acct, 0) + float(abs(txn.amount))
+        if card_totals:
+            schedule_by_card[check_month] = card_totals
 
     # Step 2: Project for months WITHOUT real data from older statements.
     seen_per_month = {}
@@ -2842,7 +3075,7 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
             current = int(m_match.group(1))
             total_inst = int(m_match.group(2))
             amt = round(float(abs(txn.amount)), 2)
-            amt_group = round(float(abs(txn.amount)), 1)
+            amt_group = round(float(abs(txn.amount)), 0)
             base_desc = _extract_base_desc(txn.description)
             acct = txn.account.name if txn.account else ''
 
@@ -2880,8 +3113,17 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
                         continue
                     seen_per_month[check_month].add(purchase_id)
                     schedule[check_month] = schedule.get(check_month, 0) + amt
+                    # Per-card projection
+                    if check_month not in schedule_by_card:
+                        schedule_by_card[check_month] = {}
+                    schedule_by_card[check_month][acct] = schedule_by_card[check_month].get(acct, 0) + amt
 
-    return {m: round(v, 2) for m, v in schedule.items()}
+    result = {m: round(v, 2) for m, v in schedule.items()}
+    result['_by_card'] = {
+        m: {card: round(v, 2) for card, v in cards.items()}
+        for m, cards in schedule_by_card.items()
+    }
+    return result
 
 
 def get_last_installment_month(profile=None):
@@ -2925,7 +3167,7 @@ def get_last_installment_month(profile=None):
         total = int(m.group(2))
         base_desc = _extract_base_desc(desc)
         acct = acct_name or ''
-        amt_group = round(float(abs(amount)), 1)
+        amt_group = round(float(abs(amount)), 0)
 
         key = (month_str, base_desc, acct, amt_group, total)
         if key not in purchase_groups or current < purchase_groups[key]:
@@ -2960,12 +3202,20 @@ def get_projection(start_month_str, num_months=0, profile=None):
     if eom is not None:
         starting_balance = float(eom)
     else:
-        # Fall back to BO or prev-month projected saldo
+        # Fall back to BO, then Pluggy BalanceAnchor, then 0
         try:
             prev_bo = BalanceOverride.objects.get(month_str=start_month_str, profile=profile)
             starting_balance = float(prev_bo.balance)
         except BalanceOverride.DoesNotExist:
-            starting_balance = 0.0
+            # Try latest BalanceAnchor from this month (Pluggy sync)
+            s_year = int(start_month_str[:4])
+            s_month = int(start_month_str[5:7])
+            anchor = BalanceAnchor.objects.filter(
+                profile=profile,
+                date__year=s_year,
+                date__month=s_month,
+            ).order_by('-date').first()
+            starting_balance = float(anchor.balance) if anchor else 0.0
 
     # Auto-compute range if num_months not specified
     if num_months <= 0:
@@ -2997,24 +3247,63 @@ def get_projection(start_month_str, num_months=0, profile=None):
     installment_schedule = _compute_installment_schedule(
         start_month_str, num_future_months=num_months, profile=profile,
     )
-    current_installment_total = installment_schedule.get(start_month_str, 0)
 
-    # Current month fatura total (actual CC bill) — always uses invoice_month
-    # since fatura is the real amount debited from checking.
+
+    # Current month fatura total — use metricas value (which respects Pluggy
+    # bill totals and sub-card logic) instead of a raw CC transaction query.
     cc_accounts = Account.objects.filter(profile=profile, account_type='credit_card')
-    cc_ids = list(cc_accounts.values_list('id', flat=True))
-    current_fatura_total = 0.0
-    if cc_ids:
-        fatura_q = (
-            Q(invoice_month=start_month_str, account_id__in=cc_ids, profile=profile,
-              is_internal_transfer=False) |
-            Q(month_str=start_month_str, invoice_month='', account_id__in=cc_ids, profile=profile,
-              is_internal_transfer=False)
-        )
-        current_fatura_total = float(abs(
-            Transaction.objects.filter(fatura_q).aggregate(
-                total=Sum('amount'))['total'] or Decimal('0')
-        ))
+
+    # Pre-compute fatura totals for future months (purchases + per-card parcelas)
+    # so the projection uses the same CC cost as metricas/budget.
+    # We compute a fresh installment schedule per-month (like metricas does)
+    # because the bulk schedule from start_month underestimates future months
+    # when recent bills introduce new installment series.
+    cartao_template_names = set(
+        RecurringTemplate.objects.filter(
+            profile=profile, template_type='Cartao', is_active=True,
+        ).values_list('name', flat=True)
+    )
+    # Cache per-month installment lookups to avoid redundant DB queries
+    _fatura_cache = {}
+
+    def _estimate_fatura_for_month(m):
+        """Estimate total CC fatura for month m (purchases + per-card parcelas).
+        Includes sub-cards (inactive templates) whose charges aren't in a Pluggy bill.
+        """
+        if m in _fatura_cache:
+            return _fatura_cache[m]
+        # Check if any card has a Pluggy bill for this month
+        pluggy_bills = {
+            mp.template.name: float(mp.expected_amount)
+            for mp in RecurringMapping.objects.filter(
+                month_str=m, profile=profile,
+                template__template_type='Cartao', template__is_active=True,
+            ).select_related('template')
+            if mp.expected_amount > 0
+        }
+        if pluggy_bills:
+            # Pluggy bills are authoritative and include sub-card charges
+            _fatura_cache[m] = sum(pluggy_bills.values())
+            return _fatura_cache[m]
+        # No Pluggy bills — estimate from purchases + fresh per-month parcelas
+        month_sched = _compute_installment_schedule(m, num_future_months=0, profile=profile)
+        month_by_card = month_sched.get('_by_card', {}).get(m, {})
+        total = Decimal('0')
+        for cc_acct in cc_accounts:
+            q = _build_cc_fatura_query_single(cc_acct.id, m, profile)
+            purchases = abs(Transaction.objects.filter(q).aggregate(
+                total=Sum('amount'))['total'] or Decimal('0'))
+            card_parcelas = Decimal(str(month_by_card.get(cc_acct.name, 0)))
+            # Real purchases already include installment txns — use whichever
+            # is larger (purchases for imported months, parcelas for future).
+            card_total = max(purchases, card_parcelas)
+            if cc_acct.name in cartao_template_names:
+                total += card_total
+            elif card_total > 0:
+                # Sub-card not in a Pluggy bill — add its portion
+                total += card_total
+        _fatura_cache[m] = float(total)
+        return _fatura_cache[m]
 
     # Prefetch BudgetConfig overrides for all future months in one query
     future_months = [_month_str_add(start_month_str, i) for i in range(1, num_months)]
@@ -3033,7 +3322,7 @@ def get_projection(start_month_str, num_months=0, profile=None):
     # Compute current month saldo using metricas formula (BO + a_entrar - a_pagar)
     # so the projection aligns with the saldo_projetado card.
     metricas = get_metricas(start_month_str, profile=profile)
-    current_month_saldo = float(metricas['saldo_projetado'])
+    current_month_saldo = float(metricas['saldo_projetado'] or 0)
 
     # Savings target percentage for dynamic investment goal
     savings_target_pct = float(profile.savings_target_pct) if profile else 20.0
@@ -3067,15 +3356,18 @@ def get_projection(start_month_str, num_months=0, profile=None):
                 elif cat_type == 'Investimento':
                     invest += expected
 
-            # Use fatura total (real CC bill) when available, else parcelas
-            installments = current_fatura_total if current_fatura_total > 0 else current_installment_total
+            # Use metricas fatura_total (respects Pluggy bills + sub-cards)
+            installments = float(metricas.get('fatura_total', 0)) or installment_schedule.get(month, 0)
             variable = 0.0
         else:
             # Future months: use defaults, applying BudgetConfig overrides per template
             income = sum(_tpl_amount(t, month) for t in income_tpls)
             fixo = sum(_tpl_amount(t, month) for t in fixo_tpls)
             invest = sum(_tpl_amount(t, month) for t in invest_tpls)
-            installments = installment_schedule.get(month, 0)
+            # Use full fatura estimate (purchases + parcelas) when available,
+            # fall back to installments-only for far-future months.
+            fatura_est = _estimate_fatura_for_month(month)
+            installments = fatura_est if fatura_est > 0 else installment_schedule.get(month, 0)
             variable = 0.0
 
         # Dynamic savings target: use max(template invest, target % of income)
@@ -3093,13 +3385,14 @@ def get_projection(start_month_str, num_months=0, profile=None):
             variable = starting_balance + income - fixo - invest - installments - cumulative
             net = cumulative - starting_balance
         else:
-            # Future months: only invest if balance stays non-negative
-            net_before_invest = income - fixo - installments - variable
-            balance_before_invest = cumulative + net_before_invest
-            if balance_before_invest <= 0:
-                invest = 0.0
+            # Future months: invest = max(template, 20% income) when prev month
+            # ended positive; otherwise just template items. No affordability clamp.
+            if cumulative > 0:
+                invest = invest_goal  # max(template, 20% income)
             else:
-                invest = min(invest_goal, balance_before_invest)
+                invest = invest  # template amount only (already set above)
+
+            net_before_invest = income - fixo - installments - variable
             net = net_before_invest - invest
             cumulative += net
 
@@ -3144,7 +3437,24 @@ def get_orcamento(month_str, profile=None):
     fixo = metricas['fixo_expected_total']
     invest = metricas['invest_expected_total']
     cartao = metricas['fatura_total']
-    total_available = max(0.0, entradas - fixo - invest - cartao)
+
+    # Starting balance: carry-over from previous month
+    # Current month: prev month's real EOM balance (fixed at month start)
+    # Future months: projected balance from cascade
+    # Closed months: prev month's EOM balance
+    starting_balance = 0.0
+    if metricas.get('is_future') and metricas.get('projected_balance') is not None:
+        starting_balance = metricas['projected_balance']
+    elif metricas.get('prev_month_saldo') is not None:
+        starting_balance = metricas['prev_month_saldo']
+
+    # Deduct carryover debt: if previous month's CC bill was paid late (from
+    # this month's checking), that cost is hidden in prev_month_saldo but the
+    # payment already hit this month's bank balance.
+    carryover_debt = metricas.get('carryover_debt', 0.0)
+    starting_balance -= carryover_debt
+
+    total_available = round(starting_balance + entradas - fixo - invest - cartao, 2)
 
     # ── 2. Identify committed (fixo/invest/income) transaction IDs ───
     all_months = [month_str] + [_month_str_add(month_str, -i) for i in range(1, 7)]
@@ -3297,6 +3607,7 @@ def get_orcamento(month_str, profile=None):
     return {
         'month_str': month_str,
         'categories': categories,
+        'starting_balance': round(starting_balance, 2),
         'total_available': round(total_available, 2),
         'total_limit': round(total_limit, 2),
         'total_spent': round(total_spent, 2),
@@ -5321,6 +5632,16 @@ def _weekdays_in_month(year, month):
     return sum(1 for d, wd in cal.itermonthdays2(year, month) if d != 0 and wd < 5)
 
 
+def _weekdays_in_half(year, month, half):
+    """Count weekdays in first half (days 1-15) or second half (16-end) of month."""
+    import calendar
+    cal = calendar.Calendar()
+    if half == 1:
+        return sum(1 for d, wd in cal.itermonthdays2(year, month) if 1 <= d <= 15 and wd < 5)
+    else:
+        return sum(1 for d, wd in cal.itermonthdays2(year, month) if d >= 16 and wd < 5)
+
+
 def _get_usd_brl_rate():
     """Fetch live USD/BRL mid-market rate from Wise, fallback to open.er-api.com."""
     import urllib.request
@@ -5399,9 +5720,11 @@ def compute_salary_projection(profile, num_months=12, start_month_str=None):
     wise_pct = float(cfg.wise_fee_pct)
     wise_flat = float(getattr(cfg, 'wise_fee_flat', 0) or 0)
     tax_pct = float(cfg.tax_hold_pct)
-    recoup_pct = float(cfg.advance_recoup_pct)
+    adv_total = float(cfg.advance_total_usd or 0)
     adv_start = cfg.advance_start_date  # e.g. '2026-02'
     adv_cycles = cfg.advance_num_cycles
+    # Fixed deduction per cycle = total advance / number of cycles
+    adv_per_cycle = adv_total / adv_cycles if adv_cycles > 0 else 0
 
     usd_brl = _get_usd_brl_rate()
 
@@ -5454,18 +5777,21 @@ def compute_salary_projection(profile, num_months=12, start_month_str=None):
         year, month = dt.year, dt.month
         wdays = _weekdays_in_month(year, month)
         gross_usd = rate * hours * wdays
-        half = gross_usd / 2
 
         payments = []
         month_total_brl = 0
 
         for pay_num in [1, 2]:
+            # Count actual weekdays in this half-month
+            half_wdays = _weekdays_in_half(year, month, pay_num)
+            half_gross = rate * hours * half_wdays
+
             is_deduction = (month_key, pay_num) in deduction_slots
-            adv_ded = half * recoup_pct if is_deduction else 0
+            adv_ded = adv_per_cycle if is_deduction else 0
             if is_deduction:
                 advance_total_recouped += adv_ded
 
-            net_usd = half - adv_ded
+            net_usd = half_gross - adv_ded
             wise_fee = wise_flat + net_usd * wise_pct
             after_wise_usd = net_usd - wise_fee
             brl_enterprise = after_wise_usd * usd_brl
@@ -5474,7 +5800,8 @@ def compute_salary_projection(profile, num_months=12, start_month_str=None):
 
             payments.append({
                 'pay_num': pay_num,
-                'gross_usd': round(half, 2),
+                'weekdays': half_wdays,
+                'gross_usd': round(half_gross, 2),
                 'advance_deduction': round(adv_ded, 2),
                 'net_usd': round(net_usd, 2),
                 'wise_fee': round(wise_fee, 2),
@@ -5500,7 +5827,8 @@ def compute_salary_projection(profile, num_months=12, start_month_str=None):
             'wise_fee_pct': wise_pct,
             'wise_fee_flat': wise_flat,
             'tax_hold_pct': tax_pct,
-            'advance_recoup_pct': recoup_pct,
+            'advance_total_usd': adv_total,
+            'advance_per_cycle': adv_per_cycle,
             'advance_cycles': adv_cycles,
         },
         'usd_brl': round(usd_brl, 4),

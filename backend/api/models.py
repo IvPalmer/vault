@@ -13,6 +13,7 @@ TEMPLATE_TYPE_CHOICES = (
     ('Fixo', 'Fixo'),
     ('Income', 'Income'),
     ('Investimento', 'Investimento'),
+    ('Cartao', 'Cartao'),
 )
 
 

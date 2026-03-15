@@ -33,8 +33,9 @@ function VaultTable({
   rowClassName,
   draggable = false,
   onReorder,
+  initialSorting,
 }) {
-  const [sorting, setSorting] = useState([])
+  const [sorting, setSorting] = useState(initialSorting || [])
   const [globalFilter, setGlobalFilter] = useState('')
   const [dragRowIdx, setDragRowIdx] = useState(null)
   const [overRowIdx, setOverRowIdx] = useState(null)

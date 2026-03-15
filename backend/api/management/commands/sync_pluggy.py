@@ -84,30 +84,30 @@ def _extract_base_desc(description):
     return desc
 
 
-def _compute_invoice_month(txn_date, closing_day):
+def _compute_invoice_month(txn_date, closing_day, due_offset=1):
     """
     Compute invoice_month for a CC transaction.
 
-    If the transaction date is before or on the closing day, it goes on
-    this month's bill (invoice_month = next month).
-    If after closing day, it goes on next month's bill (invoice_month = month+2).
+    due_offset: months between closing and payment.
+      1 = payment next month (e.g. Itaú: closes 25th, due 5th next month)
+      0 = payment same month (e.g. NuBank: closes 15th, due 22nd same month)
+
+    If the transaction date is on or before the closing day, it goes on
+    this month's billing cycle.  If after, it goes on next month's cycle.
+    invoice_month = cycle_month + due_offset.
     """
-    import calendar
+    from dateutil.relativedelta import relativedelta
+    from datetime import date
+
     if txn_date.day <= closing_day:
-        # This month's billing cycle -> next month's bill
-        if txn_date.month == 12:
-            return f'{txn_date.year + 1}-01'
-        return f'{txn_date.year}-{txn_date.month + 1:02d}'
+        # This month's billing cycle
+        cycle = date(txn_date.year, txn_date.month, 1)
     else:
-        # Next month's billing cycle -> month after next's bill
-        if txn_date.month >= 11:
-            year = txn_date.year + (1 if txn_date.month == 12 else 0)
-            month = (txn_date.month % 12) + 2
-            if month > 12:
-                month -= 12
-                year += 1
-            return f'{year}-{month:02d}'
-        return f'{txn_date.year}-{txn_date.month + 2:02d}'
+        # Next month's billing cycle
+        cycle = date(txn_date.year, txn_date.month, 1) + relativedelta(months=1)
+
+    payment = cycle + relativedelta(months=due_offset)
+    return payment.strftime('%Y-%m')
 
 
 class Command(BaseCommand):
@@ -122,6 +122,8 @@ class Command(BaseCommand):
         parser.add_argument('--dry-run', action='store_true', help='Show what would be synced without writing')
         parser.add_argument('--save-balance', action='store_true',
                             help='Create BalanceAnchor from current checking balance')
+        parser.add_argument('--refresh', action='store_true',
+                            help='Trigger Pluggy to refresh data from the bank before syncing')
 
     def handle(self, *args, **options):
         self.verbosity = options.get('verbosity', 1)
@@ -202,11 +204,23 @@ class Command(BaseCommand):
         for item_id in item_ids:
             item = client.get_item(item_id)
             connector_name = item.get('connector', {}).get('name', '?')
+
+            if options['refresh']:
+                self.stdout.write(f'\n=== Item: {connector_name} ({item_id[:12]}...) '
+                                  f'Refreshing data from bank... ===')
+                item = client.update_item(item_id, wait=True, timeout=120)
+                status = item.get('status')
+                if status != 'UPDATED':
+                    self.stderr.write(self.style.WARNING(
+                        f'  Refresh finished with status={status}, '
+                        f'executionStatus={item.get("executionStatus")}'))
+
             self.stdout.write(f'\n=== Item: {connector_name} ({item_id[:12]}...) '
                               f'status={item.get("status")} ===')
 
             # Pre-fetch bills for CC accounts in this item
             self.bill_map = {}
+            self.bill_totals = {}  # (card_name, invoice_month) → totalAmount
             for pluggy_acct_id, vault_name in account_map.items():
                 if vault_name not in vault_accounts:
                     continue
@@ -217,6 +231,9 @@ class Command(BaseCommand):
                             due_date = bill['dueDate'][:10]
                             inv_month = due_date[:7]
                             self.bill_map[bill['id']] = inv_month
+                            total_amount = bill.get('totalAmount')
+                            if total_amount is not None:
+                                self.bill_totals[(vault_name, inv_month)] = Decimal(str(total_amount))
                         self.stdout.write(f'  Loaded {len(bills)} bills for {vault_name}')
                     except Exception as e:
                         self.stderr.write(f'  Failed to load bills for {vault_name}: {e}')
@@ -243,6 +260,19 @@ class Command(BaseCommand):
                 total_new += new
                 total_skipped += skipped
                 total_updated += updated
+
+        # Update Cartao mapping expected_amount from Pluggy bill totals
+        if self.bill_totals and not self.dry_run:
+            from api.models import RecurringMapping, RecurringTemplate
+            for (card_name, inv_month), bill_total in self.bill_totals.items():
+                updated = RecurringMapping.objects.filter(
+                    template__name=card_name,
+                    template__template_type='Cartao',
+                    month_str=inv_month,
+                    profile=self.profile,
+                ).update(expected_amount=bill_total)
+                if updated and self.verbosity >= 2:
+                    self.stdout.write(f'  Updated {card_name} {inv_month} fatura = R$ {bill_total}')
 
         # Save checking balance as BalanceAnchor
         if options['save_balance'] and not self.dry_run:
@@ -330,10 +360,14 @@ class Command(BaseCommand):
         skipped_count = 0
         updated_count = 0
 
-        # Batch load existing external_ids for this account
+        # Batch load existing external_ids for this account AND routed accounts
+        # (e.g. Rafa card routed from MC Black — ext_ids live on the target account)
+        acct_ids = {vault_acct.id}
+        for routed_acct in self.card_account_map.values():
+            acct_ids.add(routed_acct.id)
         existing_ext_ids = set(
             Transaction.objects.filter(
-                account=vault_acct, profile=self.profile
+                account_id__in=acct_ids, profile=self.profile
             ).exclude(external_id='').values_list('external_id', flat=True)
         )
 
@@ -362,9 +396,31 @@ class Command(BaseCommand):
             da_key = (t[0], abs(t[1]))
             existing_legacy_by_date_amt.setdefault(da_key, []).append((t[1], t[2]))
 
+        # Index by (date, norm_desc) -> max abs_amount for FX duplicate detection
+        existing_legacy_by_date_desc = {}
+        for t in Transaction.objects.filter(
+            account=vault_acct, profile=self.profile, external_id=''
+        ).values_list('date', 'amount', 'description'):
+            key = (t[0], _norm(t[2]))
+            existing_legacy_by_date_desc[key] = max(
+                existing_legacy_by_date_desc.get(key, Decimal('0')), abs(t[1]))
+
         batch_create = []
         is_cc = vault_acct.account_type == 'credit_card'
         closing_day = vault_acct.closing_day or 25  # Itau default
+        due_day = vault_acct.due_day
+        # due_offset: 0 if payment is same month as closing (due > close),
+        # 1 if payment is next month (due < close, e.g. Itaú close=25, due=5)
+        if due_day and closing_day:
+            due_offset = 0 if due_day > closing_day else 1
+        else:
+            due_offset = 1  # Default: payment next month
+
+        # Track which invoice months are covered by Pluggy bills.
+        # Unbilled account-level transactions for these months are duplicates.
+        billed_months = set()
+        if is_cc:
+            billed_months = set(self.bill_map.values())
 
         for ptxn in pluggy_txns:
             ext_id = ptxn['id']
@@ -377,7 +433,14 @@ class Command(BaseCommand):
             # Parse transaction data
             raw_desc = ptxn.get('descriptionRaw') or ptxn.get('description', '')
             description = ptxn.get('description', raw_desc)
-            raw_amount = Decimal(str(ptxn['amount']))
+            # For foreign-currency CC transactions, Pluggy returns the
+            # original currency in `amount` and BRL in `amountInAccountCurrency`.
+            # Always use the BRL value for Vault.
+            brl_amount = ptxn.get('amountInAccountCurrency')
+            if brl_amount is not None and ptxn.get('currencyCode') not in (None, '', 'BRL'):
+                raw_amount = Decimal(str(brl_amount))
+            else:
+                raw_amount = Decimal(str(ptxn['amount']))
             txn_date = date.fromisoformat(ptxn['date'][:10])
             month_str = txn_date.strftime('%Y-%m')
 
@@ -457,6 +520,21 @@ class Command(BaseCommand):
                 existing_legacy.discard(fuzzy_key)
                 continue
 
+            # Skip foreign currency duplicates: Pluggy reports CC purchases in
+            # original currency (USD/EUR) while legacy CSV has the BRL amount.
+            # If a legacy txn exists with same date+description but >2x the amount,
+            # the Pluggy version is the FX original — skip it.
+            if is_cc and not matched:
+                fx_key = (txn_date, norm_desc)
+                if fx_key in existing_legacy_by_date_desc:
+                    legacy_amt = existing_legacy_by_date_desc[fx_key]
+                    if legacy_amt > abs(amount) * 2:
+                        skipped_count += 1
+                        if self.verbosity >= 2:
+                            self.stdout.write(
+                                f'  FX skip: "{description}" Pluggy={amount} Legacy=-{legacy_amt}')
+                        continue
+
             # Apply rename rules
             display_desc = self._apply_rename(description)
 
@@ -482,7 +560,21 @@ class Command(BaseCommand):
                 if bill_id and bill_id in self.bill_map:
                     invoice_month = self.bill_map[bill_id]
                 else:
-                    invoice_month = _compute_invoice_month(txn_date, closing_day)
+                    invoice_month = _compute_invoice_month(txn_date, closing_day, due_offset)
+
+                    # Skip unbilled CC transactions ONLY when bills data
+                    # covers this invoice period.  Some banks (NuBank) return
+                    # the same purchase from both the bills API (with billId)
+                    # and account transactions (without billId).  Skip the
+                    # account-level duplicate, but KEEP recent purchases whose
+                    # invoice period has no bill yet (still open).
+                    if invoice_month in billed_months:
+                        skipped_count += 1
+                        existing_ext_ids.add(ext_id)
+                        if self.verbosity >= 2:
+                            self.stdout.write(
+                                f'  Unbilled dup skip: "{description}" {txn_date} R${amount}')
+                        continue
 
             # Detect internal transfers
             is_transfer = _detect_internal_transfer(description, amount, raw_desc)
@@ -528,6 +620,7 @@ class Command(BaseCommand):
             )
             batch_create.append(txn)
             new_count += 1
+            existing_ext_ids.add(ext_id)
 
         if batch_create and not self.dry_run:
             Transaction.objects.bulk_create(batch_create, batch_size=500)

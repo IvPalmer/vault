@@ -35,14 +35,17 @@ function OrcamentoSection() {
       <div className={styles.header}>
         <h3 className={styles.title}>ORÇAMENTO VARIÁVEL</h3>
         <span className={`${styles.headerTotal} ${styles[totalStatus]}`}>
-          R$ {fmt(data.total_spent)} / R$ {fmt(data.total_limit)}
-          <span className={styles.headerPct}>({data.total_pct.toFixed(0)}%)</span>
+          R$ {fmt(data.total_spent)} / {data.total_available < 0 ? '−' : ''}R$ {fmt(data.total_available)}
+          {data.total_available > 0 && (
+            <span className={styles.headerPct}>({data.total_pct.toFixed(0)}%)</span>
+          )}
         </span>
       </div>
 
       {noBudget && (
         <div className={styles.noBudgetBanner}>
           Sem orçamento disponível — despesas comprometidas excedem a receita projetada.
+          {data.total_available < 0 && ` Déficit: R$ ${fmt(data.total_available)}`}
         </div>
       )}
 

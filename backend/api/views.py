@@ -300,7 +300,107 @@ class CategoryTreeView(APIView):
 
 
 class CategoryBulkReassignView(APIView):
-    """POST /api/categories/bulk-reassign/ — Move transactions between categories/subcategories."""
+    """POST /api/categories/bulk-reassign/ — Move transactions between categories/subcategories.
+       GET  /api/categories/bulk/ — Browse all transactions with search/filter + installment grouping.
+    """
+
+    def get(self, request):
+        """List all transactions with search, category/account filters, installment grouping."""
+        import re as _re
+        from .services import _extract_base_desc
+
+        profile = request.profile
+        search = request.query_params.get('search', '').strip()
+        cat_id = request.query_params.get('category_id', '')
+        sub_id = request.query_params.get('subcategory_id', '')
+        account_id = request.query_params.get('account_id', '')
+        date_from = request.query_params.get('date_from', '')
+        date_to = request.query_params.get('date_to', '')
+        uncat_only = request.query_params.get('uncategorized', '') == '1'
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 100))
+
+        qs = Transaction.objects.filter(profile=profile).select_related(
+            'account', 'category', 'subcategory'
+        )
+
+        if search:
+            qs = qs.filter(description__icontains=search)
+        if uncat_only:
+            qs = qs.filter(category__isnull=True)
+        elif sub_id:
+            qs = qs.filter(subcategory_id=sub_id)
+        elif cat_id:
+            qs = qs.filter(category_id=cat_id)
+        no_sub = request.query_params.get('no_subcategory', '') == '1'
+        if no_sub:
+            qs = qs.filter(subcategory__isnull=True)
+        if account_id:
+            qs = qs.filter(account_id=account_id)
+        if date_from:
+            qs = qs.filter(date__gte=date_from)
+        if date_to:
+            qs = qs.filter(date__lte=date_to)
+
+        qs = qs.order_by('-date', '-id')
+
+        # Fetch all matching for accurate grouping and count
+        all_txns = list(qs[:5000])
+
+        # Group installments — only credit card transactions, collapse sibling positions
+        seen_groups = {}
+        grouped = []
+        inst_collapsed = {}  # txn.id -> number of siblings collapsed (including self)
+
+        for t in all_txns:
+            if t.is_installment and t.account and t.account.account_type == 'credit_card':
+                m = _re.search(r'(\d{1,2})/(\d{1,2})', t.description)
+                if not m and t.installment_info:
+                    m = _re.match(r'(\d+)/(\d+)', t.installment_info)
+                if m:
+                    total = int(m.group(2))
+                    base = _extract_base_desc(t.description)
+                    key = (base, t.account_id, round(float(abs(t.amount)), 1), total)
+                    if key in seen_groups:
+                        rep_id = seen_groups[key]
+                        inst_collapsed[rep_id] = inst_collapsed.get(rep_id, 1) + 1
+                        continue
+                    seen_groups[key] = t.id
+                    inst_collapsed[t.id] = 1
+            grouped.append(t)
+
+        total_count = len(grouped)
+        start = (page - 1) * page_size
+        page_txns = grouped[start:start + page_size]
+
+        # Get unique accounts for filter dropdown
+        accounts = list(
+            Transaction.objects.filter(profile=profile)
+            .values_list('account__id', 'account__name')
+            .distinct()
+            .order_by('account__name')
+        )
+
+        return Response({
+            'transactions': [{
+                'id': str(t.id),
+                'date': str(t.date),
+                'description': t.description,
+                'amount': float(t.amount),
+                'account': t.account.name if t.account else '',
+                'account_id': str(t.account_id) if t.account_id else '',
+                'category_id': str(t.category_id) if t.category_id else None,
+                'category_name': t.category.name if t.category else None,
+                'subcategory_id': str(t.subcategory_id) if t.subcategory_id else None,
+                'subcategory_name': t.subcategory.name if t.subcategory else None,
+                'is_installment': t.is_installment,
+                'installment_total': inst_collapsed.get(t.id, 0),
+            } for t in page_txns],
+            'total': total_count,
+            'page': page,
+            'page_size': page_size,
+            'accounts': [{'id': str(a[0]), 'name': a[1]} for a in accounts if a[0]],
+        })
 
     def post(self, request):
         profile = request.profile
@@ -433,21 +533,56 @@ class CategoryBulkReassignView(APIView):
 
         elif action == 'get_sample_transactions':
             # Return sample transactions for a subcategory or uncategorized
+            # Installments are grouped: only one representative per purchase shown
             sub_id = request.data.get('subcategory_id')
             cat_id = request.data.get('category_id')
+            all_in_cat = request.data.get('all_in_category', False)
             uncategorized = request.data.get('uncategorized', False)
-            limit = int(request.data.get('limit', 20))
+            limit = int(request.data.get('limit', 50))
 
             if uncategorized:
                 qs = Transaction.objects.filter(profile=profile, category__isnull=True)
             elif sub_id:
                 qs = Transaction.objects.filter(profile=profile, subcategory_id=sub_id)
+            elif cat_id and all_in_cat:
+                qs = Transaction.objects.filter(profile=profile, category_id=cat_id)
             elif cat_id:
                 qs = Transaction.objects.filter(profile=profile, category_id=cat_id, subcategory__isnull=True)
             else:
                 return Response({'error': 'subcategory_id, category_id, or uncategorized required'}, status=400)
 
-            txns = qs.select_related('account').order_by('-date')[:limit]
+            from .services import _extract_base_desc
+            import re as _re
+
+            txns = list(qs.select_related('account', 'category', 'subcategory').order_by('-date')[:200])
+
+            # Group installments: only credit card, keep one representative per purchase
+            seen_installment_groups = {}
+            result_txns = []
+            installment_collapsed = {}  # txn.id -> count of siblings collapsed
+
+            for t in txns:
+                if t.is_installment and t.account and t.account.account_type == 'credit_card':
+                    m = _re.search(r'(\d{1,2})/(\d{1,2})', t.description)
+                    if not m and t.installment_info:
+                        m = _re.match(r'(\d+)/(\d+)', t.installment_info)
+                    if m:
+                        total = int(m.group(2))
+                        base = _extract_base_desc(t.description)
+                        acct_id = t.account_id
+                        amt_group = round(float(abs(t.amount)), 1)
+                        key = (base, acct_id, amt_group, total)
+                        if key in seen_installment_groups:
+                            rep_id = seen_installment_groups[key]
+                            installment_collapsed[rep_id] = installment_collapsed.get(rep_id, 1) + 1
+                            continue
+                        seen_installment_groups[key] = t.id
+                        installment_collapsed[t.id] = 1
+
+                result_txns.append(t)
+                if len(result_txns) >= limit:
+                    break
+
             return Response({
                 'transactions': [{
                     'id': str(t.id),
@@ -455,8 +590,165 @@ class CategoryBulkReassignView(APIView):
                     'description': t.description,
                     'amount': float(t.amount),
                     'account': t.account.name if t.account else '',
-                } for t in txns]
+                    'category_id': str(t.category_id) if t.category_id else None,
+                    'subcategory_id': str(t.subcategory_id) if t.subcategory_id else None,
+                    'is_installment': t.is_installment,
+                    'installment_total': installment_collapsed.get(t.id, 0),
+                } for t in result_txns]
             })
+
+        elif action == 'recategorize_transaction':
+            # Move a single transaction + all matching descriptions to a new category/subcategory
+            # For installments, also propagate to all sibling positions
+            txn_id = request.data.get('transaction_id')
+            to_cat_id = request.data.get('to_category_id')
+            to_sub_id = request.data.get('to_subcategory_id')
+
+            if not txn_id or not to_cat_id:
+                return Response({'error': 'transaction_id and to_category_id required'}, status=400)
+
+            txn = Transaction.objects.get(id=txn_id, profile=profile)
+            to_cat = Category.objects.get(id=to_cat_id, profile=profile)
+            to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile) if to_sub_id else None
+
+            # Normalize description for matching (non-installment transactions)
+            from django.db.models.functions import Lower, Trim
+            desc_norm = txn.description.strip().lower()
+            matching = Transaction.objects.filter(profile=profile).annotate(
+                desc_norm=Trim(Lower('description'))
+            ).filter(desc_norm=desc_norm)
+            count = matching.update(category=to_cat, subcategory=to_sub)
+
+            # For installments, also update all sibling positions
+            sibling_count = 0
+            if txn.is_installment:
+                result = categorize_installment_siblings(
+                    txn_id, to_cat_id, to_sub_id or None, profile=profile
+                )
+                sibling_count = result.get('updated', 0)
+
+            return Response({
+                'updated': count + sibling_count,
+                'description': txn.description,
+                'action': action,
+            })
+
+        elif action == 'bulk_uncategorize':
+            # Remove category from all transactions in a subcategory or category
+            sub_id = request.data.get('subcategory_id')
+            cat_id = request.data.get('category_id')
+            if sub_id:
+                count = Transaction.objects.filter(
+                    profile=profile, subcategory_id=sub_id
+                ).update(category=None, subcategory=None)
+            elif cat_id:
+                count = Transaction.objects.filter(
+                    profile=profile, category_id=cat_id
+                ).update(category=None, subcategory=None)
+            else:
+                return Response({'error': 'subcategory_id or category_id required'}, status=400)
+            return Response({'updated': count, 'action': action})
+
+        elif action == 'uncategorize_transaction':
+            # Remove category from a transaction + all matching descriptions
+            # For installments, also clear all sibling positions
+            txn_id = request.data.get('transaction_id')
+            if not txn_id:
+                return Response({'error': 'transaction_id required'}, status=400)
+
+            txn = Transaction.objects.get(id=txn_id, profile=profile)
+            desc_norm = txn.description.strip().lower()
+
+            from django.db.models.functions import Lower, Trim
+            matching = Transaction.objects.filter(profile=profile).annotate(
+                desc_norm=Trim(Lower('description'))
+            ).filter(desc_norm=desc_norm)
+
+            count = matching.update(category=None, subcategory=None)
+
+            # For installments, also clear siblings
+            if txn.is_installment:
+                import re as _re
+                from .services import _extract_base_desc
+                m = _re.search(r'(\d{1,2})/(\d{1,2})', txn.description)
+                if not m and txn.installment_info:
+                    m = _re.match(r'(\d+)/(\d+)', txn.installment_info)
+                if m:
+                    total = int(m.group(2))
+                    base = _extract_base_desc(txn.description)
+                    candidates = Transaction.objects.filter(
+                        account_id=txn.account_id, is_installment=True, profile=profile
+                    )
+                    sibling_ids = []
+                    for c in candidates:
+                        if round(float(abs(c.amount)), 1) != round(float(abs(txn.amount)), 1):
+                            continue
+                        if _extract_base_desc(c.description) != base:
+                            continue
+                        cm = _re.search(r'(\d{1,2})/(\d{1,2})', c.description)
+                        if not cm and c.installment_info:
+                            cm = _re.match(r'(\d+)/(\d+)', c.installment_info)
+                        if cm and int(cm.group(2)) == total:
+                            sibling_ids.append(c.id)
+                    if sibling_ids:
+                        extra = Transaction.objects.filter(id__in=sibling_ids).update(
+                            category=None, subcategory=None
+                        )
+                        count += extra
+
+            return Response({
+                'updated': count,
+                'description': txn.description,
+                'action': action,
+            })
+
+        elif action == 'create_category':
+            name = request.data.get('name', '').strip()
+            if not name:
+                return Response({'error': 'name required'}, status=400)
+            if Category.objects.filter(profile=profile, name__iexact=name).exists():
+                return Response({'error': f'Categoria "{name}" ja existe'}, status=400)
+            cat = Category.objects.create(profile=profile, name=name, category_type='variable')
+            return Response({'id': str(cat.id), 'name': cat.name, 'action': action})
+
+        elif action == 'create_subcategory':
+            cat_id = request.data.get('category_id')
+            name = request.data.get('name', '').strip()
+            if not cat_id or not name:
+                return Response({'error': 'category_id and name required'}, status=400)
+            cat = Category.objects.get(id=cat_id, profile=profile)
+            if Subcategory.objects.filter(category=cat, name__iexact=name, profile=profile).exists():
+                return Response({'error': f'Subcategoria "{name}" ja existe em {cat.name}'}, status=400)
+            sub = Subcategory.objects.create(profile=profile, category=cat, name=name)
+            return Response({'id': str(sub.id), 'name': sub.name, 'category_id': str(cat.id), 'action': action})
+
+        elif action == 'delete_category':
+            cat_id = request.data.get('category_id')
+            if not cat_id:
+                return Response({'error': 'category_id required'}, status=400)
+            cat = Category.objects.get(id=cat_id, profile=profile)
+            # Move all transactions to uncategorized
+            txn_count = Transaction.objects.filter(profile=profile, category=cat).update(
+                category=None, subcategory=None
+            )
+            # Clean up subcategories and pluggy mappings
+            Subcategory.objects.filter(category=cat, profile=profile).delete()
+            PluggyCategoryMapping.objects.filter(category=cat, profile=profile).delete()
+            cat.delete()
+            return Response({'deleted': True, 'uncategorized': txn_count, 'action': action})
+
+        elif action == 'delete_subcategory':
+            sub_id = request.data.get('subcategory_id')
+            if not sub_id:
+                return Response({'error': 'subcategory_id required'}, status=400)
+            sub = Subcategory.objects.get(id=sub_id, profile=profile)
+            # Clear subcategory from transactions (keep category)
+            txn_count = Transaction.objects.filter(profile=profile, subcategory=sub).update(
+                subcategory=None
+            )
+            PluggyCategoryMapping.objects.filter(subcategory=sub, profile=profile).delete()
+            sub.delete()
+            return Response({'deleted': True, 'uncategorized': txn_count, 'action': action})
 
         return Response({'error': f'Unknown action: {action}'}, status=400)
 
@@ -2368,7 +2660,7 @@ class PluggySyncView(APIView):
         all_success = True
         for p in Profile.objects.filter(is_active=True):
             try:
-                cmd = ['python', 'manage.py', 'sync_pluggy', '--profile', p.name]
+                cmd = ['python', 'manage.py', 'sync_pluggy', '--profile', p.name, '--refresh']
                 if save_balance:
                     cmd.append('--save-balance')
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -2409,7 +2701,7 @@ class SalaryConfigView(APIView):
                 'wise_fee_pct': float(cfg.wise_fee_pct),
                 'wise_fee_flat': float(cfg.wise_fee_flat),
                 'tax_hold_pct': float(cfg.tax_hold_pct),
-                'advance_recoup_pct': float(cfg.advance_recoup_pct),
+                'advance_total_usd': float(cfg.advance_total_usd),
                 'advance_start_date': cfg.advance_start_date,
                 'advance_num_cycles': cfg.advance_num_cycles,
                 'income_template_id': str(cfg.income_template_id) if cfg.income_template_id else None,
@@ -2428,7 +2720,7 @@ class SalaryConfigView(APIView):
                 'wise_fee_pct': data.get('wise_fee_pct', 0.0091),
                 'wise_fee_flat': data.get('wise_fee_flat', 0.46),
                 'tax_hold_pct': data.get('tax_hold_pct', 0.08),
-                'advance_recoup_pct': data.get('advance_recoup_pct', 0),
+                'advance_total_usd': data.get('advance_total_usd', 0),
                 'advance_start_date': data.get('advance_start_date', ''),
                 'advance_num_cycles': data.get('advance_num_cycles', 0),
                 'income_template_id': data.get('income_template_id'),

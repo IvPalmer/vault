@@ -186,15 +186,19 @@ function buildCards(data) {
       value: `${data.saldo_projetado < 0 ? '-' : ''}R$ ${fmt(data.saldo_projetado)}`,
       subtitle: data.balance_override != null
         ? `R$ ${fmt(data.balance_override)} + R$ ${fmt(data.a_entrar)} - R$ ${fmt(data.a_pagar)}`
-        : !data.is_current_month && data.checking_balance_eom != null
-          ? 'saldo real da conta'
-          : data.prev_month_saldo != null
-            ? 'cascata do mes anterior'
-            : 'calculado',
+        : data.balance_anchor_value != null
+          ? `R$ ${fmt(data.balance_anchor_value)} (Pluggy) + R$ ${fmt(data.a_entrar)} - R$ ${fmt(data.a_pagar)}`
+          : !data.is_current_month && data.checking_balance_eom != null
+            ? 'saldo real da conta'
+            : data.prev_month_saldo != null
+              ? 'cascata do mes anterior'
+              : 'calculado',
       color: data.saldo_projetado >= 0 ? 'var(--color-green)' : 'var(--color-red)',
       tooltip: data.balance_override != null
         ? `Saldo informado (R$ ${fmt(data.balance_override)}) + receitas pendentes (R$ ${fmt(data.a_entrar)}) - despesas pendentes (R$ ${fmt(data.a_pagar)}).`
-        : 'Projecao do saldo no fim do mes. Para meses fechados, usa saldo real do extrato.',
+        : data.balance_anchor_value != null
+          ? `Saldo Pluggy (R$ ${fmt(data.balance_anchor_value)}, ${data.balance_anchor_date}) + receitas pendentes (R$ ${fmt(data.a_entrar)}) - despesas pendentes (R$ ${fmt(data.a_pagar)}).`
+          : 'Projecao do saldo no fim do mes. Para meses fechados, usa saldo real do extrato.',
     },
     dias_fechamento: {
       label: 'DIAS ATE FECHAMENTO',
@@ -277,6 +281,19 @@ function buildCards(data) {
           : 'fatura deste mes',
         color: 'var(--color-red)',
         tooltip: `Fatura ${cardName} que vence neste mes (compras do mes anterior + parcelas).`,
+      }
+    }
+  }
+  // Sub-cards (additional cards on another bill) — visibility only
+  if (data.fatura_sub_cards) {
+    for (const [cardName, amount] of Object.entries(data.fatura_sub_cards)) {
+      const key = `fatura_${cardName.toLowerCase().replace(/\s+/g, '_')}`
+      cards[key] = {
+        label: `${cardName.toUpperCase()}`,
+        value: `R$ ${fmt(amount)}`,
+        subtitle: 'cartão adicional (incluso na fatura)',
+        color: 'var(--color-red)',
+        tooltip: `Compras de ${cardName} — já incluídas na fatura do cartão principal.`,
       }
     }
   }
@@ -600,23 +617,35 @@ function MetricasSection() {
       <div className={styles.balanceRow}>
         <span className={styles.balanceLabel}>SALDO EM CONTA</span>
         {data.is_current_month ? (
-          <InlineEdit
-            value={data.balance_override}
-            onSave={handleSaveBalance}
-            prefix="R$"
-            color={
-              data.balance_override != null
-                ? data.balance_override >= 0
-                  ? 'var(--color-green)'
-                  : 'var(--color-red)'
-                : undefined
-            }
-            placeholder={
-              data.prev_month_saldo != null
-                ? `proj. anterior: R$ ${fmt(data.prev_month_saldo)}`
-                : 'clique para informar'
-            }
-          />
+          data.balance_anchor_value != null ? (
+            <>
+              <span
+                className={styles.balanceAuto}
+                style={{ color: data.balance_anchor_value >= 0 ? 'var(--color-green)' : 'var(--color-red)' }}
+              >
+                R$ {fmt(data.balance_anchor_value)}
+              </span>
+              <span className={styles.balanceHint}>Pluggy {data.balance_anchor_date}</span>
+            </>
+          ) : (
+            <InlineEdit
+              value={data.balance_override}
+              onSave={handleSaveBalance}
+              prefix="R$"
+              color={
+                data.balance_override != null
+                  ? data.balance_override >= 0
+                    ? 'var(--color-green)'
+                    : 'var(--color-red)'
+                  : undefined
+              }
+              placeholder={
+                data.prev_month_saldo != null
+                  ? `proj. anterior: R$ ${fmt(data.prev_month_saldo)}`
+                  : 'clique para informar'
+              }
+            />
+          )
         ) : data.is_future && data.projected_balance != null ? (
           <>
             <span

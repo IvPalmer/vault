@@ -50,6 +50,48 @@ class PluggyClient:
         resp.raise_for_status()
         return resp.json()
 
+    def update_item(self, item_id, wait=True, timeout=120, poll_interval=5):
+        """
+        Trigger a data refresh for an Item (re-fetches from the bank).
+
+        Args:
+            item_id: Pluggy item UUID
+            wait: if True, poll until status is UPDATED or error
+            timeout: max seconds to wait
+            poll_interval: seconds between polls
+
+        Returns: final item dict
+        """
+        resp = requests.patch(f'{BASE_URL}/items/{item_id}',
+                              json={}, headers=self._headers(), timeout=30)
+        if resp.status_code == 400:
+            body = resp.json()
+            if body.get('codeDescription') == 'ITEM_ALREADY_UPDATING':
+                # Already refreshing, just poll for completion
+                logger.info('Pluggy: item already updating, waiting...')
+                item = self.get_item(item_id)
+            else:
+                resp.raise_for_status()
+        else:
+            resp.raise_for_status()
+            item = resp.json()
+
+        if not wait:
+            return item
+
+        start = time.time()
+        while time.time() - start < timeout:
+            status = item.get('status')
+            if status in ('UPDATED', 'LOGIN_ERROR', 'OUTDATED'):
+                return item
+            exec_status = item.get('executionStatus')
+            if exec_status == 'ERROR':
+                return item
+            time.sleep(poll_interval)
+            item = self.get_item(item_id)
+
+        return item
+
     def get_accounts(self, item_id):
         """List all accounts for an Item."""
         resp = requests.get(f'{BASE_URL}/accounts',

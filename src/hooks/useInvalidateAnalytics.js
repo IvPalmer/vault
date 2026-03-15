@@ -36,6 +36,10 @@ export function useInvalidateAnalytics() {
     queryClient.invalidateQueries({ queryKey: ['analytics-orcamento'] })
   }, [queryClient])
 
+  const invalidateChecking = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['analytics-checking'] })
+  }, [queryClient])
+
   const invalidateAll = useCallback(() => {
     invalidateMetricas()
     invalidateMetricasOrder()
@@ -43,9 +47,10 @@ export function useInvalidateAnalytics() {
     invalidateCards()
     invalidateProjection()
     invalidateOrcamento()
+    invalidateChecking()
   }, [
     invalidateMetricas, invalidateMetricasOrder, invalidateRecurring,
-    invalidateCards, invalidateProjection, invalidateOrcamento,
+    invalidateCards, invalidateProjection, invalidateOrcamento, invalidateChecking,
   ])
 
   return {
@@ -55,6 +60,7 @@ export function useInvalidateAnalytics() {
     invalidateCards,
     invalidateProjection,
     invalidateOrcamento,
+    invalidateChecking,
     invalidateAll,
   }
 }
