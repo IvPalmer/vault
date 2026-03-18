@@ -45,7 +45,7 @@ const CARD_GROUPS = [
     key: 'despesas',
     label: 'DESPESAS',
     color: 'var(--color-red)',
-    cards: ['gastos_atuais', 'gastos_projetados', 'gastos_fixos', 'gastos_invest', 'gastos_variaveis', 'a_pagar'],
+    cards: ['a_pagar', 'gastos_atuais', 'gastos_projetados', 'gastos_fixos', 'gastos_invest', 'gastos_variaveis'],
   },
   {
     key: 'cartoes',
@@ -58,17 +58,23 @@ const CARD_GROUPS = [
     key: 'resumo',
     label: 'RESUMO',
     color: '#6366f1',
-    cards: ['saldo_projetado', 'diario_max', 'dias_fechamento', 'saude', 'meta_poupanca'],
+    cards: ['saldo_projetado', 'orcamento_variavel', 'saude'],
+  },
+  {
+    key: 'metas',
+    label: 'METAS',
+    color: 'var(--color-green)',
+    cards: ['meta_poupanca', 'diario_max', 'dias_fechamento'],
   },
 ]
 
 function buildCards(data) {
   const fechamentoValue = data.is_current_month
     ? `${data.dias_fechamento} dias`
-    : '\u2014'
+    : data.is_future ? '\u2014' : '\u2014'
   const fechamentoSub = data.is_current_month
     ? 'ate o fechamento'
-    : 'mes encerrado'
+    : data.is_future ? 'mes futuro' : 'mes encerrado'
 
   const incomeProgress = data.entradas_projetadas > 0
     ? (data.entradas_atuais / data.entradas_projetadas) * 100
@@ -144,10 +150,10 @@ function buildCards(data) {
     },
     gastos_variaveis: {
       label: 'GASTOS VARIAVEIS',
-      value: `R$ ${fmt(data.gastos_variaveis_checking ?? data.gastos_variaveis)}`,
-      subtitle: 'exceto fixos, investimentos e cartão',
+      value: `R$ ${fmt(data.gastos_variaveis)}`,
+      subtitle: 'conta + cartão, exceto fixos e invest',
       color: 'var(--color-orange)',
-      tooltip: 'Gastos variáveis na conta corrente (PIX, boletos, etc). CC variável já está no cartão.',
+      tooltip: 'Gastos variáveis totais (conta corrente + cartão de crédito), excluindo fixos, investimentos e transferências internas.',
     },
     // Dynamic per-card fatura entries are injected below after cards object is built
     parcelas: {
@@ -267,6 +273,20 @@ function buildCards(data) {
         tooltip: tooltipParts.join('. '),
       }
     })(),
+  }
+
+  // Orçamento variável card
+  if (data.orcamento_variavel != null) {
+    const orcVal = data.orcamento_variavel
+    cards.orcamento_variavel = {
+      label: 'ORÇAMENTO VARIÁVEL',
+      value: `${orcVal < 0 ? '-' : ''}R$ ${fmt(orcVal)}`,
+      subtitle: orcVal >= 0
+        ? 'disponível para gastar'
+        : 'déficit — gastos comprometidos excedem receita',
+      color: orcVal >= 0 ? 'var(--color-orange)' : 'var(--color-red)',
+      tooltip: 'Saldo inicial + entradas − fixos − invest − cartão. O que sobra para gastos variáveis.',
+    }
   }
 
   // Add dynamic per-card fatura cards

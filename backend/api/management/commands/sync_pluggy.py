@@ -407,7 +407,7 @@ class Command(BaseCommand):
 
         batch_create = []
         is_cc = vault_acct.account_type == 'credit_card'
-        closing_day = vault_acct.closing_day or 25  # Itau default
+        closing_day = vault_acct.closing_day or 30  # Itau default
         due_day = vault_acct.due_day
         # due_offset: 0 if payment is same month as closing (due > close),
         # 1 if payment is next month (due < close, e.g. Itaú close=25, due=5)

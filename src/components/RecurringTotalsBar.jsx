@@ -85,7 +85,9 @@ function RecurringTotalsBar() {
     : (metricasData?.prev_month_saldo ?? 0)
   const carryoverDebt = metricasData?.carryover_debt ?? 0
   const startingBalance = rawStarting - carryoverDebt
-  const sobra = startingBalance + income.expected - fixo.expected - investExpected - cartaoForBudget
+  // Use fixo_for_budget (excludes CC-billed fixo already in fatura) to avoid double-counting
+  const fixoForBudget = metricasData?.fixo_for_budget != null ? metricasData.fixo_for_budget : fixo.expected
+  const sobra = startingBalance + income.expected - fixoForBudget - investExpected - cartaoForBudget
 
   return (
     <div className={styles.totalsBar}>

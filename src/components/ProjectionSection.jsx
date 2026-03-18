@@ -23,12 +23,11 @@ function currentMonth() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
-// Custom dot: red when negative, green when positive
-function SaldoDot(props) {
-  const { cx, cy, payload } = props
+// Colored dot: red below zero, green at/above zero
+function SaldoDot({ cx, cy, payload }) {
   if (cx == null || cy == null) return null
   const color = payload.saldo >= 0 ? 'var(--color-green)' : 'var(--color-red)'
-  return <circle cx={cx} cy={cy} r={4} fill={color} stroke="#fff" strokeWidth={1.5} />
+  return <circle cx={cx} cy={cy} r={5} fill={color} stroke="#fff" strokeWidth={2} />
 }
 
 function ProjectionSection() {
@@ -39,24 +38,30 @@ function ProjectionSection() {
     queryFn: () => api.get(`/analytics/projection/?month_str=${month}`),
   })
 
-  const { chartData, breakevenLabel } = useMemo(() => {
-    if (!data?.months) return { chartData: [], breakevenLabel: null }
-    const rows = data.months.map(row => ({
+  const { chartData, breakevenLabel, breakevenIdx } = useMemo(() => {
+    if (!data?.months) return { chartData: [], breakevenLabel: null, breakevenIdx: -1, historyCount: 0 }
+    // Merge history (past months) + current/future into one timeline
+    const allMonths = [...(data.history || []), ...data.months]
+    const historyCount = (data.history || []).length
+    const rows = allMonths.map(row => ({
       label: shortMonth(row.month),
       month: row.month,
       entradas: row.income,
-      gastos: row.fixo + row.investimento + row.installments + (row.variable || 0),
+      gastos: row.fixo + row.investimento + row.installments,
       saldo: row.cumulative,
+      isHistory: !!row.is_history,
     }))
     // Find breakeven: first month where saldo >= 0 after being negative
     let be = null
+    let beIdx = -1
     for (let i = 1; i < rows.length; i++) {
       if (rows[i - 1].saldo < 0 && rows[i].saldo >= 0) {
         be = rows[i].label
+        beIdx = i
         break
       }
     }
-    return { chartData: rows, breakevenLabel: be }
+    return { chartData: rows, breakevenLabel: be, breakevenIdx: beIdx, historyCount }
   }, [data])
 
   if (isLoading) return (
@@ -71,7 +76,6 @@ function ProjectionSection() {
 
   const bal = data.starting_balance
   const hasNegative = chartData.some(d => d.saldo < 0)
-  // hasNegative used for zero line styling
 
   return (
     <section className={styles.section}>
@@ -86,7 +90,7 @@ function ProjectionSection() {
 
       <div className={styles.chartWrap}>
         <ResponsiveContainer width="100%" height={260}>
-          <ComposedChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+          <ComposedChart data={chartData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
             <XAxis
               dataKey="label"
@@ -94,6 +98,7 @@ function ProjectionSection() {
               axisLine={{ stroke: 'var(--color-border)' }}
               tickLine={false}
             />
+            {/* Left axis: bars (income/expenses) */}
             <YAxis
               yAxisId="bars"
               tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
@@ -102,24 +107,44 @@ function ProjectionSection() {
               tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
               width={36}
             />
+            {/* Right axis: saldo line */}
             <YAxis
-              yAxisId="line"
+              yAxisId="saldo"
               orientation="right"
               tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
               axisLine={false}
               tickLine={false}
-              tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
+              tickFormatter={v => `${v < 0 ? '-' : ''}${Math.abs(v / 1000).toFixed(0)}k`}
               width={42}
             />
-            {/* Zero line — prominent when there's negative saldo */}
-            <ReferenceLine
-              yAxisId="line"
-              y={0}
-              stroke={hasNegative ? 'var(--color-red)' : 'var(--color-border)'}
-              strokeWidth={hasNegative ? 1.5 : 1}
-              strokeDasharray={hasNegative ? '6 3' : '3 3'}
-              label={hasNegative ? { value: 'R$ 0', position: 'left', fill: 'var(--color-red)', fontSize: 10 } : undefined}
-            />
+            {/* Zero reference line on saldo axis */}
+            {hasNegative && (
+              <ReferenceLine
+                yAxisId="saldo"
+                y={0}
+                stroke="var(--color-red)"
+                strokeWidth={1}
+                strokeDasharray="6 3"
+                strokeOpacity={0.6}
+              />
+            )}
+            {/* Breakeven month marker */}
+            {breakevenLabel && (
+              <ReferenceLine
+                yAxisId="bars"
+                x={breakevenLabel}
+                stroke="var(--color-green)"
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+                label={{
+                  value: `${breakevenLabel}`,
+                  position: 'top',
+                  fill: 'var(--color-green)',
+                  fontSize: 10,
+                  fontWeight: 600,
+                }}
+              />
+            )}
             <Tooltip
               contentStyle={{
                 background: 'var(--color-surface)',
@@ -129,39 +154,32 @@ function ProjectionSection() {
               }}
               labelStyle={{ color: 'var(--color-text)', fontWeight: 600 }}
               formatter={(value, name) => {
-                const labels = { entradas: 'Entradas', gastos: 'Gastos', saldo: 'Saldo' }
-                const sign = name === 'saldo' && value < 0 ? '-' : ''
+                const labels = { entradas: 'Entradas', gastos: 'Comprometidos', saldo: 'Saldo' }
+                const sign = value < 0 ? '-' : ''
                 return [`${sign}R$ ${fmt(value)}`, labels[name] || name]
               }}
             />
             <Legend
               verticalAlign="top"
               align="right"
-              iconType="square"
               iconSize={8}
               wrapperStyle={{ fontSize: 10, paddingBottom: 4 }}
-              formatter={(value) => {
-                if (value === 'saldoNeg') return null
-                const labels = { entradas: 'Entradas', gastos: 'Gastos', saldo: 'Saldo' }
-                return labels[value] || value
-              }}
               payload={[
-                { value: 'entradas', type: 'square', color: 'var(--color-green)' },
-                { value: 'gastos', type: 'square', color: 'var(--color-red)' },
-                { value: 'saldo', type: 'line', color: 'var(--color-accent)' },
+                { value: 'Entradas', type: 'square', color: 'var(--color-green)' },
+                { value: 'Comprometidos', type: 'square', color: 'var(--color-red)' },
+                { value: 'Saldo', type: 'line', color: 'var(--color-accent)' },
               ]}
             />
-            <Bar yAxisId="bars" dataKey="entradas" fill="var(--color-green)" radius={[3, 3, 0, 0]} barSize={18} opacity={0.7} />
-            <Bar yAxisId="bars" dataKey="gastos" fill="var(--color-red)" radius={[3, 3, 0, 0]} barSize={18} opacity={0.7} />
-            {/* Saldo line with colored dots */}
+            <Bar yAxisId="bars" dataKey="entradas" fill="var(--color-green)" radius={[3, 3, 0, 0]} barSize={18} opacity={0.75} />
+            <Bar yAxisId="bars" dataKey="gastos" fill="var(--color-red)" radius={[3, 3, 0, 0]} barSize={18} opacity={0.75} />
             <Line
-              yAxisId="line"
+              yAxisId="saldo"
               type="monotone"
               dataKey="saldo"
               stroke="var(--color-accent)"
-              strokeWidth={2}
+              strokeWidth={2.5}
               dot={<SaldoDot />}
-              activeDot={{ r: 6 }}
+              activeDot={{ r: 7 }}
             />
           </ComposedChart>
         </ResponsiveContainer>
@@ -177,28 +195,51 @@ function ProjectionSection() {
               <th className={styles.numCol}>FIXOS</th>
               <th className={styles.numCol}>INVEST.</th>
               <th className={styles.numCol}>CARTAO</th>
-              <th className={styles.numCol} title="Gastos variáveis na conta corrente (PIX, boletos, etc.)">VARIAVEL</th>
-              <th className={styles.numCol} title="Variação do saldo no mês">SOBRA</th>
+              <th className={styles.numCol} title="Gasto variável / orçamento disponível">VAR. / ORC.</th>
               <th className={styles.numCol} title="Saldo projetado ao fim do mês">SALDO</th>
             </tr>
           </thead>
           <tbody>
-            {/* Starting balance row — previous month's closing balance */}
-            <tr className={styles.balanceRow}>
-              <td className={styles.monthCell}>
-                <span className={styles.balanceLabel}>Saldo Anterior</span>
-              </td>
-              <td colSpan={6}></td>
-              <td className={`${styles.numCol} ${styles.saldoCol} ${bal >= 0 ? styles.green : styles.red}`}>
-                <strong>{bal < 0 ? '-' : ''}R$ {fmt(bal)}</strong>
-              </td>
-            </tr>
+            {/* History rows (closed months) */}
+            {(data.history || []).map((row) => (
+              <tr key={row.month} style={{ opacity: 0.6 }}>
+                <td className={styles.monthCell}>{shortMonth(row.month)}</td>
+                <td className={`${styles.numCol} ${styles.green}`}>R$ {fmt(row.income)}</td>
+                <td className={`${styles.numCol} ${styles.red}`}>R$ {fmt(row.fixo)}</td>
+                <td className={`${styles.numCol} ${styles.purple}`}>R$ {fmt(row.investimento)}</td>
+                <td className={`${styles.numCol} ${styles.orange}`}>R$ {fmt(row.installments)}</td>
+                <td className={`${styles.numCol}`}>
+                  <span style={{ color: 'var(--color-red)' }}>R$ {fmt(row.variable)}</span>
+                  <span style={{ color: 'var(--color-text-secondary)', opacity: 0.5 }}> / </span>
+                  <span style={{ color: row.budget < 0 ? 'var(--color-red)' : 'var(--color-green)' }}>
+                    {row.budget < 0 ? `${'\u2212'}R$ ${fmt(row.budget)}` : `R$ ${fmt(row.budget)}`}
+                  </span>
+                </td>
+                <td className={`${styles.numCol} ${styles.saldoCol} ${row.cumulative >= 0 ? styles.green : styles.red}`}>
+                  <strong>{row.cumulative < 0 ? '-' : ''}R$ {fmt(row.cumulative)}</strong>
+                </td>
+              </tr>
+            ))}
+            {/* Divider between history and projection */}
+            {(data.history || []).length > 0 && (
+              <tr className={styles.balanceRow}>
+                <td className={styles.monthCell}>
+                  <span className={styles.balanceLabel}>Saldo Anterior</span>
+                </td>
+                <td colSpan={5}></td>
+                <td className={`${styles.numCol} ${styles.saldoCol} ${bal >= 0 ? styles.green : styles.red}`}>
+                  <strong>{bal < 0 ? '-' : ''}R$ {fmt(bal)}</strong>
+                </td>
+              </tr>
+            )}
+            {/* Current + future months */}
             {data.months.map((row, i) => {
+              const isCurrent = i === 0
               const isBreakeven = breakevenLabel && shortMonth(row.month) === breakevenLabel
               return (
                 <tr
                   key={row.month}
-                  className={`${i === 0 ? styles.currentRow : ''} ${isBreakeven ? styles.breakevenRow : ''}`}
+                  className={`${isCurrent ? styles.currentRow : ''} ${isBreakeven ? styles.breakevenRow : ''}`}
                 >
                   <td className={styles.monthCell}>{shortMonth(row.month)}</td>
                   <td className={`${styles.numCol} ${styles.green}`}>
@@ -225,11 +266,24 @@ function ProjectionSection() {
                   <td className={`${styles.numCol} ${styles.orange}`}>
                     R$ {fmt(row.installments)}
                   </td>
-                  <td className={`${styles.numCol} ${row.variable > 0 ? styles.red : ''}`}>
-                    {row.variable > 0 ? <>R$ {fmt(row.variable)}</> : <span style={{ color: 'var(--color-text-secondary)' }}>—</span>}
-                  </td>
-                  <td className={`${styles.numCol} ${row.net >= 0 ? styles.green : styles.red}`}>
-                    {row.net < 0 ? '-' : ''}R$ {fmt(row.net)}
+                  <td className={`${styles.numCol}`}>
+                    {isCurrent ? (
+                      <>
+                        <span style={{ color: 'var(--color-red)' }}>R$ {fmt(row.variable)}</span>
+                        <span style={{ color: 'var(--color-text-secondary)', opacity: 0.5 }}> / </span>
+                        <span style={{ color: row.budget < 0 ? 'var(--color-red)' : 'var(--color-green)' }}>
+                          {row.budget < 0 ? `${'\u2212'}R$ ${fmt(row.budget)}` : `R$ ${fmt(row.budget)}`}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{ color: 'var(--color-text-secondary)' }}>{'\u2014'}</span>
+                        <span style={{ color: 'var(--color-text-secondary)', opacity: 0.5 }}> / </span>
+                        <span style={{ color: row.budget < 0 ? 'var(--color-red)' : 'var(--color-green)' }}>
+                          {row.budget < 0 ? `${'\u2212'}R$ ${fmt(row.budget)}` : `R$ ${fmt(row.budget)}`}
+                        </span>
+                      </>
+                    )}
                   </td>
                   <td className={`${styles.numCol} ${styles.saldoCol} ${row.cumulative >= 0 ? styles.green : styles.red}`}>
                     <strong>{row.cumulative < 0 ? '-' : ''}R$ {fmt(row.cumulative)}</strong>
