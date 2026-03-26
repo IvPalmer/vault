@@ -31,18 +31,20 @@ logger = logging.getLogger(__name__)
 # Items without explicit mapping use auto-discovery (match by account type).
 PROFILE_CONFIG = {
     'Palmer': {
-        'item_ids': ['aa71ec48-af81-4d87-9bab-04627735c288'],
+        # MeuPluggy proxy (refreshes daily, works post-trial)
+        'item_ids': ['efd32560-e14d-41ac-9ea8-f788f073ca57'],
         'account_map': {
-            '535be1c8-5191-4f1f-8591-8d607538a883': 'Checking',
-            'feb08f5e-d151-40d4-b816-89647b9b7b19': 'Mastercard Black',
-            '22935e0c-0484-46fb-b638-5be4c03d3331': 'Visa Infinite',
+            'ccffdde0-6624-4fa2-8e16-4826b38072b4': 'Checking',
+            '8a92ed78-9961-4a7c-88ed-e13c21d3ceea': 'Mastercard Black',
+            '7e611459-0243-4f30-8c21-e788200114c4': 'Visa Infinite',
         },
     },
     'Rafa': {
-        'item_ids': ['8702072c-6224-4f8f-a2be-ba61e4200557'],
+        # MeuPluggy proxy (refreshes daily, works post-trial)
+        'item_ids': ['a97e5072-fb66-4352-97e9-1d54620d4eeb'],
         'account_map': {
-            'edd1a40e-583c-4e93-ba28-05947f84162f': 'NuBank Conta',
-            '66b17a4e-8c15-47f0-abc2-b2425b027a4e': 'NuBank Cartão',
+            'ef7d504f-c4ef-44b9-afe0-8086e5a4f846': 'NuBank Conta',
+            'eaa5556b-f38b-4b1e-9e68-fffdca6f1a9a': 'NuBank Cartão',
         },
     },
 }
@@ -214,6 +216,9 @@ class Command(BaseCommand):
                     self.stderr.write(self.style.WARNING(
                         f'  Refresh finished with status={status}, '
                         f'executionStatus={item.get("executionStatus")}'))
+                    self.stdout.write(self.style.NOTICE(
+                        '  (Trial expired? MeuPluggy still syncs daily — '
+                        'data reads will work without --refresh)'))
 
             self.stdout.write(f'\n=== Item: {connector_name} ({item_id[:12]}...) '
                               f'status={item.get("status")} ===')

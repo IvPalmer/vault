@@ -103,12 +103,48 @@ Key fields: `amount` (negative = debit), `category` (auto-assigned), `paymentDat
 - All features including Open Finance connectors
 - No credit card required
 
-### After Trial
+### After Trial (confirmed 2026-03-26)
 
-- **Existing connections persist** — can still pull data from connected accounts
+- **Direct item refresh blocked** — `PATCH /items/{id}` returns 403 (sandbox-only)
+- **Read endpoints still work** — transactions, accounts, bills all accessible
 - **Cannot add new connections** or edit connector configuration
-- Unclear if auto-sync/data refresh continues post-trial
 - Sandbox items deleted after 30 days of inactivity
+
+### MeuPluggy Proxy (Free, Post-Trial Solution)
+
+MeuPluggy (meu.pluggy.ai) is a free consumer app that maintains bank connections via Open Finance.
+By linking the dev account to MeuPluggy, API reads go through a proxy that refreshes daily.
+
+**Setup steps (one-time):**
+1. Sign in to meu.pluggy.ai — bank connections from trial persist here
+2. Dashboard → Customization → Connectors → enable MeuPluggy (Direct Connector)
+3. Dashboard → Applications → Vault app → ▷ Demo → Connect Account → MeuPluggy
+4. Authorize each bank (Itaú, Nubank) via MeuPluggy OAuth
+5. New proxy items appear with fresh data; update PROFILE_CONFIG in sync_pluggy.py
+
+**Post-setup behavior:**
+- MeuPluggy refreshes data daily (~03:30 UTC)
+- `sync_pluggy` reads transactions/bills/balances normally (no `--refresh` needed)
+- `update_item()` handles 403 gracefully — logs warning, returns current item state
+- Old direct items remain accessible but frozen at last refresh date
+
+### MeuPluggy Items (active)
+
+#### Palmer (Itaú) — Item: `efd32560-e14d-41ac-9ea8-f788f073ca57`
+
+| Account | Type | Pluggy ID |
+|---------|------|-----------|
+| Checking | BANK | `ccffdde0-6624-4fa2-8e16-4826b38072b4` |
+| Savings | BANK | `e595441e-cb10-4a00-90d1-89a1e23daac9` |
+| Mastercard Black | CREDIT | `8a92ed78-9961-4a7c-88ed-e13c21d3ceea` |
+| Visa Infinite | CREDIT | `7e611459-0243-4f30-8c21-e788200114c4` |
+
+#### Rafa (Nubank) — Item: `a97e5072-fb66-4352-97e9-1d54620d4eeb`
+
+| Account | Type | Pluggy ID |
+|---------|------|-----------|
+| NuBank Conta | BANK | `ef7d504f-c4ef-44b9-afe0-8086e5a4f846` |
+| NuBank Cartão | CREDIT | `eaa5556b-f38b-4b1e-9e68-fffdca6f1a9a` |
 
 ### Paid Plans
 
@@ -117,46 +153,7 @@ Key fields: `amount` (negative = debit), `category` (auto-assigned), `paymentDat
 | Basic | R$ 2,500/month | Open Finance + direct connections, help desk |
 | Custom | Contact sales | High volume, premium support, BETA products |
 
-**No free tier exists post-trial.**
-
-### MeuPluggy (Free Consumer App)
-
-- Connections persist indefinitely (Open Finance consent-based)
-- Can export data as spreadsheet ("Baixar Relatório")
-- Actual Budget project uses MeuPluggy for free long-term bank sync
-- Key: set up ALL connections during trial period
-
 Sources:
 - Actual Budget docs: https://actualbudget.org/docs/advanced/bank-sync/pluggyai/
+- MeuPluggy GitHub: https://github.com/pluggyai/meu-pluggy
 - Pluggy pricing: https://www.pluggy.ai/en/pricing
-- Pluggy sandbox docs: https://docs.pluggy.ai/docs/sandbox
-
-## Vault Integration Plan
-
-### Approach
-
-Django management command or scheduled task that:
-1. Authenticates with Pluggy API (client_id/secret → API key)
-2. Pulls transactions for all 4 accounts
-3. Maps Pluggy schema to Vault's Transaction model
-4. Deduplicates against existing imported data
-5. Updates BalanceAnchor with current account balances
-
-### Mapping (Pluggy → Vault)
-
-| Pluggy field | Vault field |
-|-------------|-------------|
-| `description` | `description` |
-| `amount` (abs) | `amount` |
-| `amount` < 0 | `type` = expense |
-| `date` | `date` |
-| `category` | could map to Vault categories |
-| `accountId` (checking) | Vault checking account |
-| `accountId` (CC) | Vault card accounts (master/visa) |
-
-### Risks
-
-- Trial expires ~2026-03-21 — must validate integration works before then
-- Post-trial data refresh uncertain — if it stops, API access becomes stale
-- R$ 2,500/month not viable for personal use
-- **Fallback**: MeuPluggy spreadsheet export + automated CSV import into Vault

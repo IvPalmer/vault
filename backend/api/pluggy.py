@@ -72,6 +72,12 @@ class PluggyClient:
                 item = self.get_item(item_id)
             else:
                 resp.raise_for_status()
+        elif resp.status_code == 403:
+            # Post-trial: refresh blocked, but reads still work via MeuPluggy
+            logger.warning(
+                'Pluggy: refresh blocked (trial expired). '
+                'Data is still synced daily by MeuPluggy.')
+            return self.get_item(item_id)
         else:
             resp.raise_for_status()
             item = resp.json()
