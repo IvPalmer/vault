@@ -1154,6 +1154,8 @@ const DEFAULT_LAYOUTS = {
 }
 
 function loadLayouts() {
+  // Clear stale v1 layout
+  localStorage.removeItem('vault-pessoal-layouts')
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) return JSON.parse(saved)
@@ -1173,7 +1175,12 @@ export default function PersonalOrganizer() {
   const { currentProfile } = useProfile()
   const queryClient = useQueryClient()
   const [activeProject, setActiveProject] = useState(null)
-  const [layouts, setLayouts] = useState(loadLayouts)
+  const [layouts, setLayouts] = useState(() => {
+    // Force clean start — clear any stale layouts
+    localStorage.removeItem('vault-pessoal-layouts')
+    localStorage.removeItem('vault-pessoal-layouts-v2')
+    return DEFAULT_LAYOUTS
+  })
 
   const { data: tasksData } = useQuery({
     queryKey: ['pessoal-tasks'],
