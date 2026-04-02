@@ -13,6 +13,25 @@ import { useProfile } from '../context/ProfileContext'
 import api from '../api/client'
 import styles from './PersonalOrganizer.module.css'
 
+// Reminders sidecar runs on the local Mac (port 5176).
+// Calling localhost directly (not through Vite proxy) means each user's
+// browser hits their own Mac's sidecar → sees their own Apple Reminders.
+const SIDECAR_BASE = 'http://localhost:5176'
+async function sidecarGet(path) {
+  const res = await fetch(`${SIDECAR_BASE}${path}`)
+  if (!res.ok) throw new Error(`Sidecar ${res.status}`)
+  return res.json()
+}
+async function sidecarPost(path, data) {
+  const res = await fetch(`${SIDECAR_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(`Sidecar ${res.status}`)
+  return res.json()
+}
+
 /* ── Helpers ─────────────────────────────────────────────── */
 
 function timeAgo(dateStr) {
@@ -558,7 +577,8 @@ function PersonalReminders() {
   // Fetch ALL reminder lists (not just R&R)
   const { data: listsData } = useQuery({
     queryKey: ['pessoal-reminders-lists'],
-    queryFn: () => api.get('/home/reminders/lists/?all=true'),
+    queryFn: () => sidecarGet('/api/home/reminders/lists/?all=true'),
+    retry: 1,
     staleTime: 5 * 60 * 1000,
   })
 
@@ -567,18 +587,18 @@ function PersonalReminders() {
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['pessoal-reminders', listName],
-    queryFn: () => api.get(`/home/reminders/?list=${encodeURIComponent(listName)}`),
+    queryFn: () => sidecarGet(`/api/home/reminders/?list=${encodeURIComponent(listName)}`),
     enabled: !!listName,
     refetchInterval: 30000,
   })
 
   const completeMutation = useMutation({
-    mutationFn: (name) => api.post('/home/reminders/complete/', { name, list: listName }),
+    mutationFn: (name) => sidecarPost('/api/home/reminders/complete/', { name, list: listName }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pessoal-reminders', listName] }),
   })
 
   const addMutation = useMutation({
-    mutationFn: (name) => api.post('/home/reminders/add/', { name, list: listName }),
+    mutationFn: (name) => sidecarPost('/api/home/reminders/add/', { name, list: listName }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['pessoal-reminders', listName] })
       setNewReminder('')
