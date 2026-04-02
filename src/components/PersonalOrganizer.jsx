@@ -1167,6 +1167,7 @@ export default function PersonalOrganizer() {
   const [activeProject, setActiveProject] = useState(null)
   const [gridLayouts, setGridLayouts] = useState(loadGrid)
   const [gridWidth, setGridWidth] = useState(1200)
+  const [isDragging, setIsDragging] = useState(false)
   const gridRef = useRef(null)
 
   useEffect(() => {
@@ -1253,7 +1254,8 @@ export default function PersonalOrganizer() {
         onSelectProject={setActiveProject}
       />
 
-      <div ref={gridRef}>
+      <div ref={gridRef} className={`${styles.gridContainer} ${isDragging ? styles.gridContainerActive : ''}`}>
+        {isDragging && <GridOverlay width={gridWidth} cols={12} rowHeight={28} margin={14} />}
         <ResponsiveGridLayout
           width={gridWidth}
           layouts={gridLayouts}
@@ -1261,6 +1263,10 @@ export default function PersonalOrganizer() {
           cols={{ lg: 12, md: 10, sm: 1 }}
           rowHeight={28}
           onLayoutChange={onLayoutChange}
+          onDragStart={() => setIsDragging(true)}
+          onDragStop={() => setIsDragging(false)}
+          onResizeStart={() => setIsDragging(true)}
+          onResizeStop={() => setIsDragging(false)}
           draggableHandle={`.${styles.widgetHeader}`}
           margin={[14, 14]}
           containerPadding={[0, 0]}
@@ -1284,6 +1290,36 @@ export default function PersonalOrganizer() {
           </div>
         </ResponsiveGridLayout>
       </div>
+    </div>
+  )
+}
+
+/* ── Grid Overlay — visible grid lines during drag/resize ── */
+
+function GridOverlay({ width, cols, rowHeight, margin }) {
+  const colWidth = (width - margin * (cols + 1)) / cols
+  const cellW = colWidth + margin
+  const cellH = rowHeight + margin
+  const rows = Math.ceil(window.innerHeight / cellH) + 5
+
+  return (
+    <div className={styles.gridOverlay}>
+      {Array.from({ length: rows * cols }, (_, i) => {
+        const col = i % cols
+        const row = Math.floor(i / cols)
+        return (
+          <div
+            key={i}
+            className={styles.gridOverlayCell}
+            style={{
+              left: col * cellW,
+              top: row * cellH,
+              width: colWidth,
+              height: rowHeight,
+            }}
+          />
+        )
+      })}
     </div>
   )
 }
