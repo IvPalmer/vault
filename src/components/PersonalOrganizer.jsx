@@ -1124,14 +1124,17 @@ function PersonalReminders() {
 
 /* ── Grid Layout (gridstack) ──────────────────────────────── */
 
-const GRID_KEY = 'vault-pessoal-gridstack-v1'
+const GRID_KEY = 'vault-pessoal-gridstack-v2'
 
 const DEFAULT_ITEMS = [
-  { id: 'tasks',     x: 0, y: 0, w: 4, h: 6 },
-  { id: 'reminders', x: 4, y: 0, w: 5, h: 6 },
-  { id: 'calendar',  x: 9, y: 0, w: 3, h: 8 },
-  { id: 'events',    x: 0, y: 6, w: 4, h: 5 },
-  { id: 'notes',     x: 4, y: 6, w: 5, h: 5 },
+  { id: 'dashboard', x: 0, y: 0,  w: 12, h: 2 },
+  { id: 'capture',   x: 0, y: 2,  w: 12, h: 2 },
+  { id: 'projects',  x: 0, y: 4,  w: 12, h: 1 },
+  { id: 'tasks',     x: 0, y: 5,  w: 4,  h: 6 },
+  { id: 'reminders', x: 4, y: 5,  w: 5,  h: 6 },
+  { id: 'calendar',  x: 9, y: 5,  w: 3,  h: 8 },
+  { id: 'events',    x: 0, y: 11, w: 4,  h: 5 },
+  { id: 'notes',     x: 4, y: 11, w: 5,  h: 5 },
 ]
 
 /* ── Main Component ──────────────────────────────────────── */
@@ -1259,42 +1262,51 @@ export default function PersonalOrganizer() {
         </button>
       </header>
 
-      <DashboardCards tasks={tasks} projects={projects} />
-
-      <QuickCapture
-        onAddTask={(data) => addTaskMutation.mutate(data)}
-        onAddNote={(data) => addNoteMutation.mutate(data)}
-        projects={projects}
-      />
-
-      <ProjectsBar
-        projects={projects}
-        activeProject={activeProject}
-        onSelectProject={setActiveProject}
-      />
-
       <div ref={gridRef} className={`grid-stack ${styles.gridContainer}`}>
-        <div className="grid-stack-item" gs-id="tasks" gs-x="0" gs-y="0" gs-w="4" gs-h="6" gs-min-w="2" gs-min-h="3">
+        <div className="grid-stack-item" gs-id="dashboard" gs-x="0" gs-y="0" gs-w="12" gs-h="2" gs-min-w="4" gs-min-h="1">
+          <div className="grid-stack-item-content">
+            <DashboardCards tasks={tasks} projects={projects} />
+          </div>
+        </div>
+        <div className="grid-stack-item" gs-id="capture" gs-x="0" gs-y="2" gs-w="12" gs-h="2" gs-min-w="4" gs-min-h="1">
+          <div className="grid-stack-item-content">
+            <QuickCapture
+              onAddTask={(data) => addTaskMutation.mutate(data)}
+              onAddNote={(data) => addNoteMutation.mutate(data)}
+              projects={projects}
+            />
+          </div>
+        </div>
+        <div className="grid-stack-item" gs-id="projects" gs-x="0" gs-y="4" gs-w="12" gs-h="1" gs-min-w="4" gs-min-h="1">
+          <div className="grid-stack-item-content">
+            <ProjectsBar
+              projects={projects}
+              activeProject={activeProject}
+              onSelectProject={setActiveProject}
+            />
+          </div>
+        </div>
+        <div className="grid-stack-item" gs-id="tasks" gs-x="0" gs-y="5" gs-w="4" gs-h="6" gs-min-w="2" gs-min-h="3">
           <div className="grid-stack-item-content">
             <TaskList activeProject={activeProject} />
           </div>
         </div>
-        <div className="grid-stack-item" gs-id="reminders" gs-x="4" gs-y="0" gs-w="5" gs-h="6" gs-min-w="2" gs-min-h="3">
+        <div className="grid-stack-item" gs-id="reminders" gs-x="4" gs-y="5" gs-w="5" gs-h="6" gs-min-w="2" gs-min-h="3">
           <div className="grid-stack-item-content">
             <PersonalReminders />
           </div>
         </div>
-        <div className="grid-stack-item" gs-id="calendar" gs-x="9" gs-y="0" gs-w="3" gs-h="8" gs-min-w="2" gs-min-h="4">
+        <div className="grid-stack-item" gs-id="calendar" gs-x="9" gs-y="5" gs-w="3" gs-h="8" gs-min-w="2" gs-min-h="4">
           <div className="grid-stack-item-content">
             <PersonalCalendar />
           </div>
         </div>
-        <div className="grid-stack-item" gs-id="events" gs-x="0" gs-y="6" gs-w="4" gs-h="5" gs-min-w="2" gs-min-h="3">
+        <div className="grid-stack-item" gs-id="events" gs-x="0" gs-y="11" gs-w="4" gs-h="5" gs-min-w="2" gs-min-h="3">
           <div className="grid-stack-item-content">
             <UpcomingEvents />
           </div>
         </div>
-        <div className="grid-stack-item" gs-id="notes" gs-x="4" gs-y="6" gs-w="5" gs-h="5" gs-min-w="2" gs-min-h="3">
+        <div className="grid-stack-item" gs-id="notes" gs-x="4" gs-y="11" gs-w="5" gs-h="5" gs-min-w="2" gs-min-h="3">
           <div className="grid-stack-item-content">
             <NotesList activeProject={activeProject} projects={projects} />
           </div>
