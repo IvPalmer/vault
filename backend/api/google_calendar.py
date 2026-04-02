@@ -38,7 +38,7 @@ SCOPES = ['https://www.googleapis.com/auth/calendar.readonly',
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CREDENTIALS_FILE = os.path.join(BASE_DIR, 'credentials.json')
 
-DEFAULT_REDIRECT_URI = 'http://localhost:8001/api/calendar/oauth-callback/'
+DEFAULT_REDIRECT_URI = 'http://localhost:8001/api/home/calendar/oauth-callback/'
 
 
 def get_credentials_for_account(account):
@@ -163,7 +163,18 @@ def complete_auth_flow(code, state, redirect_uri=None):
 
 
 def get_account_email(access_token):
-    """Fetch the Google account email using the access token."""
+    """Get the account email via Calendar API (primary calendar ID = email).
+
+    Falls back to userinfo endpoint, then to 'unknown@gmail.com'.
+    """
+    try:
+        creds = Credentials(token=access_token)
+        service = build('calendar', 'v3', credentials=creds)
+        cal = service.calendars().get(calendarId='primary').execute()
+        return cal.get('id', 'unknown@gmail.com')
+    except Exception:
+        pass
+    # Fallback: try userinfo (works if openid/email scope granted)
     import requests as _requests
     resp = _requests.get(
         'https://www.googleapis.com/oauth2/v2/userinfo',
@@ -175,7 +186,10 @@ def get_account_email(access_token):
 
 
 def list_calendars_for_account(account):
-    """List all calendars for a connected Google account."""
+    """List all calendars for a connected Google account.
+
+    Filters out auto-subscribed calendars from event invites (@import.calendar).
+    """
     service = get_service_for_account(account)
     if not service:
         return None
@@ -188,6 +202,7 @@ def list_calendars_for_account(account):
             'primary': c.get('primary', False),
         }
         for c in result.get('items', [])
+        if '@import.calendar' not in c.get('id', '')
     ]
 
 

@@ -9,9 +9,10 @@ function Layout({ children }) {
   const { profileSlug } = useProfile()
 
   const isHome = pathname === '/home' || pathname.startsWith('/home/')
+  const isPessoal = pathname.endsWith('/pessoal')
   const isSettings = pathname.endsWith('/settings') || pathname.endsWith('/categories')
   const isAnalytics = pathname.endsWith('/analytics')
-  const showMonthPicker = !isHome && !isSettings && !isAnalytics
+  const showMonthPicker = !isHome && !isPessoal && !isSettings && !isAnalytics
 
   return (
     <div className={styles.layout}>
@@ -25,6 +26,12 @@ function Layout({ children }) {
               className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}
             >
               Home
+            </NavLink>
+            <NavLink
+              to={`/${profileSlug}/pessoal`}
+              className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}
+            >
+              Pessoal
             </NavLink>
             <NavLink
               to={`/${profileSlug}/overview`}
@@ -48,7 +55,7 @@ function Layout({ children }) {
         </div>
         {showMonthPicker && <MonthPicker />}
       </header>
-      <main className={isHome ? styles.mainWide : (isAnalytics ? styles.mainWide : styles.main)}>
+      <main className={(isHome || isPessoal || isAnalytics) ? styles.mainWide : styles.main}>
         {children}
       </main>
     </div>

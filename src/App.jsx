@@ -5,6 +5,7 @@ import Home from './components/Home'
 import MonthlyOverview from './components/MonthlyOverview'
 import Analytics from './components/Analytics'
 import Settings from './components/Settings'
+import PersonalOrganizer from './components/PersonalOrganizer'
 import CategoryManager from './components/CategoryManager'
 import SetupWizard from './components/SetupWizard'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -42,6 +43,7 @@ function App() {
           <Route path="/home" element={<ErrorBoundary fallbackMessage="Erro ao carregar Home"><Home /></ErrorBoundary>} />
 
           {/* Profile-scoped routes */}
+          <Route path="/:profileSlug/pessoal" element={<ErrorBoundary fallbackMessage="Erro ao carregar Pessoal"><PersonalOrganizer /></ErrorBoundary>} />
           <Route path="/:profileSlug/overview" element={<ErrorBoundary fallbackMessage="Erro ao carregar Visão Mensal"><MonthlyOverview /></ErrorBoundary>} />
           <Route path="/:profileSlug/analytics" element={<ErrorBoundary fallbackMessage="Erro ao carregar Analytics"><Analytics /></ErrorBoundary>} />
           <Route path="/:profileSlug/settings" element={<ErrorBoundary fallbackMessage="Erro ao carregar Configurações"><Settings onOpenWizard={handleOpenWizardFromSettings} /></ErrorBoundary>} />

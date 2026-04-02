@@ -15,6 +15,7 @@
     ./reminders-helper add-event "R&R" "Dinner" "2026-02-15T19:00" "2026-02-15T21:00"
 */
 
+import AppKit
 import EventKit
 import Foundation
 
@@ -176,11 +177,30 @@ case "complete":
 // ════════════════════════════════════════════════════════
 
 case "calendars":
+    let status = EKEventStore.authorizationStatus(for: .event)
+    let statusStr: String
+    switch status {
+    case .authorized, .fullAccess: statusStr = "authorized"
+    case .denied: statusStr = "denied"
+    case .restricted: statusStr = "restricted"
+    case .notDetermined: statusStr = "notDetermined"
+    case .writeOnly: statusStr = "writeOnly"
+    @unknown default: statusStr = "unknown"
+    }
     let cals = store.calendars(for: .event)
     let list = cals.map { c -> [String: Any] in
-        return ["name": c.title, "source": c.source.title, "color": c.cgColor?.components?.description ?? ""]
+        var dict: [String: Any] = ["name": c.title, "source": c.source.title]
+        if let cg = c.cgColor {
+            let ns = NSColor(cgColor: cg)!.usingColorSpace(.sRGB)!
+            let hex = String(format: "#%02X%02X%02X",
+                             Int(ns.redComponent * 255),
+                             Int(ns.greenComponent * 255),
+                             Int(ns.blueComponent * 255))
+            dict["color"] = hex
+        }
+        return dict
     }
-    outputJSON(["calendars": list])
+    outputJSON(["calendars": list, "auth_status": statusStr, "count": list.count])
 
 case "events":
     guard args.count >= 3 else {
@@ -221,6 +241,61 @@ case "events":
         "events": eventList,
         "count": eventList.count,
     ])
+
+case "events-range":
+    // events-range <time_min> <time_max> [calendar1,calendar2,...]
+    // time_min/time_max format: yyyy-MM-dd
+    guard args.count >= 4 else {
+        print("{\"error\": \"Usage: events-range <time_min> <time_max> [cal1,cal2,...]\"}")
+        exit(1)
+    }
+    let dateOnlyFmt = DateFormatter()
+    dateOnlyFmt.dateFormat = "yyyy-MM-dd"
+    dateOnlyFmt.timeZone = TimeZone.current
+
+    guard let rangeStart = dateOnlyFmt.date(from: args[2]) else {
+        print("{\"error\": \"Invalid time_min format. Use yyyy-MM-dd\"}")
+        exit(1)
+    }
+    // End date: set to end of day
+    guard let rangeEndRaw = dateOnlyFmt.date(from: args[3]) else {
+        print("{\"error\": \"Invalid time_max format. Use yyyy-MM-dd\"}")
+        exit(1)
+    }
+    let rangeEnd = Calendar.current.date(byAdding: .day, value: 1, to: rangeEndRaw)!
+
+    let allCals = store.calendars(for: .event)
+    var selectedCals: [EKCalendar]
+    if args.count >= 5 && args[4] != "all" {
+        let names = args[4].components(separatedBy: ",")
+        selectedCals = allCals.filter { names.contains($0.title) }
+    } else {
+        selectedCals = allCals
+    }
+
+    let rangePredicate = store.predicateForEvents(
+        withStart: rangeStart, end: rangeEnd,
+        calendars: selectedCals.isEmpty ? nil : selectedCals
+    )
+    let rangeEvents = store.events(matching: rangePredicate)
+
+    let rangeList = rangeEvents.map { e -> [String: Any] in
+        var dict: [String: Any] = [
+            "title": e.title ?? "",
+            "start": e.isAllDay
+                ? dateOnlyFmt.string(from: e.startDate)
+                : isoFormatter.string(from: e.startDate),
+            "end": e.isAllDay
+                ? dateOnlyFmt.string(from: e.endDate)
+                : isoFormatter.string(from: e.endDate),
+            "all_day": e.isAllDay,
+            "location": e.location ?? "",
+            "calendar": e.calendar.title,
+        ]
+        if e.hasRecurrenceRules { dict["recurring"] = true }
+        return dict
+    }
+    outputJSON(["events": rangeList, "count": rangeList.count])
 
 case "add-event":
     guard args.count >= 5 else {

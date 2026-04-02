@@ -71,15 +71,15 @@ const MODULES = [
     active: true,
   },
   {
-    key: 'compras',
-    label: 'Compras',
-    desc: 'Lista de compras compartilhada',
+    key: 'pessoal',
+    label: 'Pessoal',
+    desc: 'Tarefas, notas, agenda pessoal',
     icon: (
       <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" /><path d="M1 1H5L7.68 14.39A2 2 0 002 16H16A2 2 0 0019.63 13.13L21 5H6" />
+        <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" /><circle cx="12" cy="7" r="4" />
       </svg>
     ),
-    active: false,
+    active: true,
   },
   {
     key: 'viagens',
@@ -110,7 +110,7 @@ function ModuleCards({ profileSlug }) {
     <section className={styles.modules}>
       {MODULES.map((m) =>
         m.active ? (
-          <Link key={m.key} to={`/${profileSlug}/overview`} className={styles.moduleCard}>
+          <Link key={m.key} to={`/${profileSlug}/${m.key === 'financeiro' ? 'overview' : m.key}`} className={styles.moduleCard}>
             <div className={styles.moduleIconWrap}>{m.icon}</div>
             <div className={styles.moduleInfo}>
               <span className={styles.moduleLabel}>{m.label}</span>
