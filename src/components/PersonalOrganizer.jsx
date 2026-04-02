@@ -1294,32 +1294,33 @@ export default function PersonalOrganizer() {
   )
 }
 
-/* ── Grid Overlay — visible grid lines during drag/resize ── */
+/* ── Grid Overlay — SVG background matching RGL snap positions ── */
 
 function GridOverlay({ width, cols, rowHeight, margin }) {
-  const colWidth = (width - margin * (cols + 1)) / cols
-  const cellW = colWidth + margin
-  const cellH = rowHeight + margin
-  const rows = Math.ceil(window.innerHeight / cellH) + 5
+  const colWidth = Math.round((width - margin * (cols - 1)) / cols)
+  const stepX = colWidth + margin
+  const stepY = rowHeight + margin
+  const rows = Math.ceil((window.innerHeight * 1.5) / stepY)
+
+  // Build SVG pattern that tiles exactly with RGL's grid
+  const rects = []
+  for (let c = 0; c < cols; c++) {
+    rects.push(
+      `<rect x="${c * stepX}" y="0" width="${colWidth}" height="${rowHeight}" rx="3" fill="%23000" opacity="0.04"/>`
+    )
+  }
+  const svgW = width
+  const svgH = stepY
+  const svg = `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='${svgW}' height='${svgH}'>${rects.join('')}</svg>")`
 
   return (
-    <div className={styles.gridOverlay}>
-      {Array.from({ length: rows * cols }, (_, i) => {
-        const col = i % cols
-        const row = Math.floor(i / cols)
-        return (
-          <div
-            key={i}
-            className={styles.gridOverlayCell}
-            style={{
-              left: col * cellW,
-              top: row * cellH,
-              width: colWidth,
-              height: rowHeight,
-            }}
-          />
-        )
-      })}
-    </div>
+    <div
+      className={styles.gridOverlay}
+      style={{
+        backgroundImage: svg,
+        backgroundSize: `${svgW}px ${svgH}px`,
+        height: rows * stepY,
+      }}
+    />
   )
 }

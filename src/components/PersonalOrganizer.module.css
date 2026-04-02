@@ -435,24 +435,17 @@
 
 .gridOverlay {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 0;
   pointer-events: none;
-  animation: fadeIn 0.15s ease;
+  animation: gridFadeIn 0.12s ease;
 }
 
-@keyframes fadeIn {
+@keyframes gridFadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
-}
-
-.gridOverlayCell {
-  position: absolute;
-  background: var(--color-accent);
-  opacity: 0.04;
-  border-radius: 4px;
-  border: 1px solid var(--color-accent);
-  box-sizing: border-box;
 }
 
 .gridContainerActive :global(.react-grid-item) {
