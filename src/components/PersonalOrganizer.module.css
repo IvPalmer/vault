@@ -427,56 +427,74 @@
   border-color: var(--color-accent);
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: var(--space-md);
-  align-items: start;
+.gridLayout {
+  margin: 0;
 }
 
 .gridCell {
-  position: relative;
-  transition: opacity 0.2s, transform 0.2s;
+  height: 100%;
+  overflow: auto;
 }
 
-.gridCellDragging {
-  opacity: 0.4;
-  transform: scale(0.98);
-}
-
-.gridCellOver {
-  outline: 2px dashed var(--color-accent);
-  outline-offset: 4px;
-  border-radius: var(--radius-md);
-}
-
+/* Drag handle — appears on hover in widget header area */
 .widgetDragHandle {
   position: absolute;
   top: 6px;
   left: 8px;
-  z-index: 2;
+  z-index: 5;
   cursor: grab;
   color: var(--color-text-secondary);
   opacity: 0;
-  padding: 3px 4px;
+  padding: 3px 5px;
   transition: opacity 0.15s;
   display: flex;
   align-items: center;
   background: var(--color-surface);
   border-radius: 3px;
+  border: 1px solid var(--color-border);
 }
 
 .gridCell:hover .widgetDragHandle {
-  opacity: 0.4;
+  opacity: 0.5;
 }
 
 .widgetDragHandle:hover {
-  opacity: 0.9 !important;
+  opacity: 1 !important;
   color: var(--color-accent);
+  border-color: var(--color-accent);
 }
 
 .widgetDragHandle:active {
   cursor: grabbing;
+}
+
+/* react-grid-layout v1 overrides */
+:global(.react-grid-item) {
+  transition: all 200ms ease;
+}
+
+:global(.react-grid-item.react-grid-placeholder) {
+  background: var(--color-accent) !important;
+  opacity: 0.1 !important;
+  border-radius: var(--radius-md);
+  border: 2px dashed var(--color-accent) !important;
+}
+
+:global(.react-grid-item > .react-resizable-handle) {
+  z-index: 5;
+}
+
+:global(.react-grid-item > .react-resizable-handle::after) {
+  border-right-color: var(--color-text-secondary) !important;
+  border-bottom-color: var(--color-text-secondary) !important;
+  opacity: 0.3;
+  transition: opacity 0.15s;
+}
+
+:global(.react-grid-item:hover > .react-resizable-handle::after) {
+  opacity: 0.7;
+  border-right-color: var(--color-accent) !important;
+  border-bottom-color: var(--color-accent) !important;
 }
 
 /* ─── Shared Widget ─────────────────────────────────────── */
@@ -495,6 +513,11 @@
   justify-content: space-between;
   padding: var(--space-md) var(--space-lg);
   border-bottom: 1px solid var(--color-border);
+  cursor: grab;
+}
+
+.widgetHeader:active {
+  cursor: grabbing;
 }
 
 .widgetHeaderRight {
