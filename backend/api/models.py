@@ -560,3 +560,54 @@ class SalaryConfig(models.Model):
 
     def __str__(self):
         return f"Salary {self.profile.name}: ${self.hourly_rate_usd}/h"
+
+
+class GoogleCalendarAccount(models.Model):
+    """
+    OAuth credentials for a connected Google account.
+    One profile can have multiple Google accounts.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(
+        Profile, on_delete=models.CASCADE, related_name='google_calendar_accounts',
+    )
+    email = models.CharField(max_length=200, help_text='Google account email')
+    token_data = models.JSONField(
+        help_text='OAuth token JSON: access_token, refresh_token, token_uri, client_id, client_secret, scopes',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"{self.profile.name} — {self.email}"
+
+
+class CalendarSelection(models.Model):
+    """
+    Which calendars from each Google account are enabled for display.
+    Controls visibility in Home (shared) vs Pessoal (personal) views.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(
+        Profile, on_delete=models.CASCADE, related_name='calendar_selections',
+    )
+    account = models.ForeignKey(
+        GoogleCalendarAccount, on_delete=models.CASCADE, related_name='selections',
+    )
+    calendar_id = models.CharField(
+        max_length=300, help_text='Google Calendar ID (email-like string)',
+    )
+    calendar_name = models.CharField(max_length=200, help_text='Display name')
+    color = models.CharField(max_length=7, blank=True, help_text='Hex color override')
+    show_in_home = models.BooleanField(default=False)
+    show_in_personal = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['calendar_name']
+        unique_together = [('profile', 'account', 'calendar_id')]
+
+    def __str__(self):
+        return f"{self.calendar_name} ({self.account.email})"
