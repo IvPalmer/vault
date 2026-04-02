@@ -10,16 +10,14 @@
  *   - Calendar (personal context — profile's selected calendars)
  *   - Reminders (Apple sidecar)
  */
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { WidthProvider, Responsive } from 'react-grid-layout'
+import { ResponsiveGridLayout } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
 import { useProfile } from '../context/ProfileContext'
 import api from '../api/client'
 import styles from './PersonalOrganizer.module.css'
-
-const GridLayout = WidthProvider(Responsive)
 
 // Reminders sidecar runs on the local Mac (port 5177).
 // Calling localhost directly (not through Vite proxy) means each user's
@@ -1168,6 +1166,18 @@ export default function PersonalOrganizer() {
   const queryClient = useQueryClient()
   const [activeProject, setActiveProject] = useState(null)
   const [gridLayouts, setGridLayouts] = useState(loadGrid)
+  const [gridWidth, setGridWidth] = useState(1200)
+  const gridRef = useRef(null)
+
+  useEffect(() => {
+    if (!gridRef.current) return
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) setGridWidth(entry.contentRect.width)
+    })
+    ro.observe(gridRef.current)
+    setGridWidth(gridRef.current.offsetWidth)
+    return () => ro.disconnect()
+  }, [])
 
   const { data: tasksData } = useQuery({
     queryKey: ['pessoal-tasks'],
@@ -1243,35 +1253,37 @@ export default function PersonalOrganizer() {
         onSelectProject={setActiveProject}
       />
 
-      <GridLayout
-        layouts={gridLayouts}
-        breakpoints={{ lg: 1200, md: 800, sm: 0 }}
-        cols={{ lg: 12, md: 10, sm: 1 }}
-        rowHeight={28}
-        onLayoutChange={onLayoutChange}
-        draggableHandle={`.${styles.widgetHeader}`}
-        margin={[14, 14]}
-        containerPadding={[0, 0]}
-        compactType="vertical"
-        isResizable
-        isBounded={false}
-      >
-        <div key="tasks" className={styles.gridCell}>
-          <TaskList activeProject={activeProject} />
-        </div>
-        <div key="calendar" className={styles.gridCell}>
-          <PersonalCalendar />
-        </div>
-        <div key="reminders" className={styles.gridCell}>
-          <PersonalReminders />
-        </div>
-        <div key="events" className={styles.gridCell}>
-          <UpcomingEvents />
-        </div>
-        <div key="notes" className={styles.gridCell}>
-          <NotesList activeProject={activeProject} projects={projects} />
-        </div>
-      </GridLayout>
+      <div ref={gridRef}>
+        <ResponsiveGridLayout
+          width={gridWidth}
+          layouts={gridLayouts}
+          breakpoints={{ lg: 1200, md: 800, sm: 0 }}
+          cols={{ lg: 12, md: 10, sm: 1 }}
+          rowHeight={28}
+          onLayoutChange={onLayoutChange}
+          draggableHandle={`.${styles.widgetHeader}`}
+          margin={[14, 14]}
+          containerPadding={[0, 0]}
+          compactType="vertical"
+          isResizable
+        >
+          <div key="tasks" className={styles.gridCell}>
+            <TaskList activeProject={activeProject} />
+          </div>
+          <div key="calendar" className={styles.gridCell}>
+            <PersonalCalendar />
+          </div>
+          <div key="reminders" className={styles.gridCell}>
+            <PersonalReminders />
+          </div>
+          <div key="events" className={styles.gridCell}>
+            <UpcomingEvents />
+          </div>
+          <div key="notes" className={styles.gridCell}>
+            <NotesList activeProject={activeProject} projects={projects} />
+          </div>
+        </ResponsiveGridLayout>
+      </div>
     </div>
   )
 }
