@@ -889,6 +889,12 @@
   gap: 4px;
 }
 
+.calEventCal {
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+  opacity: 0.7;
+}
+
 .calEmpty {
   padding: var(--space-lg) var(--space-lg);
   text-align: center;

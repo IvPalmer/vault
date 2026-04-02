@@ -503,41 +503,44 @@ function CalendarWidget() {
   const [startTime, setStartTime] = useState('')
   const [endTime, setEndTime] = useState('')
 
-  // ── Check Google Calendar auth status ──
-  const { data: authStatus, isLoading: authLoading } = useQuery({
-    queryKey: ['home-calendar-status'],
-    queryFn: () => api.get('/home/calendar/status/'),
+  // Check if any Google accounts are connected (across all profiles)
+  const { data: accountsData, isLoading: authLoading } = useQuery({
+    queryKey: ['calendar-accounts'],
+    queryFn: () => api.get('/calendar/accounts/'),
     staleTime: 5 * 60 * 1000,
     retry: 1,
   })
 
-  const isAuthenticated = authStatus?.authenticated === true
-  const calendarId = authStatus?.calendar_id || null
+  const accounts = accountsData?.accounts || []
+  const isAuthenticated = accounts.length > 0
 
-  // ── Fetch events for current month view (with buffer) ──
+  // Fetch selections to know which calendars to add events to
+  const { data: selectionsData } = useQuery({
+    queryKey: ['calendar-selections'],
+    queryFn: () => api.get('/calendar/selections/'),
+    enabled: isAuthenticated,
+  })
+  const selections = (selectionsData?.selections || []).filter((s) => s.show_in_home)
+
+  // Fetch events for current month view
   const timeMin = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-01`
-  const lastDay = new Date(viewYear, viewMonth + 2, 0).getDate()
   const nextM = viewMonth + 2 > 12 ? 1 : viewMonth + 2
   const nextY = viewMonth + 2 > 12 ? viewYear + 1 : viewYear
+  const lastDay = new Date(viewYear, viewMonth + 1, 0).getDate()
   const timeMax = `${nextY}-${String(nextM).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
 
   const { data, isLoading } = useQuery({
-    queryKey: ['home-calendar-events', viewYear, viewMonth, calendarId],
-    queryFn: () => {
-      const params = new URLSearchParams()
-      if (calendarId) params.set('calendar_id', calendarId)
-      params.set('time_min', timeMin)
-      params.set('time_max', timeMax)
-      return api.get(`/home/calendar/events/?${params}`)
-    },
+    queryKey: ['calendar-events', 'home', viewYear, viewMonth],
+    queryFn: () =>
+      api.get(`/calendar/events/?context=home&time_min=${timeMin}&time_max=${timeMax}`),
     enabled: isAuthenticated,
     refetchInterval: 60000,
   })
 
   const addMutation = useMutation({
-    mutationFn: (evt) => api.post('/home/calendar/add-event/', evt),
+    mutationFn: (evt) => api.post('/calendar/add-event/', evt),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['home-calendar-events'] })
+      queryClient.invalidateQueries({ queryKey: ['calendar-events'] })
       setShowForm(false)
       setTitle('')
       setStartTime('')
@@ -549,11 +552,8 @@ function CalendarWidget() {
   const eventsByDate = useMemo(() => {
     const map = {}
     ;(data?.events || []).forEach((evt) => {
-      // Handle both dateTime and date-only formats
       const startStr = evt.start
-      const key = startStr.includes('T')
-        ? startStr.slice(0, 10)
-        : startStr
+      const key = startStr.includes('T') ? startStr.slice(0, 10) : startStr
       if (!map[key]) map[key] = []
       map[key].push(evt)
     })
@@ -597,10 +597,14 @@ function CalendarWidget() {
   const handleAdd = (e) => {
     e.preventDefault()
     if (!title.trim() || !selectedDate || !startTime) return
+    // Use the first home-selected calendar for adding events
+    const defaultSel = selections[0]
+    if (!defaultSel) return
     const start = `${selectedDate}T${startTime}:00`
     const end = endTime ? `${selectedDate}T${endTime}:00` : `${selectedDate}T${startTime}:00`
     addMutation.mutate({
-      calendar_id: calendarId,
+      account_id: defaultSel.account,
+      calendar_id: defaultSel.calendar_id,
       title: title.trim(),
       start,
       end,
@@ -613,7 +617,7 @@ function CalendarWidget() {
       })
     : null
 
-  // ── Not authenticated: show connect prompt ──
+  // Not authenticated: direct to Settings
   if (!authLoading && !isAuthenticated) {
     return (
       <div className={styles.calWidget}>
@@ -627,27 +631,10 @@ function CalendarWidget() {
             <line x1="8" y1="2" x2="8" y2="6" />
             <line x1="3" y1="10" x2="21" y2="10" />
           </svg>
-          {authStatus?.error ? (
-            <>
-              <p className={styles.calAuthText}>{authStatus.error}</p>
-              <p className={styles.calAuthHint}>
-                Baixe as credenciais OAuth do Google Cloud Console e salve como
-                <code> backend/credentials.json</code>
-              </p>
-            </>
-          ) : authStatus?.auth_url ? (
-            <>
-              <p className={styles.calAuthText}>Conecte seu Google Calendar para ver seus eventos</p>
-              <a
-                href={authStatus.auth_url}
-                className={styles.calAuthBtn}
-              >
-                Conectar Google Calendar
-              </a>
-            </>
-          ) : (
-            <p className={styles.calAuthText}>Carregando...</p>
-          )}
+          <p className={styles.calAuthText}>Conecte uma conta Google para ver seus eventos</p>
+          <p className={styles.calAuthHint}>
+            Acesse <strong>Config → Calendarios</strong> para conectar
+          </p>
         </div>
       </div>
     )
@@ -655,7 +642,6 @@ function CalendarWidget() {
 
   return (
     <div className={styles.calWidget}>
-      {/* ── Header: nav + month/year ── */}
       <div className={styles.calHeader}>
         <div className={styles.calNav}>
           <button className={styles.calNavBtn} onClick={prevMonth} title="Mes anterior">
@@ -671,18 +657,16 @@ function CalendarWidget() {
         <button className={styles.calTodayBtn} onClick={goToday}>Hoje</button>
       </div>
 
-      {/* ── Weekday headers ── */}
       <div className={styles.calGrid}>
         {WEEKDAYS.map((wd) => (
           <div key={wd} className={styles.calWeekday}>{wd}</div>
         ))}
 
-        {/* ── Day cells ── */}
         {days.map((d, i) => {
           const key = dateKey(d)
           const isToday = key === todayKey
           const isSelected = key === selectedDate
-          const hasEvents = !!eventsByDate[key]
+          const dayEvents = eventsByDate[key]
           return (
             <button
               key={i}
@@ -695,30 +679,35 @@ function CalendarWidget() {
               onClick={() => setSelectedDate(key === selectedDate ? null : key)}
             >
               <span className={styles.calDayNum}>{d.day}</span>
-              {hasEvents && <span className={styles.calDot} />}
+              {dayEvents && (
+                <span
+                  className={styles.calDot}
+                  style={dayEvents[0]?.calendar_color ? { backgroundColor: dayEvents[0].calendar_color } : undefined}
+                />
+              )}
             </button>
           )
         })}
       </div>
 
-      {/* ── Loading indicator ── */}
       {isLoading && (
         <div className={styles.calEmpty} style={{ padding: '8px 0' }}>
           <span className={styles.spinner} /> Carregando eventos...
         </div>
       )}
 
-      {/* ── Selected day detail panel ── */}
       {selectedDate && (
         <div className={styles.calDetail}>
           <div className={styles.calDetailHeader}>
             <span className={styles.calDetailDate}>{selectedDateLabel}</span>
-            <button
-              className={styles.widgetHeaderBtn}
-              onClick={() => setShowForm(!showForm)}
-            >
-              {showForm ? 'Cancelar' : '+ Evento'}
-            </button>
+            {selections.length > 0 && (
+              <button
+                className={styles.widgetHeaderBtn}
+                onClick={() => setShowForm(!showForm)}
+              >
+                {showForm ? 'Cancelar' : '+ Evento'}
+              </button>
+            )}
           </div>
 
           {showForm && (
@@ -751,13 +740,19 @@ function CalendarWidget() {
             <div className={styles.calEventsList}>
               {selectedEvents.map((evt, i) => (
                 <div key={i} className={styles.calEvent}>
-                  <div className={styles.calEventDot} />
+                  <div
+                    className={styles.calEventDot}
+                    style={evt.calendar_color ? { backgroundColor: evt.calendar_color } : undefined}
+                  />
                   <div className={styles.calEventInfo}>
                     <span className={styles.calEventTitle}>{evt.title}</span>
                     <span className={styles.calEventTime}>
                       {evt.all_day ? 'Dia todo' : `${formatTime(evt.start)} — ${formatTime(evt.end)}`}
                     </span>
                     {evt.location && <span className={styles.calEventLoc}>{evt.location}</span>}
+                    {evt.calendar && (
+                      <span className={styles.calEventCal}>{evt.calendar}</span>
+                    )}
                   </div>
                 </div>
               ))}
