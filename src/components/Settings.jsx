@@ -5,6 +5,7 @@ import api, { getProfileId } from '../api/client'
 import { useProfile } from '../context/ProfileContext'
 import InlineEdit from './InlineEdit'
 import CalendarSettings from './CalendarSettings'
+import RemindersSettings from './RemindersSettings'
 import styles from './Settings.module.css'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
@@ -898,6 +899,7 @@ function Settings({ onOpenWizard }) {
       {/* CALENDAR SETTINGS                                             */}
       {/* ============================================================ */}
       <CalendarSettings />
+      <RemindersSettings />
 
       {/* ============================================================ */}
       {/* SECTION 1: PROFILE SETTINGS (PERFIL)                         */}
