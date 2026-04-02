@@ -32,8 +32,9 @@ from .views import (
     ProfileSetupStateView,
     FamilyNoteViewSet,
     RemindersView, RemindersAddView, RemindersCompleteView, RemindersListsView,
-    GoogleCalendarStatusView, GoogleCalendarAuthView, GoogleCalendarCallbackView,
-    GoogleCalendarListView, GoogleCalendarEventsView, GoogleCalendarAddEventView,
+    CalendarAccountsView, CalendarConnectView, CalendarOAuthCallbackView,
+    CalendarDisconnectView, CalendarAvailableView, CalendarSelectionsView,
+    CalendarEventsView, CalendarAddEventView,
     SalaryProjectionView, SalarySyncView, SalaryConfigView,
     PluggySyncView,
 )
@@ -117,11 +118,13 @@ urlpatterns = [
     path('home/reminders/lists/', RemindersListsView.as_view(), name='home-reminders-lists'),
     path('home/reminders/add/', RemindersAddView.as_view(), name='home-reminders-add'),
     path('home/reminders/complete/', RemindersCompleteView.as_view(), name='home-reminders-complete'),
-    # Google Calendar
-    path('home/calendar/status/', GoogleCalendarStatusView.as_view(), name='home-calendar-status'),
-    path('home/calendar/auth/', GoogleCalendarAuthView.as_view(), name='home-calendar-auth'),
-    path('home/calendar/oauth-callback/', GoogleCalendarCallbackView.as_view(), name='home-calendar-callback'),
-    path('home/calendar/calendars/', GoogleCalendarListView.as_view(), name='home-calendar-calendars'),
-    path('home/calendar/events/', GoogleCalendarEventsView.as_view(), name='home-calendar-events'),
-    path('home/calendar/add-event/', GoogleCalendarAddEventView.as_view(), name='home-calendar-add-event'),
+    # Calendar (per-profile, multi-account)
+    path('calendar/accounts/', CalendarAccountsView.as_view(), name='calendar-accounts'),
+    path('calendar/connect/', CalendarConnectView.as_view(), name='calendar-connect'),
+    path('calendar/oauth-callback/', CalendarOAuthCallbackView.as_view(), name='calendar-oauth-callback'),
+    path('calendar/accounts/<uuid:account_id>/', CalendarDisconnectView.as_view(), name='calendar-disconnect'),
+    path('calendar/available/<uuid:account_id>/', CalendarAvailableView.as_view(), name='calendar-available'),
+    path('calendar/selections/', CalendarSelectionsView.as_view(), name='calendar-selections'),
+    path('calendar/events/', CalendarEventsView.as_view(), name='calendar-events'),
+    path('calendar/add-event/', CalendarAddEventView.as_view(), name='calendar-add-event'),
 ]

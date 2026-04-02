@@ -62,6 +62,7 @@ from .models import (
     PluggyCategoryMapping, RenameRule, Transaction, RecurringMapping,
     RecurringTemplate, BudgetConfig, BalanceOverride, Profile,
     BankTemplate, SetupTemplate, FamilyNote, SalaryConfig,
+    GoogleCalendarAccount, CalendarSelection,
 )
 from .serializers import (
     AccountSerializer, CategorySerializer, SubcategorySerializer,
@@ -72,6 +73,7 @@ from .serializers import (
     BudgetConfigSerializer, BalanceOverrideSerializer,
     ProfileSerializer, BankTemplateSerializer, SetupTemplateSerializer,
     FamilyNoteSerializer,
+    GoogleCalendarAccountSerializer, CalendarSelectionSerializer,
 )
 from .services import (
     get_metricas,
@@ -2499,119 +2501,233 @@ end tell'''
 from . import google_calendar as gcal
 
 
-def _get_redirect_uri(request):
+# ─── Calendar (per-profile, multi-account) ───────────────────────────
+
+
+def _get_calendar_redirect_uri(request):
     """Build the OAuth redirect URI from the incoming request."""
-    return 'http://localhost:8001/api/home/calendar/oauth-callback/'
+    return 'http://localhost:8001/api/calendar/oauth-callback/'
 
 
-class GoogleCalendarStatusView(APIView):
-    """GET /api/home/calendar/status/ — Check if Google Calendar is authenticated."""
-
-    def get(self, request):
-        creds = gcal.get_credentials()
-        if creds:
-            # If authenticated, also find the R&R calendar ID
-            cal_id = gcal.find_calendar_id('R&R')
-            return Response({
-                'authenticated': True,
-                'calendar_id': cal_id,
-            })
-
-        redirect_uri = _get_redirect_uri(request)
-        auth_url, err = gcal.start_auth_flow(redirect_uri=redirect_uri)
-        if err:
-            return Response({'authenticated': False, 'error': err})
-        return Response({'authenticated': False, 'auth_url': auth_url})
-
-
-class GoogleCalendarAuthView(APIView):
-    """GET /api/home/calendar/auth/ — Start OAuth flow, return auth URL."""
+class CalendarAccountsView(APIView):
+    """GET /api/calendar/accounts/ — list connected Google accounts for current profile."""
 
     def get(self, request):
-        redirect_uri = _get_redirect_uri(request)
-        auth_url, err = gcal.start_auth_flow(redirect_uri=redirect_uri)
+        accounts = GoogleCalendarAccount.objects.filter(profile=request.profile)
+        serializer = GoogleCalendarAccountSerializer(accounts, many=True)
+        return Response({'accounts': serializer.data})
+
+
+class CalendarConnectView(APIView):
+    """POST /api/calendar/connect/ — start OAuth flow for current profile."""
+
+    def post(self, request):
+        redirect_uri = _get_calendar_redirect_uri(request)
+        auth_url, err = gcal.start_auth_flow(
+            profile_id=request.profile.id,
+            redirect_uri=redirect_uri,
+        )
         if err:
             return Response({'error': err}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response({'auth_url': auth_url})
 
 
-class GoogleCalendarCallbackView(APIView):
-    """GET /api/home/calendar/oauth-callback/ — Handle OAuth callback."""
+class CalendarOAuthCallbackView(APIView):
+    """GET /api/calendar/oauth-callback/?code=...&state=..."""
 
     def get(self, request):
         code = request.query_params.get('code')
-        if not code:
-            return Response({'error': 'No code provided'}, status=status.HTTP_400_BAD_REQUEST)
+        state = request.query_params.get('state')
+        if not code or not state:
+            return Response(
+                {'error': 'code and state are required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
-            redirect_uri = _get_redirect_uri(request)
-            gcal.complete_auth_flow(code, redirect_uri=redirect_uri)
-            # Redirect to home page after successful auth
+            redirect_uri = _get_calendar_redirect_uri(request)
+            token_data, profile_id, email = gcal.complete_auth_flow(
+                code, state, redirect_uri=redirect_uri,
+            )
+
+            # Create or update the account
+            account, created = GoogleCalendarAccount.objects.update_or_create(
+                profile_id=profile_id,
+                email=email,
+                defaults={'token_data': token_data},
+            )
+
             from django.shortcuts import redirect
             return redirect('http://localhost:5175/home')
         except Exception as e:
-            logger.exception('Google Calendar OAuth callback error')
+            logger.exception('Calendar OAuth callback error')
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-class GoogleCalendarListView(APIView):
-    """GET /api/home/calendar/calendars/ — List user's calendars."""
+class CalendarDisconnectView(APIView):
+    """DELETE /api/calendar/accounts/<uuid:account_id>/ — disconnect a Google account."""
 
-    def get(self, request):
-        calendars = gcal.list_calendars()
+    def delete(self, request, account_id):
+        try:
+            account = GoogleCalendarAccount.objects.get(
+                id=account_id, profile=request.profile,
+            )
+        except GoogleCalendarAccount.DoesNotExist:
+            return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+        account.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CalendarAvailableView(APIView):
+    """GET /api/calendar/available/<uuid:account_id>/ — list calendars for a connected account."""
+
+    def get(self, request, account_id):
+        try:
+            account = GoogleCalendarAccount.objects.get(
+                id=account_id, profile=request.profile,
+            )
+        except GoogleCalendarAccount.DoesNotExist:
+            return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        calendars = gcal.list_calendars_for_account(account)
         if calendars is None:
             return Response(
-                {'error': 'Not authenticated', 'authenticated': False},
+                {'error': 'Failed to fetch calendars — token may be expired', 'connected': False},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
         return Response({'calendars': calendars})
 
 
-class GoogleCalendarEventsView(APIView):
-    """GET /api/home/calendar/events/?calendar_id=...&time_min=...&time_max=..."""
+class CalendarSelectionsView(APIView):
+    """
+    GET  /api/calendar/selections/ — get current profile's calendar selections.
+    PUT  /api/calendar/selections/ — bulk replace selections.
+    """
 
     def get(self, request):
-        calendar_id = request.query_params.get('calendar_id', None)
-        days = int(request.query_params.get('days', 62))
-        time_min = request.query_params.get('time_min', None)
-        time_max = request.query_params.get('time_max', None)
+        selections = CalendarSelection.objects.filter(
+            profile=request.profile,
+        ).select_related('account')
+        serializer = CalendarSelectionSerializer(selections, many=True)
+        return Response({'selections': serializer.data})
 
-        result = gcal.get_events(
-            calendar_id=calendar_id, days=days,
-            time_min=time_min, time_max=time_max,
-        )
-        if result is None:
-            return Response(
-                {'error': 'Not authenticated', 'authenticated': False},
-                status=status.HTTP_401_UNAUTHORIZED,
+    def put(self, request):
+        incoming = request.data.get('selections', [])
+        profile = request.profile
+
+        # Delete existing selections for this profile
+        CalendarSelection.objects.filter(profile=profile).delete()
+
+        created = []
+        for sel in incoming:
+            try:
+                account = GoogleCalendarAccount.objects.get(
+                    id=sel['account_id'], profile=profile,
+                )
+            except (GoogleCalendarAccount.DoesNotExist, KeyError):
+                continue
+
+            obj = CalendarSelection.objects.create(
+                profile=profile,
+                account=account,
+                calendar_id=sel.get('calendar_id', ''),
+                calendar_name=sel.get('calendar_name', ''),
+                color=sel.get('color', ''),
+                show_in_home=sel.get('show_in_home', False),
+                show_in_personal=sel.get('show_in_personal', True),
             )
-        return Response(result)
+            created.append(obj)
+
+        serializer = CalendarSelectionSerializer(created, many=True)
+        return Response({'selections': serializer.data})
 
 
-class GoogleCalendarAddEventView(APIView):
-    """POST /api/home/calendar/add-event/"""
+class CalendarEventsView(APIView):
+    """GET /api/calendar/events/?context=home|personal&time_min=...&time_max=..."""
 
-    def post(self, request):
-        title = request.data.get('title', '').strip()
-        start = request.data.get('start', '').strip()
-        end = request.data.get('end', '').strip()
-        calendar_id = request.data.get('calendar_id', None)
-        location = request.data.get('location', '').strip()
+    def get(self, request):
+        context = request.query_params.get('context', 'home')
+        time_min = request.query_params.get('time_min')
+        time_max = request.query_params.get('time_max')
 
-        if not title or not start:
+        if not time_min or not time_max:
             return Response(
-                {'error': 'title and start are required'},
+                {'error': 'time_min and time_max are required'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        result = gcal.add_event(
-            calendar_id=calendar_id,
-            title=title, start=start, end=end or start,
-            location=location,
+        # Get relevant selections
+        if context == 'home':
+            selections = CalendarSelection.objects.filter(
+                show_in_home=True,
+            ).select_related('account')
+        else:
+            selections = CalendarSelection.objects.filter(
+                profile=request.profile,
+                show_in_personal=True,
+            ).select_related('account')
+
+        # Deduplicate: same calendar_id across different accounts → fetch once
+        seen = set()
+        all_events = []
+
+        for sel in selections:
+            cache_key = (sel.account_id, sel.calendar_id)
+            if cache_key in seen:
+                continue
+            seen.add(cache_key)
+
+            try:
+                events = gcal.get_events_for_account(
+                    sel.account, sel.calendar_id, time_min, time_max,
+                )
+            except Exception as e:
+                logger.warning(f'Failed to fetch events for {sel.calendar_name}: {e}')
+                continue
+
+            if events is None:
+                continue
+
+            for evt in events:
+                evt['calendar'] = sel.calendar_name
+                evt['calendar_color'] = sel.color or ''
+                all_events.append(evt)
+
+        all_events.sort(key=lambda e: e.get('start', ''))
+
+        return Response({'events': all_events, 'count': len(all_events)})
+
+
+class CalendarAddEventView(APIView):
+    """POST /api/calendar/add-event/ — create an event."""
+
+    def post(self, request):
+        account_id = request.data.get('account_id')
+        calendar_id = request.data.get('calendar_id')
+        title = request.data.get('title', '').strip()
+        start = request.data.get('start', '').strip()
+        end = request.data.get('end', '').strip()
+        location = request.data.get('location', '').strip()
+
+        if not title or not start or not account_id or not calendar_id:
+            return Response(
+                {'error': 'account_id, calendar_id, title, and start are required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            account = GoogleCalendarAccount.objects.get(
+                id=account_id, profile=request.profile,
+            )
+        except GoogleCalendarAccount.DoesNotExist:
+            return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        result = gcal.add_event_for_account(
+            account, calendar_id, title, start, end or start, location,
         )
         if result is None:
             return Response(
-                {'error': 'Not authenticated', 'authenticated': False},
+                {'error': 'Failed to create event — token may be expired'},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
         return Response(result, status=status.HTTP_201_CREATED)
