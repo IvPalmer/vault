@@ -4,28 +4,7 @@
    ───────────────────────────────────────────────────────── */
 
 .page {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
   padding-bottom: var(--space-xl);
-}
-
-.header {
-  padding: var(--space-sm) 0 0;
-}
-
-.pageTitle {
-  font-size: 1.5rem;
-  font-weight: 800;
-  color: var(--color-text);
-  margin: 0;
-  letter-spacing: -0.02em;
-}
-
-.pageSubtitle {
-  font-size: 0.82rem;
-  color: var(--color-text-secondary);
-  margin: 4px 0 0;
 }
 
 /* ─── KPI Card (individual stat widget) ────────────────── */

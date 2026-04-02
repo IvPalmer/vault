@@ -1207,12 +1207,6 @@ export default function PersonalOrganizer() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pessoal-notes'] }),
   })
 
-  const greeting = useMemo(() => {
-    const h = new Date().getHours()
-    if (h < 12) return 'Bom dia'
-    if (h < 18) return 'Boa tarde'
-    return 'Boa noite'
-  }, [])
 
 
   // KPI computations
@@ -1224,11 +1218,6 @@ export default function PersonalOrganizer() {
 
   return (
     <div className={styles.page}>
-      <header className={styles.header}>
-        <h2 className={styles.pageTitle}>{greeting}, {currentProfile?.name}</h2>
-        <p className={styles.pageSubtitle}>Pessoal</p>
-      </header>
-
       <div ref={gridRef} className={`grid-stack ${styles.gridContainer}`}>
         <div className="grid-stack-item" gs-id="kpi-hoje" gs-x="0" gs-y="0" gs-w="3" gs-h="2" gs-min-w="2" gs-min-h="1">
           <div className="grid-stack-item-content">
