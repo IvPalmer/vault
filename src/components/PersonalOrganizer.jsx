@@ -1100,7 +1100,7 @@ function PersonalReminders() {
 
 /* ── Grid Layout (gridstack) ──────────────────────────────── */
 
-const GRID_KEY = 'vault-pessoal-gridstack-v3'
+const GRID_KEY = 'vault-pessoal-gridstack-v4'
 
 const DEFAULT_ITEMS = [
   { id: 'kpi-hoje',      x: 0,  y: 0, w: 3, h: 2 },
