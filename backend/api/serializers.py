@@ -139,10 +139,8 @@ class GoogleCalendarAccountSerializer(serializers.ModelSerializer):
         fields = ['id', 'email', 'connected', 'created_at']
 
     def get_connected(self, obj):
-        """Check if the token is still valid/refreshable."""
-        from . import google_calendar as gcal
-        creds = gcal.get_credentials_for_account(obj)
-        return creds is not None
+        """Cheap heuristic: connected if refresh_token exists in token_data."""
+        return bool(obj.token_data and obj.token_data.get('refresh_token'))
 
 
 class CalendarSelectionSerializer(serializers.ModelSerializer):

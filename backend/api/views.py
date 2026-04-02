@@ -2672,7 +2672,7 @@ class CalendarEventsView(APIView):
         all_events = []
 
         for sel in selections:
-            cache_key = (sel.account_id, sel.calendar_id)
+            cache_key = sel.calendar_id
             if cache_key in seen:
                 continue
             seen.add(cache_key)

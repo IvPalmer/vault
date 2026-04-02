@@ -41,19 +41,6 @@ CREDENTIALS_FILE = os.path.join(BASE_DIR, 'credentials.json')
 DEFAULT_REDIRECT_URI = 'http://localhost:8001/api/calendar/oauth-callback/'
 
 
-def _detect_credential_type():
-    """Detect if credentials.json is 'web' or 'installed' type."""
-    if not os.path.exists(CREDENTIALS_FILE):
-        return None
-    with open(CREDENTIALS_FILE) as f:
-        data = json.load(f)
-    if 'web' in data:
-        return 'web'
-    if 'installed' in data:
-        return 'installed'
-    return None
-
-
 def get_credentials_for_account(account):
     """Load OAuth2 credentials from a GoogleCalendarAccount instance.
 
