@@ -1127,38 +1127,29 @@ function PersonalReminders() {
 
 /* ── Layout Persistence ───────────────────────────────────── */
 
-const STORAGE_KEY = 'vault-pessoal-layouts'
+const STORAGE_KEY = 'vault-pessoal-layouts-v2'
 
 const DEFAULT_LAYOUTS = {
   lg: [
-    { i: 'dashboard', x: 0, y: 0, w: 12, h: 2, static: true },
-    { i: 'capture',   x: 0, y: 2, w: 12, h: 2, static: true },
-    { i: 'projects',  x: 0, y: 4, w: 12, h: 2, static: true },
-    { i: 'tasks',     x: 0, y: 6, w: 5, h: 10, minW: 3, minH: 4 },
-    { i: 'calendar',  x: 5, y: 6, w: 4, h: 10, minW: 3, minH: 6 },
-    { i: 'reminders', x: 9, y: 6, w: 3, h: 6,  minW: 2, minH: 3 },
-    { i: 'events',    x: 5, y: 16, w: 4, h: 6, minW: 2, minH: 3 },
-    { i: 'notes',     x: 9, y: 12, w: 3, h: 6, minW: 2, minH: 3 },
+    { i: 'tasks',     x: 0, y: 0,  w: 5,  h: 12, minW: 3, minH: 4 },
+    { i: 'calendar',  x: 5, y: 0,  w: 4,  h: 12, minW: 3, minH: 6 },
+    { i: 'reminders', x: 9, y: 0,  w: 3,  h: 8,  minW: 2, minH: 3 },
+    { i: 'notes',     x: 9, y: 8,  w: 3,  h: 6,  minW: 2, minH: 3 },
+    { i: 'events',    x: 5, y: 12, w: 4,  h: 6,  minW: 2, minH: 3 },
   ],
   md: [
-    { i: 'dashboard', x: 0, y: 0, w: 10, h: 2, static: true },
-    { i: 'capture',   x: 0, y: 2, w: 10, h: 2, static: true },
-    { i: 'projects',  x: 0, y: 4, w: 10, h: 2, static: true },
-    { i: 'tasks',     x: 0, y: 6, w: 5, h: 10, minW: 3, minH: 4 },
-    { i: 'calendar',  x: 5, y: 6, w: 5, h: 10, minW: 3, minH: 6 },
-    { i: 'reminders', x: 0, y: 16, w: 5, h: 6, minW: 2, minH: 3 },
-    { i: 'events',    x: 5, y: 16, w: 5, h: 6, minW: 2, minH: 3 },
-    { i: 'notes',     x: 0, y: 22, w: 10, h: 5, minW: 2, minH: 3 },
+    { i: 'tasks',     x: 0, y: 0,  w: 5, h: 12, minW: 3, minH: 4 },
+    { i: 'calendar',  x: 5, y: 0,  w: 5, h: 12, minW: 3, minH: 6 },
+    { i: 'reminders', x: 0, y: 12, w: 5, h: 7,  minW: 2, minH: 3 },
+    { i: 'events',    x: 5, y: 12, w: 5, h: 7,  minW: 2, minH: 3 },
+    { i: 'notes',     x: 0, y: 19, w: 10, h: 5, minW: 2, minH: 3 },
   ],
   sm: [
-    { i: 'dashboard', x: 0, y: 0, w: 6, h: 2, static: true },
-    { i: 'capture',   x: 0, y: 2, w: 6, h: 3, static: true },
-    { i: 'projects',  x: 0, y: 5, w: 6, h: 2, static: true },
-    { i: 'tasks',     x: 0, y: 7, w: 6, h: 8, minW: 3, minH: 4 },
-    { i: 'calendar',  x: 0, y: 15, w: 6, h: 10, minW: 3, minH: 6 },
-    { i: 'events',    x: 0, y: 25, w: 6, h: 6, minW: 2, minH: 3 },
-    { i: 'reminders', x: 0, y: 31, w: 6, h: 6, minW: 2, minH: 3 },
-    { i: 'notes',     x: 0, y: 37, w: 6, h: 5, minW: 2, minH: 3 },
+    { i: 'tasks',     x: 0, y: 0,  w: 6, h: 10, minW: 3, minH: 4 },
+    { i: 'calendar',  x: 0, y: 10, w: 6, h: 12, minW: 3, minH: 6 },
+    { i: 'events',    x: 0, y: 22, w: 6, h: 6,  minW: 2, minH: 3 },
+    { i: 'reminders', x: 0, y: 28, w: 6, h: 7,  minW: 2, minH: 3 },
+    { i: 'notes',     x: 0, y: 35, w: 6, h: 5,  minW: 2, minH: 3 },
   ],
 }
 
@@ -1244,6 +1235,20 @@ export default function PersonalOrganizer() {
         </button>
       </header>
 
+      <DashboardCards tasks={tasks} projects={projects} />
+
+      <QuickCapture
+        onAddTask={(data) => addTaskMutation.mutate(data)}
+        onAddNote={(data) => addNoteMutation.mutate(data)}
+        projects={projects}
+      />
+
+      <ProjectsBar
+        projects={projects}
+        activeProject={activeProject}
+        onSelectProject={setActiveProject}
+      />
+
       <ResponsiveGridLayout
         className={styles.gridLayout}
         layouts={layouts}
@@ -1254,29 +1259,8 @@ export default function PersonalOrganizer() {
         draggableHandle={`.${styles.widgetDragHandle}`}
         margin={[12, 12]}
         containerPadding={[0, 0]}
-        useCSSTransforms={true}
         compactType="vertical"
       >
-        <div key="dashboard">
-          <DashboardCards tasks={tasks} projects={projects} />
-        </div>
-
-        <div key="capture">
-          <QuickCapture
-            onAddTask={(data) => addTaskMutation.mutate(data)}
-            onAddNote={(data) => addNoteMutation.mutate(data)}
-            projects={projects}
-          />
-        </div>
-
-        <div key="projects">
-          <ProjectsBar
-            projects={projects}
-            activeProject={activeProject}
-            onSelectProject={setActiveProject}
-          />
-        </div>
-
         <div key="tasks" className={styles.gridCell}>
           <DragHandle />
           <TaskList activeProject={activeProject} />
