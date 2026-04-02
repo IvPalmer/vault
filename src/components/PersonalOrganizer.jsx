@@ -2,10 +2,13 @@
  * PersonalOrganizer.jsx — Pessoal (personal organizer) page.
  *
  * Profile-scoped dashboard with:
- *   - Personal tasks (with project grouping)
- *   - Personal notes
+ *   - Dashboard summary cards
+ *   - Enhanced quick capture (task w/ due date & priority, note w/ content)
+ *   - Full-featured task list with expandable rows, status cycling, project grouping
+ *   - Horizontal scrollable project cards
+ *   - Personal notes with project color-coding
  *   - Calendar (personal context — profile's selected calendars)
- *   - Quick capture input
+ *   - Reminders (Apple sidecar)
  */
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -61,104 +64,559 @@ function formatDueDate(dateStr) {
 }
 
 const PRIORITY_LABELS = { 0: '', 1: '!', 2: '!!', 3: '!!!' }
-const PRIORITY_COLORS = { 0: '', 1: 'var(--color-text-secondary)', 2: 'var(--color-accent)', 3: 'var(--color-red)' }
+const PRIORITY_COLORS = { 0: 'transparent', 1: '#4caf50', 2: 'var(--color-accent)', 3: 'var(--color-red)' }
+const STATUS_LABELS = { todo: 'A fazer', doing: 'Fazendo', done: 'Feita' }
 
-/* ── Quick Capture ───────────────────────────────────────── */
+/* ── Dashboard Summary Cards ────────────────────────────── */
 
-function QuickCapture({ onAddTask, onAddNote }) {
-  const [value, setValue] = useState('')
-  const [mode, setMode] = useState('task') // 'task' or 'note'
+function DashboardCards({ tasks, projects }) {
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const allTasks = tasks || []
+  const activeTasks = allTasks.filter((t) => t.status !== 'done')
+  const todayTasks = activeTasks.filter((t) => t.due_date === todayStr)
+  const overdueTasks = activeTasks.filter((t) => {
+    if (!t.due_date) return false
+    return t.due_date < todayStr
+  })
+  const activeProjects = (projects || []).filter((p) => p.status === 'active')
+
+  const cards = [
+    { label: 'Hoje', value: todayTasks.length, accent: false },
+    { label: 'Atrasadas', value: overdueTasks.length, accent: overdueTasks.length > 0, danger: overdueTasks.length > 0 },
+    { label: 'Ativas', value: activeTasks.length, accent: false },
+    { label: 'Projetos', value: activeProjects.length, accent: false },
+  ]
+
+  return (
+    <div className={styles.dashboardCards}>
+      {cards.map((c) => (
+        <div
+          key={c.label}
+          className={`${styles.dashCard} ${c.danger ? styles.dashCardDanger : ''}`}
+        >
+          <span className={styles.dashCardValue}>{c.value}</span>
+          <span className={styles.dashCardLabel}>{c.label}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/* ── Enhanced Quick Capture ─────────────────────────────── */
+
+function QuickCapture({ onAddTask, onAddNote, projects }) {
+  const [mode, setMode] = useState('task')
+  const [title, setTitle] = useState('')
+  const [dueDate, setDueDate] = useState('')
+  const [priority, setPriority] = useState(0)
+  const [projectId, setProjectId] = useState('')
+  const [noteContent, setNoteContent] = useState('')
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    if (!value.trim()) return
     if (mode === 'task') {
-      onAddTask(value.trim())
+      if (!title.trim()) return
+      onAddTask({
+        title: title.trim(),
+        due_date: dueDate || undefined,
+        priority,
+        project: projectId || undefined,
+      })
+      setTitle('')
+      setDueDate('')
+      setPriority(0)
+      setProjectId('')
     } else {
-      onAddNote(value.trim())
+      if (!title.trim() && !noteContent.trim()) return
+      onAddNote({
+        title: title.trim() || undefined,
+        content: noteContent.trim() || title.trim(),
+        project: projectId || undefined,
+      })
+      setTitle('')
+      setNoteContent('')
+      setProjectId('')
     }
-    setValue('')
   }
 
   return (
     <form onSubmit={handleSubmit} className={styles.quickCapture}>
-      <div className={styles.captureToggle}>
+      <div className={styles.captureRow}>
+        <div className={styles.captureToggle}>
+          <button
+            type="button"
+            className={`${styles.captureToggleBtn} ${mode === 'task' ? styles.captureToggleActive : ''}`}
+            onClick={() => setMode('task')}
+          >
+            Tarefa
+          </button>
+          <button
+            type="button"
+            className={`${styles.captureToggleBtn} ${mode === 'note' ? styles.captureToggleActive : ''}`}
+            onClick={() => setMode('note')}
+          >
+            Nota
+          </button>
+        </div>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder={mode === 'task' ? 'Nova tarefa...' : 'Titulo da nota...'}
+          className={styles.captureInput}
+        />
         <button
-          type="button"
-          className={`${styles.captureToggleBtn} ${mode === 'task' ? styles.captureToggleActive : ''}`}
-          onClick={() => setMode('task')}
+          type="submit"
+          className={styles.captureBtn}
+          disabled={mode === 'task' ? !title.trim() : (!title.trim() && !noteContent.trim())}
         >
-          Tarefa
-        </button>
-        <button
-          type="button"
-          className={`${styles.captureToggleBtn} ${mode === 'note' ? styles.captureToggleActive : ''}`}
-          onClick={() => setMode('note')}
-        >
-          Nota
+          +
         </button>
       </div>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder={mode === 'task' ? 'Nova tarefa...' : 'Nova nota...'}
-        className={styles.captureInput}
-      />
-      <button type="submit" className={styles.captureBtn} disabled={!value.trim()}>
-        +
-      </button>
+
+      <div className={styles.captureOptions}>
+        {mode === 'task' && (
+          <>
+            <input
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className={styles.captureDateInput}
+              title="Data de vencimento"
+            />
+            <div className={styles.priorityPicker}>
+              {[1, 2, 3].map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className={`${styles.priorityBtn} ${priority === p ? styles.priorityBtnActive : ''}`}
+                  style={priority === p ? { background: PRIORITY_COLORS[p], color: 'white' } : {}}
+                  onClick={() => setPriority(priority === p ? 0 : p)}
+                  title={`Prioridade ${p}`}
+                >
+                  {'!'.repeat(p)}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {mode === 'note' && (
+          <textarea
+            value={noteContent}
+            onChange={(e) => setNoteContent(e.target.value)}
+            placeholder="Conteudo da nota..."
+            className={styles.captureTextarea}
+            rows={2}
+          />
+        )}
+
+        {projects && projects.length > 0 && (
+          <select
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+            className={styles.captureSelect}
+          >
+            <option value="">Sem projeto</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        )}
+      </div>
     </form>
   )
 }
 
-/* ── Task List ───────────────────────────────────────────── */
+/* ── Projects Bar ───────────────────────────────────────── */
 
-function TaskList() {
+function ProjectsBar({ projects, activeProject, onSelectProject }) {
   const queryClient = useQueryClient()
-  const [filter, setFilter] = useState('active') // 'active' | 'done' | 'all'
-  const [editingId, setEditingId] = useState(null)
-  const [editTitle, setEditTitle] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newColor, setNewColor] = useState('#b86530')
+
+  const COLORS = ['#b86530', '#4caf50', '#2196f3', '#9c27b0', '#f44336', '#ff9800', '#00bcd4', '#607d8b']
+
+  const createMutation = useMutation({
+    mutationFn: (data) => api.post('/pessoal/projects/', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pessoal-projects'] })
+      setCreating(false)
+      setNewName('')
+    },
+  })
+
+  const handleCreate = (e) => {
+    e.preventDefault()
+    if (!newName.trim()) return
+    createMutation.mutate({ name: newName.trim(), color: newColor })
+  }
+
+  return (
+    <div className={styles.projectsBar}>
+      <div className={styles.projectsScroll}>
+        <button
+          className={`${styles.projectCard} ${!activeProject ? styles.projectCardActive : ''}`}
+          onClick={() => onSelectProject(null)}
+        >
+          <span className={styles.projectDot} style={{ background: 'var(--color-text-secondary)' }} />
+          <span className={styles.projectCardName}>Todos</span>
+        </button>
+
+        {(projects || []).map((p) => {
+          const isActive = activeProject === p.id
+          const pct = p.task_count > 0
+            ? Math.round(((p.done_count || 0) / p.task_count) * 100)
+            : 0
+          return (
+            <button
+              key={p.id}
+              className={`${styles.projectCard} ${isActive ? styles.projectCardActive : ''}`}
+              onClick={() => onSelectProject(isActive ? null : p.id)}
+            >
+              <span className={styles.projectDot} style={{ background: p.color || '#888' }} />
+              <span className={styles.projectCardName}>{p.name}</span>
+              {p.task_count > 0 && (
+                <span className={styles.projectCardCount}>{p.task_count}</span>
+              )}
+              {p.task_count > 0 && (
+                <div className={styles.projectProgress}>
+                  <div className={styles.projectProgressFill} style={{ width: `${pct}%`, background: p.color || 'var(--color-accent)' }} />
+                </div>
+              )}
+            </button>
+          )
+        })}
+
+        {creating ? (
+          <form className={styles.projectCreateForm} onSubmit={handleCreate}>
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Nome..."
+              className={styles.projectCreateInput}
+              autoFocus
+              onKeyDown={(e) => { if (e.key === 'Escape') setCreating(false) }}
+            />
+            <div className={styles.projectColorPicker}>
+              {COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`${styles.projectColorDot} ${newColor === c ? styles.projectColorDotActive : ''}`}
+                  style={{ background: c }}
+                  onClick={() => setNewColor(c)}
+                />
+              ))}
+            </div>
+            <button type="submit" className={styles.projectCreateSubmit} disabled={!newName.trim()}>
+              OK
+            </button>
+          </form>
+        ) : (
+          <button className={styles.projectAddBtn} onClick={() => setCreating(true)}>
+            + Projeto
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ── Task List — Full Featured ──────────────────────────── */
+
+function TaskList({ activeProject }) {
+  const queryClient = useQueryClient()
+  const [filter, setFilter] = useState('active') // 'active' | 'doing' | 'done'
+  const [groupBy, setGroupBy] = useState('all') // 'all' | 'project'
+  const [expandedId, setExpandedId] = useState(null)
+  const [editFields, setEditFields] = useState({})
 
   const { data, isLoading } = useQuery({
     queryKey: ['pessoal-tasks'],
     queryFn: () => api.get('/pessoal/tasks/'),
   })
 
-  const tasks = useMemo(() => {
-    const list = data?.results || data || []
-    if (filter === 'active') return list.filter((t) => t.status !== 'done')
-    if (filter === 'done') return list.filter((t) => t.status === 'done')
-    return list
-  }, [data, filter])
+  const { data: projectsData } = useQuery({
+    queryKey: ['pessoal-projects'],
+    queryFn: () => api.get('/pessoal/projects/'),
+  })
 
-  const toggleMutation = useMutation({
-    mutationFn: ({ id, status }) =>
-      api.patch(`/pessoal/tasks/${id}/`, { status: status === 'done' ? 'todo' : 'done' }),
+  const projects = projectsData?.results || projectsData || []
+
+  const allTasks = useMemo(() => {
+    let list = data?.results || data || []
+    if (activeProject) list = list.filter((t) => t.project === activeProject)
+    return list
+  }, [data, activeProject])
+
+  const tasks = useMemo(() => {
+    if (filter === 'active') return allTasks.filter((t) => t.status === 'todo' || t.status === 'doing')
+    if (filter === 'doing') return allTasks.filter((t) => t.status === 'doing')
+    if (filter === 'done') return allTasks.filter((t) => t.status === 'done')
+    return allTasks
+  }, [allTasks, filter])
+
+  const groupedTasks = useMemo(() => {
+    if (groupBy !== 'project') return null
+    const groups = {}
+    const noProject = []
+    tasks.forEach((t) => {
+      if (t.project_name) {
+        if (!groups[t.project_name]) groups[t.project_name] = { tasks: [], color: null }
+        groups[t.project_name].tasks.push(t)
+        // find color from projects
+        const proj = projects.find((p) => p.id === t.project)
+        if (proj) groups[t.project_name].color = proj.color
+      } else {
+        noProject.push(t)
+      }
+    })
+    return { groups, noProject }
+  }, [tasks, groupBy, projects])
+
+  const cycleMutation = useMutation({
+    mutationFn: ({ id, status }) => {
+      const next = status === 'todo' ? 'doing' : status === 'doing' ? 'done' : 'todo'
+      return api.patch(`/pessoal/tasks/${id}/`, { status: next })
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pessoal-tasks'] }),
   })
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, ...data }) => api.patch(`/pessoal/tasks/${id}/`, data),
+    mutationFn: ({ id, ...d }) => api.patch(`/pessoal/tasks/${id}/`, d),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['pessoal-tasks'] })
-      setEditingId(null)
+      queryClient.invalidateQueries({ queryKey: ['pessoal-projects'] })
     },
   })
 
   const deleteMutation = useMutation({
     mutationFn: (id) => api.delete(`/pessoal/tasks/${id}/`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pessoal-tasks'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pessoal-tasks'] })
+      queryClient.invalidateQueries({ queryKey: ['pessoal-projects'] })
+    },
   })
 
-  const activeCount = (data?.results || data || []).filter((t) => t.status !== 'done').length
-  const doneCount = (data?.results || data || []).filter((t) => t.status === 'done').length
+  const activeCount = allTasks.filter((t) => t.status !== 'done').length
+  const doingCount = allTasks.filter((t) => t.status === 'doing').length
+  const doneCount = allTasks.filter((t) => t.status === 'done').length
+
+  const expandTask = (task) => {
+    if (expandedId === task.id) {
+      setExpandedId(null)
+    } else {
+      setExpandedId(task.id)
+      setEditFields({
+        title: task.title,
+        notes: task.notes || '',
+        due_date: task.due_date || '',
+        priority: task.priority || 0,
+        project: task.project || '',
+        status: task.status || 'todo',
+      })
+    }
+  }
+
+  const saveExpanded = (id) => {
+    const updates = {}
+    const task = allTasks.find((t) => t.id === id)
+    if (!task) return
+    if (editFields.title !== task.title) updates.title = editFields.title
+    if (editFields.notes !== (task.notes || '')) updates.notes = editFields.notes
+    if (editFields.due_date !== (task.due_date || '')) updates.due_date = editFields.due_date || null
+    if (editFields.priority !== (task.priority || 0)) updates.priority = editFields.priority
+    if (editFields.project !== (task.project || '')) updates.project = editFields.project || null
+    if (editFields.status !== (task.status || 'todo')) updates.status = editFields.status
+    if (Object.keys(updates).length > 0) {
+      updateMutation.mutate({ id, ...updates })
+    }
+    setExpandedId(null)
+  }
+
+  const renderStatusIcon = (status) => {
+    if (status === 'done') {
+      return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="var(--color-accent)" stroke="var(--color-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="16 8 10 16 7 13" stroke="white" />
+        </svg>
+      )
+    }
+    if (status === 'doing') {
+      return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 2 A10 10 0 0 1 22 12" fill="var(--color-accent)" stroke="none" />
+        </svg>
+      )
+    }
+    return (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" />
+      </svg>
+    )
+  }
+
+  const renderTask = (task) => {
+    const due = formatDueDate(task.due_date)
+    const isExpanded = expandedId === task.id
+    const borderColor = PRIORITY_COLORS[task.priority || 0]
+
+    return (
+      <div key={task.id} className={`${styles.taskItem} ${task.status === 'done' ? styles.taskDone : ''}`} style={{ borderLeft: `3px solid ${borderColor}` }}>
+        <div className={styles.taskMainRow}>
+          <button
+            className={styles.checkBtn}
+            onClick={(e) => { e.stopPropagation(); cycleMutation.mutate({ id: task.id, status: task.status }) }}
+            title={STATUS_LABELS[task.status === 'todo' ? 'doing' : task.status === 'doing' ? 'done' : 'todo']}
+          >
+            {renderStatusIcon(task.status)}
+          </button>
+
+          <div className={styles.taskContent} onClick={() => expandTask(task)}>
+            <span className={styles.taskTitle}>{task.title}</span>
+            <div className={styles.taskMeta}>
+              {task.priority > 0 && (
+                <span style={{ color: PRIORITY_COLORS[task.priority], fontWeight: 700, fontSize: '0.7rem' }}>
+                  {PRIORITY_LABELS[task.priority]}
+                </span>
+              )}
+              {due && (
+                <span className={`${styles.taskDue} ${due.overdue ? styles.taskOverdue : ''}`}>
+                  {due.text}
+                </span>
+              )}
+              {task.project_name && groupBy !== 'project' && (
+                <span className={styles.taskProject}>{task.project_name}</span>
+              )}
+              {task.notes && (
+                <span className={styles.taskHasNotes} title="Tem notas">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                </span>
+              )}
+            </div>
+          </div>
+
+          <button
+            className={styles.taskDeleteBtn}
+            onClick={(e) => { e.stopPropagation(); deleteMutation.mutate(task.id) }}
+            title="Excluir"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        {isExpanded && (
+          <div className={styles.taskExpanded}>
+            <div className={styles.taskExpandedField}>
+              <label className={styles.taskFieldLabel}>Titulo</label>
+              <input
+                className={styles.taskEditInput}
+                value={editFields.title}
+                onChange={(e) => setEditFields({ ...editFields, title: e.target.value })}
+              />
+            </div>
+            <div className={styles.taskExpandedField}>
+              <label className={styles.taskFieldLabel}>Notas</label>
+              <textarea
+                className={styles.taskEditTextarea}
+                value={editFields.notes}
+                onChange={(e) => setEditFields({ ...editFields, notes: e.target.value })}
+                rows={2}
+              />
+            </div>
+            <div className={styles.taskExpandedRow}>
+              <div className={styles.taskExpandedField}>
+                <label className={styles.taskFieldLabel}>Vencimento</label>
+                <input
+                  type="date"
+                  className={styles.taskEditInput}
+                  value={editFields.due_date}
+                  onChange={(e) => setEditFields({ ...editFields, due_date: e.target.value })}
+                />
+              </div>
+              <div className={styles.taskExpandedField}>
+                <label className={styles.taskFieldLabel}>Prioridade</label>
+                <div className={styles.priorityPicker}>
+                  {[0, 1, 2, 3].map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      className={`${styles.priorityBtn} ${editFields.priority === p ? styles.priorityBtnActive : ''}`}
+                      style={editFields.priority === p && p > 0 ? { background: PRIORITY_COLORS[p], color: 'white' } : {}}
+                      onClick={() => setEditFields({ ...editFields, priority: p })}
+                    >
+                      {p === 0 ? '-' : '!'.repeat(p)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className={styles.taskExpandedField}>
+                <label className={styles.taskFieldLabel}>Status</label>
+                <select
+                  className={styles.taskEditSelect}
+                  value={editFields.status}
+                  onChange={(e) => setEditFields({ ...editFields, status: e.target.value })}
+                >
+                  <option value="todo">A fazer</option>
+                  <option value="doing">Fazendo</option>
+                  <option value="done">Feita</option>
+                </select>
+              </div>
+            </div>
+            {projects.length > 0 && (
+              <div className={styles.taskExpandedField}>
+                <label className={styles.taskFieldLabel}>Projeto</label>
+                <select
+                  className={styles.taskEditSelect}
+                  value={editFields.project}
+                  onChange={(e) => setEditFields({ ...editFields, project: e.target.value })}
+                >
+                  <option value="">Sem projeto</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className={styles.taskExpandedActions}>
+              <button className={styles.taskSaveBtn} onClick={() => saveExpanded(task.id)}>
+                Salvar
+              </button>
+              <button className={styles.taskCancelBtn} onClick={() => setExpandedId(null)}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const renderTaskList = (taskArr) => taskArr.map(renderTask)
 
   return (
     <div className={styles.widget}>
       <div className={styles.widgetHeader}>
         <h3 className={styles.widgetTitle}>TAREFAS</h3>
-        {activeCount > 0 && <span className={styles.badge}>{activeCount}</span>}
+        <div className={styles.widgetHeaderRight}>
+          <button
+            className={`${styles.groupToggle} ${groupBy === 'project' ? styles.groupToggleActive : ''}`}
+            onClick={() => setGroupBy(groupBy === 'all' ? 'project' : 'all')}
+            title={groupBy === 'all' ? 'Agrupar por projeto' : 'Visualizacao plana'}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+            </svg>
+          </button>
+          {activeCount > 0 && <span className={styles.badge}>{activeCount}</span>}
+        </div>
       </div>
 
       <div className={styles.filterTabs}>
@@ -167,6 +625,12 @@ function TaskList() {
           onClick={() => setFilter('active')}
         >
           Ativas {activeCount > 0 && `(${activeCount})`}
+        </button>
+        <button
+          className={`${styles.filterTab} ${filter === 'doing' ? styles.filterTabActive : ''}`}
+          onClick={() => setFilter('doing')}
+        >
+          Fazendo {doingCount > 0 && `(${doingCount})`}
         </button>
         <button
           className={`${styles.filterTab} ${filter === 'done' ? styles.filterTabActive : ''}`}
@@ -178,90 +642,37 @@ function TaskList() {
 
       <div className={styles.taskList}>
         {isLoading && <div className={styles.emptyState}>Carregando...</div>}
-        {tasks.map((task) => {
-          const due = formatDueDate(task.due_date)
-          return (
-            <div key={task.id} className={`${styles.taskItem} ${task.status === 'done' ? styles.taskDone : ''}`}>
-              <button
-                className={styles.checkBtn}
-                onClick={() => toggleMutation.mutate({ id: task.id, status: task.status })}
-                title={task.status === 'done' ? 'Reabrir' : 'Concluir'}
-              >
-                {task.status === 'done' ? (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="var(--color-accent)" stroke="var(--color-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10" />
-                    <polyline points="16 8 10 16 7 13" stroke="white" />
-                  </svg>
-                ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10" />
-                  </svg>
-                )}
-              </button>
 
-              <div className={styles.taskContent}>
-                {editingId === task.id ? (
-                  <input
-                    className={styles.taskEditInput}
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    onBlur={() => {
-                      if (editTitle.trim() && editTitle !== task.title) {
-                        updateMutation.mutate({ id: task.id, title: editTitle.trim() })
-                      } else {
-                        setEditingId(null)
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') e.target.blur()
-                      if (e.key === 'Escape') setEditingId(null)
-                    }}
-                    autoFocus
-                  />
-                ) : (
-                  <span
-                    className={styles.taskTitle}
-                    onClick={() => {
-                      setEditingId(task.id)
-                      setEditTitle(task.title)
-                    }}
-                  >
-                    {task.title}
-                  </span>
-                )}
+        {!isLoading && groupBy === 'all' && renderTaskList(tasks)}
 
-                <div className={styles.taskMeta}>
-                  {task.priority > 0 && (
-                    <span style={{ color: PRIORITY_COLORS[task.priority], fontWeight: 700, fontSize: '0.7rem' }}>
-                      {PRIORITY_LABELS[task.priority]}
-                    </span>
-                  )}
-                  {due && (
-                    <span className={`${styles.taskDue} ${due.overdue ? styles.taskOverdue : ''}`}>
-                      {due.text}
-                    </span>
-                  )}
-                  {task.project_name && (
-                    <span className={styles.taskProject}>{task.project_name}</span>
-                  )}
+        {!isLoading && groupBy === 'project' && groupedTasks && (
+          <>
+            {Object.entries(groupedTasks.groups).map(([name, group]) => (
+              <div key={name}>
+                <div className={styles.taskGroupHeader}>
+                  <span className={styles.projectDot} style={{ background: group.color || '#888' }} />
+                  <span className={styles.taskGroupName}>{name}</span>
+                  <span className={styles.taskGroupCount}>{group.tasks.length}</span>
                 </div>
+                {renderTaskList(group.tasks)}
               </div>
+            ))}
+            {groupedTasks.noProject.length > 0 && (
+              <div>
+                <div className={styles.taskGroupHeader}>
+                  <span className={styles.projectDot} style={{ background: 'var(--color-text-secondary)' }} />
+                  <span className={styles.taskGroupName}>Sem projeto</span>
+                  <span className={styles.taskGroupCount}>{groupedTasks.noProject.length}</span>
+                </div>
+                {renderTaskList(groupedTasks.noProject)}
+              </div>
+            )}
+          </>
+        )}
 
-              <button
-                className={styles.taskDeleteBtn}
-                onClick={() => deleteMutation.mutate(task.id)}
-                title="Excluir"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-          )
-        })}
         {tasks.length === 0 && !isLoading && (
           <div className={styles.emptyState}>
-            {filter === 'done' ? 'Nenhuma tarefa concluida' : 'Nenhuma tarefa pendente'}
+            {filter === 'done' ? 'Nenhuma tarefa concluida' : filter === 'doing' ? 'Nenhuma tarefa em andamento' : 'Nenhuma tarefa pendente'}
           </div>
         )}
       </div>
@@ -269,19 +680,25 @@ function TaskList() {
   )
 }
 
-/* ── Notes List ──────────────────────────────────────────── */
+/* ── Notes List — Enhanced ──────────────────────────────── */
 
-function NotesList() {
+function NotesList({ activeProject, projects }) {
   const queryClient = useQueryClient()
   const [editId, setEditId] = useState(null)
   const [editContent, setEditContent] = useState('')
+  const [editTitle, setEditTitle] = useState('')
+  const [expandedId, setExpandedId] = useState(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['pessoal-notes'],
     queryFn: () => api.get('/pessoal/notes/'),
   })
 
-  const notes = data?.results || data || []
+  const notes = useMemo(() => {
+    let list = data?.results || data || []
+    if (activeProject) list = list.filter((n) => n.project === activeProject)
+    return list
+  }, [data, activeProject])
 
   const updateMutation = useMutation({
     mutationFn: ({ id, ...d }) => api.patch(`/pessoal/notes/${id}/`, d),
@@ -301,6 +718,12 @@ function NotesList() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pessoal-notes'] }),
   })
 
+  const getProjectColor = (projectId) => {
+    if (!projectId || !projects) return 'transparent'
+    const p = projects.find((proj) => proj.id === projectId)
+    return p?.color || 'transparent'
+  }
+
   return (
     <div className={styles.widget}>
       <div className={styles.widgetHeader}>
@@ -310,73 +733,93 @@ function NotesList() {
 
       <div className={styles.notesList}>
         {isLoading && <div className={styles.emptyState}>Carregando...</div>}
-        {notes.map((note) => (
-          <div key={note.id} className={`${styles.noteCard} ${note.pinned ? styles.notePinned : ''}`}>
-            <div className={styles.noteTop}>
-              <span className={styles.noteTime}>{timeAgo(note.updated_at)}</span>
-              <div className={styles.noteActions}>
-                <button
-                  className={styles.noteActionBtn}
-                  onClick={() => togglePinMutation.mutate({ id: note.id, pinned: note.pinned })}
-                  title={note.pinned ? 'Desafixar' : 'Fixar'}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill={note.pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={note.pinned ? 1 : 2} strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M16 2L21 7L15 13L19 17H5L9 13L3 7L8 2L12 6L16 2Z" />
-                  </svg>
-                </button>
-                <button
-                  className={styles.noteActionBtn}
-                  onClick={() => {
-                    if (editId === note.id) { setEditId(null) }
-                    else { setEditId(note.id); setEditContent(note.content) }
-                  }}
-                  title="Editar"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
-                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
-                  </svg>
-                </button>
-                <button
-                  className={styles.noteActionBtn}
-                  onClick={() => deleteMutation.mutate(note.id)}
-                  title="Excluir"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="3 6 5 6 21 6" />
-                    <path d="M19 6l-1.5 14a2 2 0 01-2 2h-7a2 2 0 01-2-2L5 6" />
-                  </svg>
-                </button>
+        {notes.map((note) => {
+          const isExpanded = expandedId === note.id
+          const projColor = getProjectColor(note.project)
+          return (
+            <div
+              key={note.id}
+              className={`${styles.noteCard} ${note.pinned ? styles.notePinned : ''}`}
+              style={{ borderLeft: `3px solid ${projColor}` }}
+            >
+              <div className={styles.noteTop}>
+                <span className={styles.noteTime}>{timeAgo(note.updated_at)}</span>
+                <div className={styles.noteActions}>
+                  <button
+                    className={styles.noteActionBtn}
+                    onClick={() => togglePinMutation.mutate({ id: note.id, pinned: note.pinned })}
+                    title={note.pinned ? 'Desafixar' : 'Fixar'}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill={note.pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={note.pinned ? 1 : 2} strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M16 2L21 7L15 13L19 17H5L9 13L3 7L8 2L12 6L16 2Z" />
+                    </svg>
+                  </button>
+                  <button
+                    className={styles.noteActionBtn}
+                    onClick={() => {
+                      if (editId === note.id) { setEditId(null) }
+                      else { setEditId(note.id); setEditContent(note.content); setEditTitle(note.title || '') }
+                    }}
+                    title="Editar"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                  </button>
+                  <button
+                    className={styles.noteActionBtn}
+                    onClick={() => deleteMutation.mutate(note.id)}
+                    title="Excluir"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6l-1.5 14a2 2 0 01-2 2h-7a2 2 0 01-2-2L5 6" />
+                    </svg>
+                  </button>
+                </div>
               </div>
+
+              {note.title && <h4 className={styles.noteTitle}>{note.title}</h4>}
+
+              {editId === note.id ? (
+                <div className={styles.noteEditWrap}>
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    placeholder="Titulo..."
+                    className={styles.taskEditInput}
+                  />
+                  <textarea
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    className={styles.noteTextarea}
+                    rows={3}
+                    autoFocus
+                  />
+                  <button
+                    className={styles.noteSaveBtn}
+                    onClick={() => updateMutation.mutate({ id: note.id, content: editContent, title: editTitle || null })}
+                  >
+                    Salvar
+                  </button>
+                </div>
+              ) : (
+                <p
+                  className={`${styles.noteBody} ${!isExpanded ? styles.noteBodyTruncated : ''}`}
+                  onClick={() => setExpandedId(isExpanded ? null : note.id)}
+                >
+                  {note.content}
+                </p>
+              )}
+
+              {note.project_name && (
+                <span className={styles.noteProject}>{note.project_name}</span>
+              )}
             </div>
-
-            {note.title && <h4 className={styles.noteTitle}>{note.title}</h4>}
-
-            {editId === note.id ? (
-              <div className={styles.noteEditWrap}>
-                <textarea
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
-                  className={styles.noteTextarea}
-                  rows={3}
-                  autoFocus
-                />
-                <button
-                  className={styles.noteSaveBtn}
-                  onClick={() => updateMutation.mutate({ id: note.id, content: editContent })}
-                >
-                  Salvar
-                </button>
-              </div>
-            ) : (
-              <p className={styles.noteBody}>{note.content}</p>
-            )}
-
-            {note.project_name && (
-              <span className={styles.noteProject}>{note.project_name}</span>
-            )}
-          </div>
-        ))}
+          )
+        })}
         {notes.length === 0 && !isLoading && (
           <div className={styles.emptyState}>Nenhuma nota pessoal</div>
         )}
@@ -680,38 +1123,73 @@ function PersonalReminders() {
 export default function PersonalOrganizer() {
   const { currentProfile } = useProfile()
   const queryClient = useQueryClient()
+  const [activeProject, setActiveProject] = useState(null)
+
+  const { data: tasksData } = useQuery({
+    queryKey: ['pessoal-tasks'],
+    queryFn: () => api.get('/pessoal/tasks/'),
+  })
+
+  const { data: projectsData } = useQuery({
+    queryKey: ['pessoal-projects'],
+    queryFn: () => api.get('/pessoal/projects/'),
+  })
+
+  const tasks = tasksData?.results || tasksData || []
+  const projects = projectsData?.results || projectsData || []
 
   const addTaskMutation = useMutation({
-    mutationFn: (title) => api.post('/pessoal/tasks/', { title }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pessoal-tasks'] }),
+    mutationFn: (data) => api.post('/pessoal/tasks/', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pessoal-tasks'] })
+      queryClient.invalidateQueries({ queryKey: ['pessoal-projects'] })
+    },
   })
 
   const addNoteMutation = useMutation({
-    mutationFn: (content) => api.post('/pessoal/notes/', { content }),
+    mutationFn: (data) => api.post('/pessoal/notes/', data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pessoal-notes'] }),
   })
+
+  const greeting = useMemo(() => {
+    const h = new Date().getHours()
+    if (h < 12) return 'Bom dia'
+    if (h < 18) return 'Boa tarde'
+    return 'Boa noite'
+  }, [])
 
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <h2 className={styles.pageTitle}>Pessoal</h2>
-        <p className={styles.pageSubtitle}>{currentProfile?.name}</p>
+        <h2 className={styles.pageTitle}>{greeting}, {currentProfile?.name}</h2>
+        <p className={styles.pageSubtitle}>Pessoal</p>
       </header>
 
+      <DashboardCards tasks={tasks} projects={projects} />
+
       <QuickCapture
-        onAddTask={(title) => addTaskMutation.mutate(title)}
-        onAddNote={(content) => addNoteMutation.mutate(content)}
+        onAddTask={(data) => addTaskMutation.mutate(data)}
+        onAddNote={(data) => addNoteMutation.mutate(data)}
+        projects={projects}
+      />
+
+      <ProjectsBar
+        projects={projects}
+        activeProject={activeProject}
+        onSelectProject={setActiveProject}
       />
 
       <div className={styles.grid}>
         <div className={styles.colMain}>
-          <TaskList />
+          <TaskList activeProject={activeProject} />
+        </div>
+        <div className={styles.colMid}>
           <PersonalCalendar />
+          <UpcomingEvents />
         </div>
         <div className={styles.colSide}>
-          <UpcomingEvents />
           <PersonalReminders />
-          <NotesList />
+          <NotesList activeProject={activeProject} projects={projects} />
         </div>
       </div>
     </div>
