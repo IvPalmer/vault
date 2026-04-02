@@ -1100,20 +1100,20 @@ function PersonalReminders() {
 
 /* ── Grid Layout (gridstack) ──────────────────────────────── */
 
-const GRID_KEY = 'vault-pessoal-gridstack-v4'
+const GRID_KEY = 'vault-pessoal-gridstack-v5'
 
 const DEFAULT_ITEMS = [
   { id: 'kpi-hoje',      x: 0,  y: 0, w: 3, h: 2 },
   { id: 'kpi-atrasadas', x: 3,  y: 0, w: 3, h: 2 },
   { id: 'kpi-ativas',    x: 6,  y: 0, w: 3, h: 2 },
   { id: 'kpi-projetos',  x: 9,  y: 0, w: 3, h: 2 },
-  { id: 'capture',       x: 0,  y: 2, w: 8, h: 2 },
-  { id: 'projects',      x: 8,  y: 2, w: 4, h: 2 },
-  { id: 'tasks',         x: 0,  y: 4, w: 4, h: 6 },
-  { id: 'reminders',     x: 4,  y: 4, w: 5, h: 6 },
-  { id: 'calendar',      x: 9,  y: 4, w: 3, h: 8 },
-  { id: 'events',        x: 0,  y: 10, w: 4, h: 5 },
-  { id: 'notes',         x: 4,  y: 10, w: 5, h: 5 },
+  { id: 'capture',       x: 0,  y: 2, w: 8, h: 1 },
+  { id: 'projects',      x: 8,  y: 2, w: 4, h: 1 },
+  { id: 'tasks',         x: 0,  y: 3, w: 4, h: 6 },
+  { id: 'reminders',     x: 4,  y: 3, w: 5, h: 6 },
+  { id: 'calendar',      x: 9,  y: 3, w: 3, h: 8 },
+  { id: 'events',        x: 0,  y: 9, w: 4, h: 5 },
+  { id: 'notes',         x: 4,  y: 9, w: 5, h: 5 },
 ]
 
 /* ── Main Component ──────────────────────────────────────── */
