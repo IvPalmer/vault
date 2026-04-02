@@ -1,22 +1,22 @@
 """
-Google Calendar integration via OAuth2 (web flow).
+Google Calendar integration via OAuth2 — per-profile, multi-account.
 
-Handles token management and Calendar API operations for the R&R shared calendar.
+Each profile can connect multiple Google accounts. OAuth tokens are stored
+in the GoogleCalendarAccount model (not on disk).
 
 Setup:
-  1. Go to console.cloud.google.com → your project (e.g. "clawdbot")
+  1. Go to console.cloud.google.com → your project
   2. Enable the Google Calendar API
   3. Create OAuth2 credentials (type: Web Application)
-     - Authorized redirect URIs: http://localhost:8001/api/home/calendar/oauth-callback/
+     - Authorized redirect URIs: http://localhost:8001/api/calendar/oauth-callback/
   4. Download the JSON and save as backend/credentials.json
-  5. Navigate to /home — click "Conectar Google Calendar" to authorize
-  6. Token is cached in backend/token.json (auto-refreshes)
+  5. In Settings → Calendarios, click "Conectar conta Google" to authorize
 """
 
-import os
+import base64
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+import os
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -33,13 +33,12 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-SCOPES = ['https://www.googleapis.com/auth/calendar']
+SCOPES = ['https://www.googleapis.com/auth/calendar.readonly',
+           'https://www.googleapis.com/auth/calendar.events']
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CREDENTIALS_FILE = os.path.join(BASE_DIR, 'credentials.json')
-TOKEN_FILE = os.path.join(BASE_DIR, 'token.json')
 
-# Default redirect — updated dynamically per request
-DEFAULT_REDIRECT_URI = 'http://localhost:8001/api/home/calendar/oauth-callback/'
+DEFAULT_REDIRECT_URI = 'http://localhost:8001/api/calendar/oauth-callback/'
 
 
 def _detect_credential_type():
@@ -55,72 +54,93 @@ def _detect_credential_type():
     return None
 
 
-def get_credentials():
-    """Load or refresh OAuth2 credentials."""
-    creds = None
+def get_credentials_for_account(account):
+    """Load OAuth2 credentials from a GoogleCalendarAccount instance.
 
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    Refreshes if expired and saves the updated token back to the DB.
+    Returns Credentials or None if the token is invalid/revoked.
+    """
+    token_data = account.token_data
+    if not token_data or not token_data.get('token'):
+        return None
 
-    if creds and creds.valid:
+    creds = Credentials(
+        token=token_data.get('token'),
+        refresh_token=token_data.get('refresh_token'),
+        token_uri=token_data.get('token_uri', 'https://oauth2.googleapis.com/token'),
+        client_id=token_data.get('client_id', ''),
+        client_secret=token_data.get('client_secret', ''),
+        scopes=token_data.get('scopes', SCOPES),
+    )
+
+    if creds.valid:
         return creds
 
-    if creds and creds.expired and creds.refresh_token:
+    if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            _save_token(creds)
+            # Save refreshed token back to DB
+            account.token_data = json.loads(creds.to_json())
+            account.save(update_fields=['token_data', 'updated_at'])
             return creds
         except Exception as e:
-            logger.warning(f'Token refresh failed: {e}')
-            # Delete stale token so user can re-auth
-            if os.path.exists(TOKEN_FILE):
-                os.remove(TOKEN_FILE)
+            logger.warning(f'Token refresh failed for {account.email}: {e}')
+            return None
 
     return None
 
 
-def start_auth_flow(redirect_uri=None):
-    """Start OAuth flow. Returns (auth_url, error_string)."""
+def get_service_for_account(account):
+    """Build authenticated Calendar API service for a specific account."""
+    creds = get_credentials_for_account(account)
+    if not creds:
+        return None
+    return build('calendar', 'v3', credentials=creds)
+
+
+def start_auth_flow(profile_id, redirect_uri=None):
+    """Start OAuth flow. Encodes profile_id in state param.
+
+    Returns (auth_url, error_string).
+    """
     if not os.path.exists(CREDENTIALS_FILE):
         return None, 'credentials.json not found — download OAuth credentials from Google Cloud Console'
 
+    if Flow is None:
+        return None, 'google_auth_oauthlib not installed'
+
     uri = redirect_uri or DEFAULT_REDIRECT_URI
 
-    cred_type = _detect_credential_type()
+    flow = Flow.from_client_secrets_file(
+        CREDENTIALS_FILE,
+        scopes=SCOPES,
+        redirect_uri=uri,
+    )
 
-    if cred_type == 'web':
-        flow = Flow.from_client_secrets_file(
-            CREDENTIALS_FILE,
-            scopes=SCOPES,
-            redirect_uri=uri,
-        )
-    elif cred_type == 'installed':
-        # For desktop credentials, use Flow with manual redirect
-        flow = Flow.from_client_secrets_file(
-            CREDENTIALS_FILE,
-            scopes=SCOPES,
-            redirect_uri=uri,
-        )
-    else:
-        return None, 'Invalid credentials.json format — expected "web" or "installed" key'
+    # Encode profile_id in state so callback knows which profile to associate
+    state_data = json.dumps({'profile_id': str(profile_id)})
+    state = base64.urlsafe_b64encode(state_data.encode()).decode()
 
-    auth_url, state = flow.authorization_url(
+    auth_url, _ = flow.authorization_url(
         access_type='offline',
         prompt='consent',
+        state=state,
     )
     return auth_url, None
 
 
-def complete_auth_flow(code, redirect_uri=None):
-    """Exchange auth code for tokens.
+def complete_auth_flow(code, state, redirect_uri=None):
+    """Exchange auth code for tokens. Returns (token_data_dict, profile_id, email).
 
-    Uses requests directly to avoid scope-mismatch errors when the Google
-    project has many scopes already granted (e.g. clawdbot with Gmail,
-    Drive, Classroom, etc.).
+    Uses direct token exchange to avoid scope-mismatch errors.
     """
     import requests as _requests
 
     uri = redirect_uri or DEFAULT_REDIRECT_URI
+
+    # Decode profile_id from state
+    state_data = json.loads(base64.urlsafe_b64decode(state.encode()).decode())
+    profile_id = state_data['profile_id']
 
     # Read client credentials
     with open(CREDENTIALS_FILE) as f:
@@ -129,7 +149,7 @@ def complete_auth_flow(code, redirect_uri=None):
     cred_type = 'web' if 'web' in cred_data else 'installed'
     client_info = cred_data[cred_type]
 
-    # Exchange auth code for tokens directly (avoids scope validation)
+    # Exchange auth code for tokens
     token_resp = _requests.post(client_info['token_uri'], data={
         'code': code,
         'client_id': client_info['client_id'],
@@ -138,81 +158,67 @@ def complete_auth_flow(code, redirect_uri=None):
         'grant_type': 'authorization_code',
     })
     token_resp.raise_for_status()
-    token_data = token_resp.json()
+    token_json = token_resp.json()
 
-    creds = Credentials(
-        token=token_data['access_token'],
-        refresh_token=token_data.get('refresh_token'),
-        token_uri=client_info['token_uri'],
-        client_id=client_info['client_id'],
-        client_secret=client_info['client_secret'],
-        scopes=SCOPES,
+    token_data = {
+        'token': token_json['access_token'],
+        'refresh_token': token_json.get('refresh_token'),
+        'token_uri': client_info['token_uri'],
+        'client_id': client_info['client_id'],
+        'client_secret': client_info['client_secret'],
+        'scopes': SCOPES,
+    }
+
+    # Get account email using the access token
+    email = get_account_email(token_json['access_token'])
+
+    return token_data, profile_id, email
+
+
+def get_account_email(access_token):
+    """Fetch the Google account email using the access token."""
+    import requests as _requests
+    resp = _requests.get(
+        'https://www.googleapis.com/oauth2/v2/userinfo',
+        headers={'Authorization': f'Bearer {access_token}'},
     )
-    _save_token(creds)
-    return creds
+    if resp.ok:
+        return resp.json().get('email', 'unknown@gmail.com')
+    return 'unknown@gmail.com'
 
 
-def _save_token(creds):
-    """Persist token to disk."""
-    with open(TOKEN_FILE, 'w') as f:
-        f.write(creds.to_json())
-
-
-def get_service():
-    """Build authenticated Calendar API service."""
-    creds = get_credentials()
-    if not creds:
-        return None
-    return build('calendar', 'v3', credentials=creds)
-
-
-def list_calendars():
-    """List all calendars for the authenticated user."""
-    service = get_service()
+def list_calendars_for_account(account):
+    """List all calendars for a connected Google account."""
+    service = get_service_for_account(account)
     if not service:
         return None
     result = service.calendarList().list().execute()
     return [
-        {'id': c['id'], 'name': c.get('summary', ''), 'primary': c.get('primary', False)}
+        {
+            'calendar_id': c['id'],
+            'name': c.get('summary', ''),
+            'color': c.get('backgroundColor', ''),
+            'primary': c.get('primary', False),
+        }
         for c in result.get('items', [])
     ]
 
 
-def find_calendar_id(name='R&R'):
-    """Find a calendar ID by name. Returns calendar_id or None."""
-    calendars = list_calendars()
-    if not calendars:
-        return None
-    for cal in calendars:
-        if cal['name'] == name:
-            return cal['id']
-    return None
+def get_events_for_account(account, calendar_id, time_min, time_max):
+    """Fetch events from one calendar via one account.
 
-
-def get_events(calendar_id=None, days=30, time_min=None, time_max=None):
-    """Fetch events from a calendar.
-
-    If time_min/time_max given, use those. Otherwise fetch from now + days.
+    time_min/time_max should be YYYY-MM-DD strings.
+    Returns list of event dicts or None if auth failed.
     """
-    service = get_service()
+    service = get_service_for_account(account)
     if not service:
         return None
 
-    cal_id = calendar_id or 'primary'
-    now = datetime.now(timezone.utc)
-
-    if time_min:
-        t_min = time_min if time_min.endswith('Z') else time_min + 'T00:00:00Z'
-    else:
-        t_min = now.isoformat()
-
-    if time_max:
-        t_max = time_max if time_max.endswith('Z') else time_max + 'T23:59:59Z'
-    else:
-        t_max = (now + timedelta(days=days)).isoformat()
+    t_min = f'{time_min}T00:00:00Z' if 'T' not in time_min else time_min
+    t_max = f'{time_max}T23:59:59Z' if 'T' not in time_max else time_max
 
     result = service.events().list(
-        calendarId=cal_id,
+        calendarId=calendar_id,
         timeMin=t_min,
         timeMax=t_max,
         singleEvents=True,
@@ -231,26 +237,18 @@ def get_events(calendar_id=None, days=30, time_min=None, time_max=None):
             'end': end.get('dateTime', end.get('date', '')),
             'all_day': 'date' in start,
             'location': e.get('location', ''),
-            'notes': e.get('description', ''),
             'recurring': bool(e.get('recurringEventId')),
         })
 
-    return {
-        'calendar': cal_id,
-        'events': events,
-        'count': len(events),
-    }
+    return events
 
 
-def add_event(calendar_id=None, title='', start='', end='', location='', description=''):
-    """Create a new event on the calendar."""
-    service = get_service()
+def add_event_for_account(account, calendar_id, title, start, end, location=''):
+    """Create a new event on a specific calendar via a specific account."""
+    service = get_service_for_account(account)
     if not service:
         return None
 
-    cal_id = calendar_id or 'primary'
-
-    # Determine if all-day or timed event
     if 'T' in start:
         body = {
             'summary': title,
@@ -266,8 +264,6 @@ def add_event(calendar_id=None, title='', start='', end='', location='', descrip
 
     if location:
         body['location'] = location
-    if description:
-        body['description'] = description
 
-    event = service.events().insert(calendarId=cal_id, body=body).execute()
-    return {'ok': True, 'id': event.get('id'), 'title': title, 'calendar': cal_id}
+    event = service.events().insert(calendarId=calendar_id, body=body).execute()
+    return {'ok': True, 'id': event.get('id'), 'title': title}

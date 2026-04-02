@@ -3,7 +3,7 @@ from .models import (
     Profile, Account, Category, Subcategory, CategorizationRule,
     PluggyCategoryMapping, RenameRule, RecurringTemplate, Transaction,
     RecurringMapping, BudgetConfig, BalanceOverride, BankTemplate,
-    SetupTemplate, FamilyNote,
+    SetupTemplate, FamilyNote, GoogleCalendarAccount, CalendarSelection,
 )
 
 
@@ -129,3 +129,28 @@ class FamilyNoteSerializer(serializers.ModelSerializer):
     class Meta:
         model = FamilyNote
         fields = '__all__'
+
+
+class GoogleCalendarAccountSerializer(serializers.ModelSerializer):
+    connected = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GoogleCalendarAccount
+        fields = ['id', 'email', 'connected', 'created_at']
+
+    def get_connected(self, obj):
+        """Check if the token is still valid/refreshable."""
+        from . import google_calendar as gcal
+        creds = gcal.get_credentials_for_account(obj)
+        return creds is not None
+
+
+class CalendarSelectionSerializer(serializers.ModelSerializer):
+    account_email = serializers.CharField(source='account.email', read_only=True)
+
+    class Meta:
+        model = CalendarSelection
+        fields = [
+            'id', 'account', 'account_email', 'calendar_id',
+            'calendar_name', 'color', 'show_in_home', 'show_in_personal',
+        ]
