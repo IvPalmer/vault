@@ -12,9 +12,8 @@
  */
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ResponsiveGridLayout } from 'react-grid-layout'
-import 'react-grid-layout/css/styles.css'
-import 'react-resizable/css/styles.css'
+import { GridStack } from 'gridstack'
+import 'gridstack/dist/gridstack.min.css'
 import { useProfile } from '../context/ProfileContext'
 import api from '../api/client'
 import styles from './PersonalOrganizer.module.css'
@@ -1123,41 +1122,17 @@ function PersonalReminders() {
 
 /* ── Main Component ──────────────────────────────────────── */
 
-/* ── Grid Layout (Metabase-style) ─────────────────────────── */
+/* ── Grid Layout (gridstack) ──────────────────────────────── */
 
-const GRID_KEY = 'vault-pessoal-grid-v7'
+const GRID_KEY = 'vault-pessoal-gridstack-v1'
 
-const DEFAULT_GRID = {
-  lg: [
-    { i: 'tasks',     x: 0, y: 0,  w: 4,  h: 14, minW: 2, minH: 3 },
-    { i: 'reminders', x: 4, y: 0,  w: 5,  h: 14, minW: 2, minH: 3 },
-    { i: 'calendar',  x: 9, y: 0,  w: 3,  h: 18, minW: 2, minH: 4 },
-    { i: 'events',    x: 0, y: 14, w: 4,  h: 10, minW: 2, minH: 3 },
-    { i: 'notes',     x: 4, y: 14, w: 5,  h: 10, minW: 2, minH: 3 },
-  ],
-  md: [
-    { i: 'tasks',     x: 0, y: 0,  w: 5, h: 14, minW: 3, minH: 4 },
-    { i: 'reminders', x: 5, y: 0,  w: 5, h: 14, minW: 2, minH: 4 },
-    { i: 'calendar',  x: 0, y: 14, w: 5, h: 16, minW: 3, minH: 8 },
-    { i: 'events',    x: 5, y: 14, w: 5, h: 8,  minW: 2, minH: 4 },
-    { i: 'notes',     x: 5, y: 22, w: 5, h: 8,  minW: 2, minH: 4 },
-  ],
-  sm: [
-    { i: 'tasks',     x: 0, y: 0,  w: 1, h: 12, minW: 1, minH: 4 },
-    { i: 'reminders', x: 0, y: 12, w: 1, h: 12, minW: 1, minH: 4 },
-    { i: 'calendar',  x: 0, y: 24, w: 1, h: 16, minW: 1, minH: 8 },
-    { i: 'events',    x: 0, y: 40, w: 1, h: 10, minW: 1, minH: 4 },
-    { i: 'notes',     x: 0, y: 50, w: 1, h: 8,  minW: 1, minH: 4 },
-  ],
-}
-
-function loadGrid() {
-  try {
-    const s = localStorage.getItem(GRID_KEY)
-    if (s) return JSON.parse(s)
-  } catch {}
-  return DEFAULT_GRID
-}
+const DEFAULT_ITEMS = [
+  { id: 'tasks',     x: 0, y: 0, w: 4, h: 6 },
+  { id: 'reminders', x: 4, y: 0, w: 5, h: 6 },
+  { id: 'calendar',  x: 9, y: 0, w: 3, h: 8 },
+  { id: 'events',    x: 0, y: 6, w: 4, h: 5 },
+  { id: 'notes',     x: 4, y: 6, w: 5, h: 5 },
+]
 
 /* ── Main Component ──────────────────────────────────────── */
 
@@ -1165,19 +1140,63 @@ export default function PersonalOrganizer() {
   const { currentProfile } = useProfile()
   const queryClient = useQueryClient()
   const [activeProject, setActiveProject] = useState(null)
-  const [gridLayouts, setGridLayouts] = useState(loadGrid)
-  const [gridWidth, setGridWidth] = useState(1200)
-  const [isDragging, setIsDragging] = useState(false)
   const gridRef = useRef(null)
+  const gridInstanceRef = useRef(null)
 
   useEffect(() => {
-    if (!gridRef.current) return
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) setGridWidth(entry.contentRect.width)
+    if (!gridRef.current || gridInstanceRef.current) return
+
+    const grid = GridStack.init({
+      column: 12,
+      cellHeight: 70,
+      margin: 8,
+      float: true,
+      animate: true,
+      draggable: { handle: `.${styles.widgetHeader}` },
+      resizable: { handles: 'se' },
+    }, gridRef.current)
+
+    // Load saved layout or default
+    let items = DEFAULT_ITEMS
+    try {
+      const saved = localStorage.getItem(GRID_KEY)
+      if (saved) items = JSON.parse(saved)
+    } catch {}
+
+    // Apply layout positions
+    items.forEach(item => {
+      const el = gridRef.current.querySelector(`[gs-id="${item.id}"]`)
+      if (el) {
+        grid.update(el, { x: item.x, y: item.y, w: item.w, h: item.h })
+      }
     })
-    ro.observe(gridRef.current)
-    setGridWidth(gridRef.current.offsetWidth)
-    return () => ro.disconnect()
+
+    // Save on change
+    grid.on('change', () => {
+      const nodes = grid.getGridItems().map(el => ({
+        id: el.getAttribute('gs-id'),
+        x: parseInt(el.getAttribute('gs-x')),
+        y: parseInt(el.getAttribute('gs-y')),
+        w: parseInt(el.getAttribute('gs-w')),
+        h: parseInt(el.getAttribute('gs-h')),
+      }))
+      localStorage.setItem(GRID_KEY, JSON.stringify(nodes))
+    })
+
+    // Toggle drag overlay class
+    grid.on('dragstart resizestart', () => {
+      gridRef.current.classList.add('gs-dragging')
+    })
+    grid.on('dragstop resizestop', () => {
+      gridRef.current.classList.remove('gs-dragging')
+    })
+
+    gridInstanceRef.current = grid
+
+    return () => {
+      grid.destroy(false)
+      gridInstanceRef.current = null
+    }
   }, [])
 
   const { data: tasksData } = useQuery({
@@ -1213,13 +1232,13 @@ export default function PersonalOrganizer() {
     return 'Boa noite'
   }, [])
 
-  const onLayoutChange = useCallback((layout, layouts) => {
-    setGridLayouts(layouts)
-    try { localStorage.setItem(GRID_KEY, JSON.stringify(layouts)) } catch {}
-  }, [])
-
   const handleReset = useCallback(() => {
-    setGridLayouts(DEFAULT_GRID)
+    const grid = gridInstanceRef.current
+    if (!grid) return
+    DEFAULT_ITEMS.forEach(item => {
+      const el = gridRef.current.querySelector(`[gs-id="${item.id}"]`)
+      if (el) grid.update(el, { x: item.x, y: item.y, w: item.w, h: item.h })
+    })
     localStorage.removeItem(GRID_KEY)
   }, [])
 
@@ -1254,73 +1273,34 @@ export default function PersonalOrganizer() {
         onSelectProject={setActiveProject}
       />
 
-      <div ref={gridRef} className={`${styles.gridContainer} ${isDragging ? styles.gridContainerActive : ''}`}>
-        {isDragging && <GridOverlay width={gridWidth} cols={12} rowHeight={28} margin={14} />}
-        <ResponsiveGridLayout
-          width={gridWidth}
-          layouts={gridLayouts}
-          breakpoints={{ lg: 1200, md: 800, sm: 0 }}
-          cols={{ lg: 12, md: 10, sm: 1 }}
-          rowHeight={28}
-          onLayoutChange={onLayoutChange}
-          onDragStart={() => setIsDragging(true)}
-          onDragStop={() => setIsDragging(false)}
-          onResizeStart={() => setIsDragging(true)}
-          onResizeStop={() => setIsDragging(false)}
-          draggableHandle={`.${styles.widgetHeader}`}
-          margin={[14, 14]}
-          containerPadding={[0, 0]}
-          compactType={null}
-          preventCollision={false}
-          isResizable
-          allowOverlap={false}
-        >
-          <div key="tasks" className={styles.gridCell}>
+      <div ref={gridRef} className={`grid-stack ${styles.gridContainer}`}>
+        <div className="grid-stack-item" gs-id="tasks" gs-x="0" gs-y="0" gs-w="4" gs-h="6" gs-min-w="2" gs-min-h="3">
+          <div className="grid-stack-item-content">
             <TaskList activeProject={activeProject} />
           </div>
-          <div key="calendar" className={styles.gridCell}>
-            <PersonalCalendar />
-          </div>
-          <div key="reminders" className={styles.gridCell}>
+        </div>
+        <div className="grid-stack-item" gs-id="reminders" gs-x="4" gs-y="0" gs-w="5" gs-h="6" gs-min-w="2" gs-min-h="3">
+          <div className="grid-stack-item-content">
             <PersonalReminders />
           </div>
-          <div key="events" className={styles.gridCell}>
+        </div>
+        <div className="grid-stack-item" gs-id="calendar" gs-x="9" gs-y="0" gs-w="3" gs-h="8" gs-min-w="2" gs-min-h="4">
+          <div className="grid-stack-item-content">
+            <PersonalCalendar />
+          </div>
+        </div>
+        <div className="grid-stack-item" gs-id="events" gs-x="0" gs-y="6" gs-w="4" gs-h="5" gs-min-w="2" gs-min-h="3">
+          <div className="grid-stack-item-content">
             <UpcomingEvents />
           </div>
-          <div key="notes" className={styles.gridCell}>
+        </div>
+        <div className="grid-stack-item" gs-id="notes" gs-x="4" gs-y="6" gs-w="5" gs-h="5" gs-min-w="2" gs-min-h="3">
+          <div className="grid-stack-item-content">
             <NotesList activeProject={activeProject} projects={projects} />
           </div>
-        </ResponsiveGridLayout>
+        </div>
       </div>
     </div>
   )
 }
 
-/* ── Grid Overlay — SVG background matching RGL snap positions ── */
-
-function GridOverlay({ width, cols, rowHeight, margin }) {
-  const colWidth = Math.round((width - margin * (cols - 1)) / cols)
-  const stepX = colWidth + margin
-  const stepY = rowHeight + margin
-  const rows = 30
-
-  return (
-    <svg className={styles.gridOverlay} width={width} height={rows * stepY}>
-      {Array.from({ length: rows }, (_, row) =>
-        Array.from({ length: cols }, (_, col) => (
-          <rect
-            key={`${row}-${col}`}
-            x={col * stepX}
-            y={row * stepY}
-            width={colWidth}
-            height={rowHeight}
-            rx={4}
-            fill="rgba(184,101,48,0.05)"
-            stroke="rgba(184,101,48,0.15)"
-            strokeWidth={1}
-          />
-        ))
-      )}
-    </svg>
-  )
-}

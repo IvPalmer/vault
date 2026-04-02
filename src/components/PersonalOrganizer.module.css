@@ -427,7 +427,7 @@
   border-color: var(--color-accent);
 }
 
-/* Grid container + overlay */
+/* Grid container — keeps full-width breakout */
 .gridContainer {
   position: relative;
   min-height: 400px;
@@ -438,67 +438,29 @@
   box-sizing: border-box;
 }
 
-.gridOverlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
+/* ─── Gridstack Overrides ────────────────────────────────── */
+
+:global(.grid-stack) {
+  min-height: 600px;
 }
 
-.gridContainerActive :global(.react-grid-item) {
-  z-index: 2;
-}
-
-/* Grid cell — fills react-grid-layout slot */
-.gridCell {
-  height: 100%;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.gridCell > div {
-  flex: 1;
+:global(.grid-stack-item-content) {
   overflow: auto;
-}
-
-/* react-grid-layout styling */
-:global(.react-grid-item) {
-  transition: all 150ms ease;
-}
-
-:global(.react-grid-item.react-grid-placeholder) {
-  background: var(--color-accent) !important;
-  opacity: 0.08 !important;
-  border: 2px dashed var(--color-accent) !important;
   border-radius: var(--radius-md);
 }
 
-:global(.react-grid-item > .react-resizable-handle) {
-  z-index: 10;
-  width: 20px;
-  height: 20px;
+:global(.grid-stack-placeholder > .placeholder-content) {
+  border: 2px dashed var(--color-accent) !important;
+  background: rgba(184, 101, 48, 0.05) !important;
+  border-radius: var(--radius-md) !important;
 }
 
-:global(.react-grid-item > .react-resizable-handle::after) {
-  border-right: 2px solid var(--color-text-secondary) !important;
-  border-bottom: 2px solid var(--color-text-secondary) !important;
-  width: 7px !important;
-  height: 7px !important;
-  right: 5px !important;
-  bottom: 5px !important;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-:global(.react-grid-item:hover > .react-resizable-handle::after) {
-  opacity: 0.5;
-}
-
-:global(.react-grid-item.cssTransforms) {
-  transition-property: transform;
+/* Subtle grid lines visible during drag/resize */
+:global(.grid-stack.gs-dragging) {
+  background-size: calc(100% / 12) 70px;
+  background-image:
+    linear-gradient(to right, rgba(184,101,48,0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(184,101,48,0.08) 1px, transparent 1px);
 }
 
 /* ─── Shared Widget ─────────────────────────────────────── */
