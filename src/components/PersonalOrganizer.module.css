@@ -427,38 +427,54 @@
   border-color: var(--color-accent);
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-md);
-  align-items: start;
-}
-
+/* Grid cell — fills react-grid-layout slot */
 .gridCell {
-  transition: opacity 0.2s, transform 0.15s;
-  cursor: grab;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-.gridCell:active {
-  cursor: grabbing;
+.gridCell > div {
+  flex: 1;
+  overflow: auto;
 }
 
-.gridCellDragging {
-  opacity: 0.3;
-  transform: scale(0.97);
+/* react-grid-layout styling */
+:global(.react-grid-item) {
+  transition: all 150ms ease;
 }
 
-.gridCellOver {
-  outline: 2px dashed var(--color-accent);
-  outline-offset: 4px;
+:global(.react-grid-item.react-grid-placeholder) {
+  background: var(--color-accent) !important;
+  opacity: 0.08 !important;
+  border: 2px dashed var(--color-accent) !important;
   border-radius: var(--radius-md);
 }
 
-@media (max-width: 1100px) {
-  .grid { grid-template-columns: repeat(2, 1fr); }
+:global(.react-grid-item > .react-resizable-handle) {
+  z-index: 10;
+  width: 20px;
+  height: 20px;
 }
-@media (max-width: 700px) {
-  .grid { grid-template-columns: 1fr; }
+
+:global(.react-grid-item > .react-resizable-handle::after) {
+  border-right: 2px solid var(--color-text-secondary) !important;
+  border-bottom: 2px solid var(--color-text-secondary) !important;
+  width: 7px !important;
+  height: 7px !important;
+  right: 5px !important;
+  bottom: 5px !important;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+:global(.react-grid-item:hover > .react-resizable-handle::after) {
+  opacity: 0.5;
+}
+
+:global(.react-grid-item.cssTransforms) {
+  transition-property: transform;
 }
 
 /* ─── Shared Widget ─────────────────────────────────────── */
@@ -477,6 +493,12 @@
   justify-content: space-between;
   padding: var(--space-md) var(--space-lg);
   border-bottom: 1px solid var(--color-border);
+  cursor: grab;
+  user-select: none;
+}
+
+.widgetHeader:active {
+  cursor: grabbing;
 }
 
 .widgetHeaderRight {

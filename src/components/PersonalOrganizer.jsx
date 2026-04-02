@@ -10,11 +10,16 @@
  *   - Calendar (personal context — profile's selected calendars)
  *   - Reminders (Apple sidecar)
  */
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { WidthProvider, Responsive } from 'react-grid-layout'
+import 'react-grid-layout/css/styles.css'
+import 'react-resizable/css/styles.css'
 import { useProfile } from '../context/ProfileContext'
 import api from '../api/client'
 import styles from './PersonalOrganizer.module.css'
+
+const GridLayout = WidthProvider(Responsive)
 
 // Reminders sidecar runs on the local Mac (port 5177).
 // Calling localhost directly (not through Vite proxy) means each user's
@@ -1120,17 +1125,40 @@ function PersonalReminders() {
 
 /* ── Main Component ──────────────────────────────────────── */
 
-/* ── Widget Order ─────────────────────────────────────────── */
+/* ── Grid Layout (Metabase-style) ─────────────────────────── */
 
-const DEFAULT_ORDER = ['tasks', 'reminders', 'calendar', 'events', 'notes']
-const ORDER_KEY = 'vault-pessoal-order-v4'
+const GRID_KEY = 'vault-pessoal-grid-v5'
 
-function loadOrder() {
+const DEFAULT_GRID = {
+  lg: [
+    { i: 'tasks',     x: 0, y: 0,  w: 4,  h: 14, minW: 3, minH: 4 },
+    { i: 'reminders', x: 4, y: 0,  w: 5,  h: 14, minW: 2, minH: 4 },
+    { i: 'calendar',  x: 9, y: 0,  w: 3,  h: 18, minW: 3, minH: 8 },
+    { i: 'events',    x: 0, y: 14, w: 4,  h: 10, minW: 2, minH: 4 },
+    { i: 'notes',     x: 4, y: 14, w: 5,  h: 10, minW: 2, minH: 4 },
+  ],
+  md: [
+    { i: 'tasks',     x: 0, y: 0,  w: 5, h: 14, minW: 3, minH: 4 },
+    { i: 'reminders', x: 5, y: 0,  w: 5, h: 14, minW: 2, minH: 4 },
+    { i: 'calendar',  x: 0, y: 14, w: 5, h: 16, minW: 3, minH: 8 },
+    { i: 'events',    x: 5, y: 14, w: 5, h: 8,  minW: 2, minH: 4 },
+    { i: 'notes',     x: 5, y: 22, w: 5, h: 8,  minW: 2, minH: 4 },
+  ],
+  sm: [
+    { i: 'tasks',     x: 0, y: 0,  w: 1, h: 12, minW: 1, minH: 4 },
+    { i: 'reminders', x: 0, y: 12, w: 1, h: 12, minW: 1, minH: 4 },
+    { i: 'calendar',  x: 0, y: 24, w: 1, h: 16, minW: 1, minH: 8 },
+    { i: 'events',    x: 0, y: 40, w: 1, h: 10, minW: 1, minH: 4 },
+    { i: 'notes',     x: 0, y: 50, w: 1, h: 8,  minW: 1, minH: 4 },
+  ],
+}
+
+function loadGrid() {
   try {
-    const s = localStorage.getItem(ORDER_KEY)
+    const s = localStorage.getItem(GRID_KEY)
     if (s) return JSON.parse(s)
   } catch {}
-  return DEFAULT_ORDER
+  return DEFAULT_GRID
 }
 
 /* ── Main Component ──────────────────────────────────────── */
@@ -1139,9 +1167,7 @@ export default function PersonalOrganizer() {
   const { currentProfile } = useProfile()
   const queryClient = useQueryClient()
   const [activeProject, setActiveProject] = useState(null)
-  const [order, setOrder] = useState(loadOrder)
-  const [dragId, setDragId] = useState(null)
-  const [overId, setOverId] = useState(null)
+  const [gridLayouts, setGridLayouts] = useState(loadGrid)
 
   const { data: tasksData } = useQuery({
     queryKey: ['pessoal-tasks'],
@@ -1176,34 +1202,15 @@ export default function PersonalOrganizer() {
     return 'Boa noite'
   }, [])
 
-  const onDragStart = (id) => setDragId(id)
-  const onDragOver = (e, id) => { e.preventDefault(); setOverId(id) }
-  const onDragEnd = () => { setDragId(null); setOverId(null) }
-  const onDrop = (targetId) => {
-    if (!dragId || dragId === targetId) return
-    const n = [...order]
-    const from = n.indexOf(dragId)
-    const to = n.indexOf(targetId)
-    n.splice(from, 1)
-    n.splice(to, 0, dragId)
-    setOrder(n)
-    localStorage.setItem(ORDER_KEY, JSON.stringify(n))
-    setDragId(null)
-    setOverId(null)
-  }
+  const onLayoutChange = useCallback((layout, layouts) => {
+    setGridLayouts(layouts)
+    try { localStorage.setItem(GRID_KEY, JSON.stringify(layouts)) } catch {}
+  }, [])
 
-  const handleReset = () => {
-    setOrder(DEFAULT_ORDER)
-    localStorage.removeItem(ORDER_KEY)
-  }
-
-  const WIDGETS = {
-    tasks: <TaskList activeProject={activeProject} />,
-    calendar: <PersonalCalendar />,
-    reminders: <PersonalReminders />,
-    events: <UpcomingEvents />,
-    notes: <NotesList activeProject={activeProject} projects={projects} />,
-  }
+  const handleReset = useCallback(() => {
+    setGridLayouts(DEFAULT_GRID)
+    localStorage.removeItem(GRID_KEY)
+  }, [])
 
   return (
     <div className={styles.page}>
@@ -1236,21 +1243,35 @@ export default function PersonalOrganizer() {
         onSelectProject={setActiveProject}
       />
 
-      <div className={styles.grid}>
-        {order.map((id) => (
-          <div
-            key={id}
-            className={`${styles.gridCell} ${dragId === id ? styles.gridCellDragging : ''} ${overId === id ? styles.gridCellOver : ''}`}
-            draggable
-            onDragStart={() => onDragStart(id)}
-            onDragOver={(e) => onDragOver(e, id)}
-            onDragEnd={onDragEnd}
-            onDrop={() => onDrop(id)}
-          >
-            {WIDGETS[id]}
-          </div>
-        ))}
-      </div>
+      <GridLayout
+        layouts={gridLayouts}
+        breakpoints={{ lg: 1200, md: 800, sm: 0 }}
+        cols={{ lg: 12, md: 10, sm: 1 }}
+        rowHeight={28}
+        onLayoutChange={onLayoutChange}
+        draggableHandle={`.${styles.widgetHeader}`}
+        margin={[14, 14]}
+        containerPadding={[0, 0]}
+        compactType="vertical"
+        isResizable
+        isBounded={false}
+      >
+        <div key="tasks" className={styles.gridCell}>
+          <TaskList activeProject={activeProject} />
+        </div>
+        <div key="calendar" className={styles.gridCell}>
+          <PersonalCalendar />
+        </div>
+        <div key="reminders" className={styles.gridCell}>
+          <PersonalReminders />
+        </div>
+        <div key="events" className={styles.gridCell}>
+          <UpcomingEvents />
+        </div>
+        <div key="notes" className={styles.gridCell}>
+          <NotesList activeProject={activeProject} projects={projects} />
+        </div>
+      </GridLayout>
     </div>
   )
 }
