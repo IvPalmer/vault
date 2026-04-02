@@ -1393,13 +1393,15 @@ def get_metricas(month_str, profile=None):
             saldo_projetado = Decimal(str(proj_months[month_str]['cumulative']))
         else:
             saldo_projetado = entradas_projetadas - gastos_projetados
-    elif effective_balance is not None:
-        # Starting balance from manual override or Pluggy anchor.
-        # Add pending income, subtract all pending outflows (fixo + CC bill).
-        saldo_projetado = Decimal(str(effective_balance)) + a_entrar - a_pagar
     elif not is_current and checking_balance_eom is not None:
-        # Closed month: use actual bank balance from OFX
+        # Closed month: real EOM bank balance is authoritative (from BalanceAnchor).
+        # Takes priority over BalanceOverride which may be a mid-month snapshot.
         saldo_projetado = checking_balance_eom
+    elif effective_balance is not None:
+        # Current month: starting balance from Pluggy anchor or manual override.
+        # Add pending income, subtract all pending outflows (fixo + CC bill).
+        # Also subtract carryover_pending (unpaid prior-month items still due).
+        saldo_projetado = Decimal(str(effective_balance)) + a_entrar - a_pagar - carryover_pending
     elif is_current and prev_checking is not None:
         # Current month without BO: prev real balance + income - all expenses
         saldo_projetado = prev_checking + entradas_projetadas - gastos_projetados
@@ -1410,12 +1412,18 @@ def get_metricas(month_str, profile=None):
         saldo_projetado = entradas_projetadas - gastos_projetados
 
     # =====================================================================
-    # 12b. INVESTMENT EXPECTED — no affordability clamping.
+    # 12b. INVESTMENT EXPECTED — clamp for closed negative months.
     #      invest_expected_total is already set:
     #        - max(template, 20% income) when prev month positive
     #        - template_total when prev month negative
-    #      For closed months with OFX, actuals are final — don't override.
+    #      For closed months that ended negative, the 20% stretch goal
+    #      wasn't achievable — clamp back to template total (committed only).
     # =====================================================================
+    if not is_current and not is_future and saldo_projetado is not None and saldo_projetado < 0:
+        invest_expected_total = invest_template_total
+        gastos_projetados = gastos_base + invest_expected_total
+        a_pagar_invest = max(Decimal('0'), invest_expected_total - _invest_actual_total)
+        a_pagar = a_pagar_fixo + a_pagar_invest + fatura_remaining
 
     # =====================================================================
     # 13. DIAS ATÉ O FECHAMENTO

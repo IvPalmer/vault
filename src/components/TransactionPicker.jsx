@@ -52,6 +52,7 @@ function TransactionPicker({
 
   const [sourceFilter, setSourceFilter] = useState('checking') // 'all' | 'checking' | 'credit_card'
   const [sortBy, setSortBy] = useState('relevance') // 'relevance' | 'date' | 'amount' | 'name'
+  const [sortDir, setSortDir] = useState('desc') // 'asc' | 'desc'
 
   const isMapped = !!(currentMatch && (status === 'Pago' || status === 'Parcial'))
 
@@ -66,6 +67,7 @@ function TransactionPicker({
       setViewMode(matchMode || 'manual')
       setSourceFilter('checking')
       setSortBy('relevance')
+      setSortDir('desc')
     }
   }, [isOpen, matchMode])
 
@@ -176,18 +178,19 @@ function TransactionPicker({
       const bGlobal = b.is_globally_linked ? 1 : 0
       if (aGlobal !== bGlobal) return aGlobal - bGlobal
       // Then apply user sort
+      const dir = sortDir === 'asc' ? 1 : -1
       switch (sortBy) {
         case 'date':
-          return b.date.localeCompare(a.date) // newest first
+          return dir * b.date.localeCompare(a.date)
         case 'amount':
-          return Math.abs(b.amount) - Math.abs(a.amount) // largest first
+          return dir * (Math.abs(b.amount) - Math.abs(a.amount))
         case 'name':
-          return a.description.localeCompare(b.description)
+          return dir * a.description.localeCompare(b.description)
         default: // 'relevance' — backend order (amount match)
           return 0
       }
     })
-  }, [candidateData, search, localLinkedIds, sourceFilter, sortBy])
+  }, [candidateData, search, localLinkedIds, sourceFilter, sortBy, sortDir])
 
   const invalidateWithCandidates = useCallback(() => {
     invalidateAll()
@@ -541,10 +544,17 @@ function TransactionPicker({
                     <button
                       key={s.key}
                       className={`${styles.sortBtn} ${sortBy === s.key ? styles.sortBtnActive : ''}`}
-                      onClick={() => setSortBy(s.key)}
+                      onClick={() => {
+                        if (sortBy === s.key) {
+                          setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+                        } else {
+                          setSortBy(s.key)
+                          setSortDir('desc')
+                        }
+                      }}
                       title={s.title}
                     >
-                      {s.label}
+                      {s.label}{sortBy === s.key && s.key !== 'relevance' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
                     </button>
                   ))}
                 </div>

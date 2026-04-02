@@ -66,10 +66,15 @@ class PluggyClient:
                               json={}, headers=self._headers(), timeout=30)
         if resp.status_code == 400:
             body = resp.json()
-            if body.get('codeDescription') == 'ITEM_ALREADY_UPDATING':
+            msg = body.get('message', '') or body.get('codeDescription', '')
+            if 'ITEM_ALREADY_UPDATING' in msg or body.get('codeDescription') == 'ITEM_ALREADY_UPDATING':
                 # Already refreshing, just poll for completion
                 logger.info('Pluggy: item already updating, waiting...')
                 item = self.get_item(item_id)
+            elif 'MeuPluggy' in msg:
+                # MeuPluggy items refresh on their own schedule
+                logger.info('Pluggy: MeuPluggy item — skipping manual refresh.')
+                return self.get_item(item_id)
             else:
                 resp.raise_for_status()
         elif resp.status_code == 403:

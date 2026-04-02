@@ -376,6 +376,24 @@ class Command(BaseCommand):
             ).exclude(external_id='').values_list('external_id', flat=True)
         )
 
+        # Content-based dedup for Pluggy transactions (catches re-imported txns
+        # with new external_ids from MeuPluggy refreshes).
+        # Normalizes descriptions for case-insensitive matching (bill endpoint
+        # returns Title Case, account endpoint returns UPPERCASE).
+        def _content_norm(s):
+            """Normalize for content dedup: lowercase, strip, collapse whitespace."""
+            return re.sub(r'\s+', ' ', s.strip().lower())
+
+        existing_pluggy_by_content = {}  # (amount, norm_desc) -> set of dates
+        # Also index by (date, amount) for description-agnostic CC dedup
+        existing_pluggy_by_date_amt = set()  # {(date, amount)}
+        for t in Transaction.objects.filter(
+            account_id__in=acct_ids, profile=self.profile
+        ).exclude(external_id='').values_list('date', 'amount', 'description'):
+            ckey = (t[1], _content_norm(t[2]))
+            existing_pluggy_by_content.setdefault(ckey, set()).add(t[0])
+            existing_pluggy_by_date_amt.add((t[0], t[1]))
+
         # Load existing transactions for fuzzy dedup against legacy imports.
         # Legacy data has different casing, punctuation, accents, and sometimes
         # dates off by 1 day, so we normalize aggressively.
@@ -457,6 +475,25 @@ class Command(BaseCommand):
                 amount = -raw_amount
             else:
                 amount = raw_amount
+
+            # Content-based dedup: skip if same (amount, normalized description) with
+            # date ±1 day already exists. Handles MeuPluggy external_id changes AND
+            # bill-vs-account description case differences.
+            content_key = (amount, _content_norm(description))
+            existing_dates = existing_pluggy_by_content.get(content_key, set())
+            if any(abs((txn_date - d).days) <= 1 for d in existing_dates):
+                skipped_count += 1
+                continue
+
+            # Description-agnostic dedup for CC: bill endpoint and account endpoint
+            # return completely different descriptions for the same transaction.
+            if is_cc and (txn_date, amount) in existing_pluggy_by_date_amt:
+                skipped_count += 1
+                continue
+
+            # Track for future iterations in this batch
+            existing_pluggy_by_content.setdefault(content_key, set()).add(txn_date)
+            existing_pluggy_by_date_amt.add((txn_date, amount))
 
             # Fuzzy dedup: match on (date, abs_amount, normalized_description)
             # Handles legacy data with different casing, punctuation, accents
