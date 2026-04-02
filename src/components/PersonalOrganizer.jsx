@@ -69,37 +69,13 @@ const PRIORITY_LABELS = { 0: '', 1: '!', 2: '!!', 3: '!!!' }
 const PRIORITY_COLORS = { 0: 'transparent', 1: '#4caf50', 2: 'var(--color-accent)', 3: 'var(--color-red)' }
 const STATUS_LABELS = { todo: 'A fazer', doing: 'Fazendo', done: 'Feita' }
 
-/* ── Dashboard Summary Cards ────────────────────────────── */
+/* ── KPI Card (individual stat widget) ──────────────────── */
 
-function DashboardCards({ tasks, projects }) {
-  const todayStr = new Date().toISOString().slice(0, 10)
-  const allTasks = tasks || []
-  const activeTasks = allTasks.filter((t) => t.status !== 'done')
-  const todayTasks = activeTasks.filter((t) => t.due_date === todayStr)
-  const overdueTasks = activeTasks.filter((t) => {
-    if (!t.due_date) return false
-    return t.due_date < todayStr
-  })
-  const activeProjects = (projects || []).filter((p) => p.status === 'active')
-
-  const cards = [
-    { label: 'Hoje', value: todayTasks.length, accent: false },
-    { label: 'Atrasadas', value: overdueTasks.length, accent: overdueTasks.length > 0, danger: overdueTasks.length > 0 },
-    { label: 'Ativas', value: activeTasks.length, accent: false },
-    { label: 'Projetos', value: activeProjects.length, accent: false },
-  ]
-
+function KpiCard({ value, label, danger }) {
   return (
-    <div className={styles.dashboardCards}>
-      {cards.map((c) => (
-        <div
-          key={c.label}
-          className={`${styles.dashCard} ${c.danger ? styles.dashCardDanger : ''}`}
-        >
-          <span className={styles.dashCardValue}>{c.value}</span>
-          <span className={styles.dashCardLabel}>{c.label}</span>
-        </div>
-      ))}
+    <div className={`${styles.dashCard} ${danger ? styles.dashCardDanger : ''}`}>
+      <span className={styles.dashCardValue}>{value}</span>
+      <span className={styles.dashCardLabel}>{label}</span>
     </div>
   )
 }
@@ -1124,17 +1100,20 @@ function PersonalReminders() {
 
 /* ── Grid Layout (gridstack) ──────────────────────────────── */
 
-const GRID_KEY = 'vault-pessoal-gridstack-v2'
+const GRID_KEY = 'vault-pessoal-gridstack-v3'
 
 const DEFAULT_ITEMS = [
-  { id: 'dashboard', x: 0, y: 0,  w: 12, h: 2 },
-  { id: 'capture',   x: 0, y: 2,  w: 12, h: 2 },
-  { id: 'projects',  x: 0, y: 4,  w: 12, h: 1 },
-  { id: 'tasks',     x: 0, y: 5,  w: 4,  h: 6 },
-  { id: 'reminders', x: 4, y: 5,  w: 5,  h: 6 },
-  { id: 'calendar',  x: 9, y: 5,  w: 3,  h: 8 },
-  { id: 'events',    x: 0, y: 11, w: 4,  h: 5 },
-  { id: 'notes',     x: 4, y: 11, w: 5,  h: 5 },
+  { id: 'kpi-hoje',      x: 0,  y: 0, w: 3, h: 2 },
+  { id: 'kpi-atrasadas', x: 3,  y: 0, w: 3, h: 2 },
+  { id: 'kpi-ativas',    x: 6,  y: 0, w: 3, h: 2 },
+  { id: 'kpi-projetos',  x: 9,  y: 0, w: 3, h: 2 },
+  { id: 'capture',       x: 0,  y: 2, w: 8, h: 2 },
+  { id: 'projects',      x: 8,  y: 2, w: 4, h: 2 },
+  { id: 'tasks',         x: 0,  y: 4, w: 4, h: 6 },
+  { id: 'reminders',     x: 4,  y: 4, w: 5, h: 6 },
+  { id: 'calendar',      x: 9,  y: 4, w: 3, h: 8 },
+  { id: 'events',        x: 0,  y: 10, w: 4, h: 5 },
+  { id: 'notes',         x: 4,  y: 10, w: 5, h: 5 },
 ]
 
 /* ── Main Component ──────────────────────────────────────── */
@@ -1245,6 +1224,13 @@ export default function PersonalOrganizer() {
     localStorage.removeItem(GRID_KEY)
   }, [])
 
+  // KPI computations
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const activeTasks = tasks.filter((t) => t.status !== 'done')
+  const todayCount = activeTasks.filter((t) => t.due_date === todayStr).length
+  const overdueCount = activeTasks.filter((t) => t.due_date && t.due_date < todayStr).length
+  const activeProjectCount = projects.filter((p) => p.status === 'active').length
+
   return (
     <div className={styles.page}>
       <header className={styles.header}>
@@ -1263,12 +1249,27 @@ export default function PersonalOrganizer() {
       </header>
 
       <div ref={gridRef} className={`grid-stack ${styles.gridContainer}`}>
-        <div className="grid-stack-item" gs-id="dashboard" gs-x="0" gs-y="0" gs-w="12" gs-h="2" gs-min-w="4" gs-min-h="1">
+        <div className="grid-stack-item" gs-id="kpi-hoje" gs-x="0" gs-y="0" gs-w="3" gs-h="2" gs-min-w="2" gs-min-h="1">
           <div className="grid-stack-item-content">
-            <DashboardCards tasks={tasks} projects={projects} />
+            <KpiCard value={todayCount} label="Hoje" />
           </div>
         </div>
-        <div className="grid-stack-item" gs-id="capture" gs-x="0" gs-y="2" gs-w="12" gs-h="2" gs-min-w="4" gs-min-h="1">
+        <div className="grid-stack-item" gs-id="kpi-atrasadas" gs-x="3" gs-y="0" gs-w="3" gs-h="2" gs-min-w="2" gs-min-h="1">
+          <div className="grid-stack-item-content">
+            <KpiCard value={overdueCount} label="Atrasadas" danger={overdueCount > 0} />
+          </div>
+        </div>
+        <div className="grid-stack-item" gs-id="kpi-ativas" gs-x="6" gs-y="0" gs-w="3" gs-h="2" gs-min-w="2" gs-min-h="1">
+          <div className="grid-stack-item-content">
+            <KpiCard value={activeTasks.length} label="Ativas" />
+          </div>
+        </div>
+        <div className="grid-stack-item" gs-id="kpi-projetos" gs-x="9" gs-y="0" gs-w="3" gs-h="2" gs-min-w="2" gs-min-h="1">
+          <div className="grid-stack-item-content">
+            <KpiCard value={activeProjectCount} label="Projetos" />
+          </div>
+        </div>
+        <div className="grid-stack-item" gs-id="capture" gs-x="0" gs-y="2" gs-w="8" gs-h="2" gs-min-w="3" gs-min-h="1">
           <div className="grid-stack-item-content">
             <QuickCapture
               onAddTask={(data) => addTaskMutation.mutate(data)}
@@ -1277,7 +1278,7 @@ export default function PersonalOrganizer() {
             />
           </div>
         </div>
-        <div className="grid-stack-item" gs-id="projects" gs-x="0" gs-y="4" gs-w="12" gs-h="1" gs-min-w="4" gs-min-h="1">
+        <div className="grid-stack-item" gs-id="projects" gs-x="8" gs-y="2" gs-w="4" gs-h="2" gs-min-w="2" gs-min-h="1">
           <div className="grid-stack-item-content">
             <ProjectsBar
               projects={projects}
