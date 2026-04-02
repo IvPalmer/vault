@@ -53,3 +53,6 @@ backend/.secret_key
 
 # Docker
 postgres_data/
+
+# Worktrees
+.worktrees/
