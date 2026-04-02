@@ -10,11 +10,16 @@
  *   - Calendar (personal context — profile's selected calendars)
  *   - Reminders (Apple sidecar)
  */
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Responsive, WidthProvider } from 'react-grid-layout'
+import 'react-grid-layout/css/styles.css'
+import 'react-grid-layout/css/react-grid-layout.css'
 import { useProfile } from '../context/ProfileContext'
 import api from '../api/client'
 import styles from './PersonalOrganizer.module.css'
+
+const ResponsiveGridLayout = WidthProvider(Responsive)
 
 // Reminders sidecar runs on the local Mac (port 5177).
 // Calling localhost directly (not through Vite proxy) means each user's
@@ -1120,10 +1125,64 @@ function PersonalReminders() {
 
 /* ── Main Component ──────────────────────────────────────── */
 
+/* ── Layout Persistence ───────────────────────────────────── */
+
+const STORAGE_KEY = 'vault-pessoal-layouts'
+
+const DEFAULT_LAYOUTS = {
+  lg: [
+    { i: 'dashboard', x: 0, y: 0, w: 12, h: 2, static: true },
+    { i: 'capture',   x: 0, y: 2, w: 12, h: 2, static: true },
+    { i: 'projects',  x: 0, y: 4, w: 12, h: 2, static: true },
+    { i: 'tasks',     x: 0, y: 6, w: 5, h: 10, minW: 3, minH: 4 },
+    { i: 'calendar',  x: 5, y: 6, w: 4, h: 10, minW: 3, minH: 6 },
+    { i: 'reminders', x: 9, y: 6, w: 3, h: 6,  minW: 2, minH: 3 },
+    { i: 'events',    x: 5, y: 16, w: 4, h: 6, minW: 2, minH: 3 },
+    { i: 'notes',     x: 9, y: 12, w: 3, h: 6, minW: 2, minH: 3 },
+  ],
+  md: [
+    { i: 'dashboard', x: 0, y: 0, w: 10, h: 2, static: true },
+    { i: 'capture',   x: 0, y: 2, w: 10, h: 2, static: true },
+    { i: 'projects',  x: 0, y: 4, w: 10, h: 2, static: true },
+    { i: 'tasks',     x: 0, y: 6, w: 5, h: 10, minW: 3, minH: 4 },
+    { i: 'calendar',  x: 5, y: 6, w: 5, h: 10, minW: 3, minH: 6 },
+    { i: 'reminders', x: 0, y: 16, w: 5, h: 6, minW: 2, minH: 3 },
+    { i: 'events',    x: 5, y: 16, w: 5, h: 6, minW: 2, minH: 3 },
+    { i: 'notes',     x: 0, y: 22, w: 10, h: 5, minW: 2, minH: 3 },
+  ],
+  sm: [
+    { i: 'dashboard', x: 0, y: 0, w: 6, h: 2, static: true },
+    { i: 'capture',   x: 0, y: 2, w: 6, h: 3, static: true },
+    { i: 'projects',  x: 0, y: 5, w: 6, h: 2, static: true },
+    { i: 'tasks',     x: 0, y: 7, w: 6, h: 8, minW: 3, minH: 4 },
+    { i: 'calendar',  x: 0, y: 15, w: 6, h: 10, minW: 3, minH: 6 },
+    { i: 'events',    x: 0, y: 25, w: 6, h: 6, minW: 2, minH: 3 },
+    { i: 'reminders', x: 0, y: 31, w: 6, h: 6, minW: 2, minH: 3 },
+    { i: 'notes',     x: 0, y: 37, w: 6, h: 5, minW: 2, minH: 3 },
+  ],
+}
+
+function loadLayouts() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (saved) return JSON.parse(saved)
+  } catch { /* ignore */ }
+  return DEFAULT_LAYOUTS
+}
+
+function saveLayouts(layouts) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(layouts))
+  } catch { /* ignore */ }
+}
+
+/* ── Main Component ──────────────────────────────────────── */
+
 export default function PersonalOrganizer() {
   const { currentProfile } = useProfile()
   const queryClient = useQueryClient()
   const [activeProject, setActiveProject] = useState(null)
+  const [layouts, setLayouts] = useState(loadLayouts)
 
   const { data: tasksData } = useQuery({
     queryKey: ['pessoal-tasks'],
@@ -1158,40 +1217,104 @@ export default function PersonalOrganizer() {
     return 'Boa noite'
   }, [])
 
+  const handleLayoutChange = useCallback((_, allLayouts) => {
+    setLayouts(allLayouts)
+    saveLayouts(allLayouts)
+  }, [])
+
+  const handleResetLayout = useCallback(() => {
+    setLayouts(DEFAULT_LAYOUTS)
+    saveLayouts(DEFAULT_LAYOUTS)
+  }, [])
+
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <h2 className={styles.pageTitle}>{greeting}, {currentProfile?.name}</h2>
-        <p className={styles.pageSubtitle}>Pessoal</p>
+        <div>
+          <h2 className={styles.pageTitle}>{greeting}, {currentProfile?.name}</h2>
+          <p className={styles.pageSubtitle}>Pessoal</p>
+        </div>
+        <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Restaurar layout padrao">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 12a9 9 0 019-9 9.75 9.75 0 016.74 2.74L21 8" />
+            <path d="M21 3v5h-5" />
+            <path d="M21 12a9 9 0 01-9 9 9.75 9.75 0 01-6.74-2.74L3 16" />
+            <path d="M8 16H3v5" />
+          </svg>
+        </button>
       </header>
 
-      <DashboardCards tasks={tasks} projects={projects} />
+      <ResponsiveGridLayout
+        className={styles.gridLayout}
+        layouts={layouts}
+        breakpoints={{ lg: 1200, md: 900, sm: 0 }}
+        cols={{ lg: 12, md: 10, sm: 6 }}
+        rowHeight={36}
+        onLayoutChange={handleLayoutChange}
+        draggableHandle={`.${styles.widgetDragHandle}`}
+        margin={[12, 12]}
+        containerPadding={[0, 0]}
+        useCSSTransforms={true}
+        compactType="vertical"
+      >
+        <div key="dashboard">
+          <DashboardCards tasks={tasks} projects={projects} />
+        </div>
 
-      <QuickCapture
-        onAddTask={(data) => addTaskMutation.mutate(data)}
-        onAddNote={(data) => addNoteMutation.mutate(data)}
-        projects={projects}
-      />
+        <div key="capture">
+          <QuickCapture
+            onAddTask={(data) => addTaskMutation.mutate(data)}
+            onAddNote={(data) => addNoteMutation.mutate(data)}
+            projects={projects}
+          />
+        </div>
 
-      <ProjectsBar
-        projects={projects}
-        activeProject={activeProject}
-        onSelectProject={setActiveProject}
-      />
+        <div key="projects">
+          <ProjectsBar
+            projects={projects}
+            activeProject={activeProject}
+            onSelectProject={setActiveProject}
+          />
+        </div>
 
-      <div className={styles.grid}>
-        <div className={styles.colMain}>
+        <div key="tasks" className={styles.gridCell}>
+          <DragHandle />
           <TaskList activeProject={activeProject} />
         </div>
-        <div className={styles.colMid}>
+
+        <div key="calendar" className={styles.gridCell}>
+          <DragHandle />
           <PersonalCalendar />
+        </div>
+
+        <div key="reminders" className={styles.gridCell}>
+          <DragHandle />
+          <PersonalReminders />
+        </div>
+
+        <div key="events" className={styles.gridCell}>
+          <DragHandle />
           <UpcomingEvents />
         </div>
-        <div className={styles.colSide}>
-          <PersonalReminders />
+
+        <div key="notes" className={styles.gridCell}>
+          <DragHandle />
           <NotesList activeProject={activeProject} projects={projects} />
         </div>
-      </div>
+      </ResponsiveGridLayout>
+    </div>
+  )
+}
+
+/* ── Drag Handle (floating in top-left of grid cells) ────── */
+
+function DragHandle() {
+  return (
+    <div className={styles.widgetDragHandle} title="Arrastar">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+        <circle cx="5" cy="5" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="19" cy="5" r="2"/>
+        <circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>
+      </svg>
     </div>
   )
 }
