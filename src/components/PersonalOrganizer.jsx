@@ -1125,7 +1125,7 @@ function PersonalReminders() {
 
 /* ── Grid Layout (Metabase-style) ─────────────────────────── */
 
-const GRID_KEY = 'vault-pessoal-grid-v6'
+const GRID_KEY = 'vault-pessoal-grid-v7'
 
 const DEFAULT_GRID = {
   lg: [
@@ -1255,7 +1255,7 @@ export default function PersonalOrganizer() {
       />
 
       <div ref={gridRef} className={`${styles.gridContainer} ${isDragging ? styles.gridContainerActive : ''}`}>
-        <GridOverlay width={gridWidth} cols={12} rowHeight={28} margin={14} active={isDragging} />
+        {isDragging && <GridOverlay width={gridWidth} cols={12} rowHeight={28} margin={14} />}
         <ResponsiveGridLayout
           width={gridWidth}
           layouts={gridLayouts}
@@ -1298,17 +1298,14 @@ export default function PersonalOrganizer() {
 
 /* ── Grid Overlay — SVG background matching RGL snap positions ── */
 
-function GridOverlay({ width, cols, rowHeight, margin, active }) {
+function GridOverlay({ width, cols, rowHeight, margin }) {
   const colWidth = Math.round((width - margin * (cols - 1)) / cols)
   const stepX = colWidth + margin
   const stepY = rowHeight + margin
-  const rows = Math.ceil((window.innerHeight * 2) / stepY)
+  const rows = 30
+
   return (
-    <svg
-      className={styles.gridOverlay}
-      width={width}
-      height={rows * stepY}
-    >
+    <svg className={styles.gridOverlay} width={width} height={rows * stepY}>
       {Array.from({ length: rows }, (_, row) =>
         Array.from({ length: cols }, (_, col) => (
           <rect
@@ -1318,8 +1315,8 @@ function GridOverlay({ width, cols, rowHeight, margin, active }) {
             width={colWidth}
             height={rowHeight}
             rx={4}
-            fill={active ? 'rgba(184,101,48,0.06)' : 'rgba(184,101,48,0.03)'}
-            stroke={active ? 'rgba(184,101,48,0.12)' : 'rgba(184,101,48,0.06)'}
+            fill="rgba(184,101,48,0.05)"
+            stroke="rgba(184,101,48,0.15)"
             strokeWidth={1}
           />
         ))
