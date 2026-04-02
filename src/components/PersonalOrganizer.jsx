@@ -426,6 +426,235 @@ function UpcomingEvents() {
   )
 }
 
+/* ── Personal Calendar (Month Grid) ──────────────────────── */
+
+const WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab']
+const MONTH_NAMES = [
+  'Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+]
+
+function buildCalendarDays(year, month) {
+  const firstDay = new Date(year, month, 1)
+  const lastDay = new Date(year, month + 1, 0)
+  const startDow = firstDay.getDay()
+  const daysInMonth = lastDay.getDate()
+  const days = []
+  const prevLast = new Date(year, month, 0).getDate()
+  for (let i = startDow - 1; i >= 0; i--) days.push({ day: prevLast - i, month: month - 1, outside: true })
+  for (let d = 1; d <= daysInMonth; d++) days.push({ day: d, month, outside: false })
+  const trailing = days.length <= 35 ? 35 - days.length : 42 - days.length
+  for (let d = 1; d <= trailing; d++) days.push({ day: d, month: month + 1, outside: true })
+  return days
+}
+
+function PersonalCalendar() {
+  const now = new Date()
+  const [viewYear, setViewYear] = useState(now.getFullYear())
+  const [viewMonth, setViewMonth] = useState(now.getMonth())
+  const [selectedDate, setSelectedDate] = useState(null)
+
+  const timeMin = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-01`
+  const lastDay = new Date(viewYear, viewMonth + 1, 0).getDate()
+  const timeMax = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['pessoal-cal-month', viewYear, viewMonth],
+    queryFn: () => api.get(`/calendar/events/?context=personal&time_min=${timeMin}&time_max=${timeMax}`),
+    refetchInterval: 60000,
+  })
+
+  const eventsByDate = useMemo(() => {
+    const map = {}
+    ;(data?.events || []).forEach((evt) => {
+      const key = evt.start.includes('T') ? evt.start.slice(0, 10) : evt.start
+      if (!map[key]) map[key] = []
+      map[key].push(evt)
+    })
+    return map
+  }, [data])
+
+  const days = useMemo(() => buildCalendarDays(viewYear, viewMonth), [viewYear, viewMonth])
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+
+  const dateKey = (d) => {
+    const m = d.month
+    const y = m < 0 ? viewYear - 1 : m > 11 ? viewYear + 1 : viewYear
+    const mm = ((m % 12) + 12) % 12
+    return `${y}-${String(mm + 1).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`
+  }
+
+  const prevMonth = () => { if (viewMonth === 0) { setViewYear(viewYear - 1); setViewMonth(11) } else setViewMonth(viewMonth - 1); setSelectedDate(null) }
+  const nextMonth = () => { if (viewMonth === 11) { setViewYear(viewYear + 1); setViewMonth(0) } else setViewMonth(viewMonth + 1); setSelectedDate(null) }
+
+  const selectedEvents = selectedDate ? (eventsByDate[selectedDate] || []) : []
+
+  const formatTime = (iso) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+
+  return (
+    <div className={styles.widget}>
+      <div className={styles.calHeader}>
+        <button className={styles.calNavBtn} onClick={prevMonth}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6" /></svg>
+        </button>
+        <h3 className={styles.calTitle}>{MONTH_NAMES[viewMonth]} {viewYear}</h3>
+        <button className={styles.calNavBtn} onClick={nextMonth}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6" /></svg>
+        </button>
+      </div>
+
+      <div className={styles.calGrid}>
+        {WEEKDAYS.map((wd) => <div key={wd} className={styles.calWeekday}>{wd}</div>)}
+        {days.map((d, i) => {
+          const key = dateKey(d)
+          const isToday = key === todayKey
+          const isSelected = key === selectedDate
+          const hasEvents = !!eventsByDate[key]
+          return (
+            <button
+              key={i}
+              className={[styles.calDay, d.outside && styles.calDayOutside, isToday && styles.calDayToday, isSelected && styles.calDaySelected].filter(Boolean).join(' ')}
+              onClick={() => setSelectedDate(key === selectedDate ? null : key)}
+            >
+              <span className={styles.calDayNum}>{d.day}</span>
+              {hasEvents && <span className={styles.calDot} />}
+            </button>
+          )
+        })}
+      </div>
+
+      {isLoading && <div className={styles.emptyState} style={{ padding: '8px' }}>Carregando...</div>}
+
+      {selectedDate && (
+        <div className={styles.calDetail}>
+          <div className={styles.calDetailDate}>
+            {new Date(selectedDate + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
+          </div>
+          {selectedEvents.length > 0 ? (
+            selectedEvents.map((evt, i) => (
+              <div key={i} className={styles.calEvent}>
+                <span className={styles.calEventTitle}>{evt.title}</span>
+                <span className={styles.calEventTime}>
+                  {evt.all_day ? 'Dia todo' : `${formatTime(evt.start)} — ${formatTime(evt.end)}`}
+                </span>
+              </div>
+            ))
+          ) : (
+            <div className={styles.emptyState} style={{ padding: '8px' }}>Sem eventos</div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ── Personal Reminders ──────────────────────────────────── */
+
+function PersonalReminders() {
+  const queryClient = useQueryClient()
+  const [activeListIdx, setActiveListIdx] = useState(0)
+  const [newReminder, setNewReminder] = useState('')
+
+  // Fetch ALL reminder lists (not just R&R)
+  const { data: listsData } = useQuery({
+    queryKey: ['pessoal-reminders-lists'],
+    queryFn: () => api.get('/home/reminders/lists/?all=true'),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const availableLists = listsData?.lists || []
+  const listName = availableLists[activeListIdx] || availableLists[0] || ''
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['pessoal-reminders', listName],
+    queryFn: () => api.get(`/home/reminders/?list=${encodeURIComponent(listName)}`),
+    enabled: !!listName,
+    refetchInterval: 30000,
+  })
+
+  const completeMutation = useMutation({
+    mutationFn: (name) => api.post('/home/reminders/complete/', { name, list: listName }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pessoal-reminders', listName] }),
+  })
+
+  const addMutation = useMutation({
+    mutationFn: (name) => api.post('/home/reminders/add/', { name, list: listName }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pessoal-reminders', listName] })
+      setNewReminder('')
+    },
+  })
+
+  const handleAdd = (e) => {
+    e.preventDefault()
+    if (newReminder.trim()) addMutation.mutate(newReminder.trim())
+  }
+
+  return (
+    <div className={styles.widget}>
+      <div className={styles.widgetHeader}>
+        <h3 className={styles.widgetTitle}>LEMBRETES</h3>
+        {data?.count != null && <span className={styles.badge}>{data.count}</span>}
+      </div>
+
+      {/* List tabs — scrollable since there are many */}
+      <div className={styles.reminderTabs}>
+        {availableLists.map((name, idx) => (
+          <button
+            key={name}
+            className={`${styles.reminderTab} ${activeListIdx === idx ? styles.reminderTabActive : ''}`}
+            onClick={() => setActiveListIdx(idx)}
+          >
+            {name}
+          </button>
+        ))}
+      </div>
+
+      {/* Add form */}
+      <form onSubmit={handleAdd} className={styles.reminderAddRow}>
+        <input
+          type="text"
+          value={newReminder}
+          onChange={(e) => setNewReminder(e.target.value)}
+          placeholder="Novo lembrete..."
+          className={styles.captureInput}
+          style={{ padding: '6px 10px', fontSize: '0.8rem' }}
+        />
+        <button type="submit" className={styles.captureBtn} style={{ width: 28, height: 28, fontSize: '0.9rem' }} disabled={!newReminder.trim() || addMutation.isPending}>
+          +
+        </button>
+      </form>
+
+      {/* Reminders list */}
+      <div className={styles.reminderList}>
+        {isLoading && <div className={styles.emptyState}>Carregando...</div>}
+        {error && <div className={styles.emptyState} style={{ color: 'var(--color-red)' }}>Erro ao conectar</div>}
+        {data?.reminders?.map((r, i) => (
+          <div key={`${r.name}-${i}`} className={styles.reminderItem}>
+            <button
+              className={styles.checkBtn}
+              onClick={() => completeMutation.mutate(r.name)}
+              disabled={completeMutation.isPending}
+              title="Concluir"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+              </svg>
+            </button>
+            <div className={styles.reminderContent}>
+              <span className={styles.reminderName}>{r.name}</span>
+              {r.due_date && <span className={styles.reminderDue}>{r.due_date}</span>}
+            </div>
+          </div>
+        ))}
+        {data?.reminders?.length === 0 && !isLoading && (
+          <div className={styles.emptyState}>Nenhum lembrete pendente</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /* ── Main Component ──────────────────────────────────────── */
 
 export default function PersonalOrganizer() {
@@ -457,9 +686,11 @@ export default function PersonalOrganizer() {
       <div className={styles.grid}>
         <div className={styles.colMain}>
           <TaskList />
+          <PersonalCalendar />
         </div>
         <div className={styles.colSide}>
           <UpcomingEvents />
+          <PersonalReminders />
           <NotesList />
         </div>
       </div>

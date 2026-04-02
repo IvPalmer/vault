@@ -477,6 +477,216 @@
   color: var(--color-text-secondary);
 }
 
+/* ─── Calendar ──────────────────────────────────────────── */
+
+.calHeader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.calTitle {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+  min-width: 140px;
+  text-align: center;
+}
+
+.calNavBtn {
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  transition: all 0.15s;
+}
+
+.calNavBtn:hover {
+  color: var(--color-accent);
+  background: var(--color-accent-light);
+}
+
+.calGrid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.calWeekday {
+  text-align: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  padding: 4px 0;
+}
+
+.calDay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 2px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background 0.1s;
+  min-height: 36px;
+  gap: 2px;
+}
+
+.calDay:hover {
+  background: rgba(184, 101, 48, 0.06);
+}
+
+.calDayOutside {
+  opacity: 0.3;
+}
+
+.calDayNum {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.calDayToday .calDayNum {
+  background: var(--color-accent);
+  color: white;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+
+.calDaySelected {
+  background: var(--color-accent-light);
+}
+
+.calDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+
+.calDetail {
+  padding: var(--space-sm) var(--space-md);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.calDetailDate {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: capitalize;
+  margin-bottom: var(--space-sm);
+}
+
+.calEvent {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+}
+
+.calEventTitle {
+  font-size: 0.8rem;
+  color: var(--color-text);
+}
+
+.calEventTime {
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+}
+
+/* ─── Reminders ─────────────────────────────────────────── */
+
+.reminderTabs {
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+  scrollbar-width: none;
+}
+
+.reminderTabs::-webkit-scrollbar {
+  display: none;
+}
+
+.reminderTab {
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.68rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.reminderTab:hover {
+  color: var(--color-text);
+}
+
+.reminderTabActive {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.reminderAddRow {
+  display: flex;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.reminderList {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.reminderItem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: 6px var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.reminderItem:last-child {
+  border-bottom: none;
+}
+
+.reminderContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.reminderName {
+  font-size: 0.82rem;
+  color: var(--color-text);
+  display: block;
+}
+
+.reminderDue {
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+}
+
 /* ─── Shared ────────────────────────────────────────────── */
 
 .emptyState {

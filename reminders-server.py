@@ -68,7 +68,7 @@ class SidecarHandler(BaseHTTPRequestHandler):
         if path == '/api/home/reminders':
             self._get_reminders(parsed)
         elif path == '/api/home/reminders/lists':
-            self._get_lists()
+            self._get_lists(parsed)
         elif path == '/api/home/calendar/calendars':
             self._get_calendars()
         elif path == '/api/home/calendar/events':
@@ -111,15 +111,20 @@ class SidecarHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._json_response({'error': str(e)}, 500)
 
-    def _get_lists(self):
+    def _get_lists(self, parsed=None):
         try:
+            params = parse_qs(parsed.query) if parsed else {}
+            show_all = params.get('all', [''])[0] == 'true'
             data = run_helper('lists')
             if 'error' in data:
                 self._json_response(data, 500)
                 return
             all_lists = data.get('lists', [])
-            filtered = [l for l in HOME_LISTS if l in all_lists]
-            self._json_response({'lists': filtered if filtered else all_lists})
+            if show_all:
+                self._json_response({'lists': all_lists})
+            else:
+                filtered = [l for l in HOME_LISTS if l in all_lists]
+                self._json_response({'lists': filtered if filtered else all_lists})
         except Exception as e:
             self._json_response({'error': str(e)}, 500)
 
