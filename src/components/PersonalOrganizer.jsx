@@ -1125,15 +1125,15 @@ function PersonalReminders() {
 
 /* ── Grid Layout (Metabase-style) ─────────────────────────── */
 
-const GRID_KEY = 'vault-pessoal-grid-v5'
+const GRID_KEY = 'vault-pessoal-grid-v6'
 
 const DEFAULT_GRID = {
   lg: [
-    { i: 'tasks',     x: 0, y: 0,  w: 4,  h: 14, minW: 3, minH: 4 },
-    { i: 'reminders', x: 4, y: 0,  w: 5,  h: 14, minW: 2, minH: 4 },
-    { i: 'calendar',  x: 9, y: 0,  w: 3,  h: 18, minW: 3, minH: 8 },
-    { i: 'events',    x: 0, y: 14, w: 4,  h: 10, minW: 2, minH: 4 },
-    { i: 'notes',     x: 4, y: 14, w: 5,  h: 10, minW: 2, minH: 4 },
+    { i: 'tasks',     x: 0, y: 0,  w: 4,  h: 14, minW: 2, minH: 3 },
+    { i: 'reminders', x: 4, y: 0,  w: 5,  h: 14, minW: 2, minH: 3 },
+    { i: 'calendar',  x: 9, y: 0,  w: 3,  h: 18, minW: 2, minH: 4 },
+    { i: 'events',    x: 0, y: 14, w: 4,  h: 10, minW: 2, minH: 3 },
+    { i: 'notes',     x: 4, y: 14, w: 5,  h: 10, minW: 2, minH: 3 },
   ],
   md: [
     { i: 'tasks',     x: 0, y: 0,  w: 5, h: 14, minW: 3, minH: 4 },
@@ -1255,7 +1255,7 @@ export default function PersonalOrganizer() {
       />
 
       <div ref={gridRef} className={`${styles.gridContainer} ${isDragging ? styles.gridContainerActive : ''}`}>
-        {isDragging && <GridOverlay width={gridWidth} cols={12} rowHeight={28} margin={14} />}
+        <GridOverlay width={gridWidth} cols={12} rowHeight={28} margin={14} active={isDragging} />
         <ResponsiveGridLayout
           width={gridWidth}
           layouts={gridLayouts}
@@ -1270,8 +1270,10 @@ export default function PersonalOrganizer() {
           draggableHandle={`.${styles.widgetHeader}`}
           margin={[14, 14]}
           containerPadding={[0, 0]}
-          compactType="vertical"
+          compactType={null}
+          preventCollision={false}
           isResizable
+          allowOverlap={false}
         >
           <div key="tasks" className={styles.gridCell}>
             <TaskList activeProject={activeProject} />
@@ -1296,29 +1298,27 @@ export default function PersonalOrganizer() {
 
 /* ── Grid Overlay — SVG background matching RGL snap positions ── */
 
-function GridOverlay({ width, cols, rowHeight, margin }) {
+function GridOverlay({ width, cols, rowHeight, margin, active }) {
   const colWidth = Math.round((width - margin * (cols - 1)) / cols)
   const stepX = colWidth + margin
   const stepY = rowHeight + margin
-  const rows = Math.ceil((window.innerHeight * 1.5) / stepY)
+  const rows = Math.ceil((window.innerHeight * 2) / stepY)
+  const opacity = active ? '0.06' : '0.025'
 
-  // Build SVG pattern that tiles exactly with RGL's grid
   const rects = []
   for (let c = 0; c < cols; c++) {
     rects.push(
-      `<rect x="${c * stepX}" y="0" width="${colWidth}" height="${rowHeight}" rx="3" fill="%23000" opacity="0.04"/>`
+      `<rect x="${c * stepX}" y="0" width="${colWidth}" height="${rowHeight}" rx="4" fill="%23000" opacity="${opacity}"/>`
     )
   }
-  const svgW = width
-  const svgH = stepY
-  const svg = `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='${svgW}' height='${svgH}'>${rects.join('')}</svg>")`
+  const svg = `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='${width}' height='${stepY}'>${rects.join('')}</svg>")`
 
   return (
     <div
-      className={styles.gridOverlay}
+      className={`${styles.gridOverlay} ${active ? styles.gridOverlayActive : ''}`}
       style={{
         backgroundImage: svg,
-        backgroundSize: `${svgW}px ${svgH}px`,
+        backgroundSize: `${width}px ${stepY}px`,
         height: rows * stepY,
       }}
     />
