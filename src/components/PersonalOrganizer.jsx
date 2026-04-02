@@ -1303,24 +1303,27 @@ function GridOverlay({ width, cols, rowHeight, margin, active }) {
   const stepX = colWidth + margin
   const stepY = rowHeight + margin
   const rows = Math.ceil((window.innerHeight * 2) / stepY)
-  const opacity = active ? '0.06' : '0.025'
-
-  const rects = []
-  for (let c = 0; c < cols; c++) {
-    rects.push(
-      `<rect x="${c * stepX}" y="0" width="${colWidth}" height="${rowHeight}" rx="4" fill="%23000" opacity="${opacity}"/>`
-    )
-  }
-  const svg = `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='${width}' height='${stepY}'>${rects.join('')}</svg>")`
-
   return (
-    <div
-      className={`${styles.gridOverlay} ${active ? styles.gridOverlayActive : ''}`}
-      style={{
-        backgroundImage: svg,
-        backgroundSize: `${width}px ${stepY}px`,
-        height: rows * stepY,
-      }}
-    />
+    <svg
+      className={styles.gridOverlay}
+      width={width}
+      height={rows * stepY}
+    >
+      {Array.from({ length: rows }, (_, row) =>
+        Array.from({ length: cols }, (_, col) => (
+          <rect
+            key={`${row}-${col}`}
+            x={col * stepX}
+            y={row * stepY}
+            width={colWidth}
+            height={rowHeight}
+            rx={4}
+            fill={active ? 'rgba(184,101,48,0.06)' : 'rgba(184,101,48,0.03)'}
+            stroke={active ? 'rgba(184,101,48,0.12)' : 'rgba(184,101,48,0.06)'}
+            strokeWidth={1}
+          />
+        ))
+      )}
+    </svg>
   )
 }
