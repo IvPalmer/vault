@@ -12,14 +12,14 @@
  */
 import { useState, useMemo, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Responsive, WidthProvider } from 'react-grid-layout'
+import { ResponsiveGridLayout } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
 import { useProfile } from '../context/ProfileContext'
 import api from '../api/client'
 import styles from './PersonalOrganizer.module.css'
 
-const ResponsiveGridLayout = WidthProvider(Responsive)
+// ResponsiveGridLayout imported directly from react-grid-layout
 
 // Reminders sidecar runs on the local Mac (port 5177).
 // Calling localhost directly (not through Vite proxy) means each user's
