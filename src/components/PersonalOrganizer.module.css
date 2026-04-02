@@ -431,6 +431,11 @@
 .gridContainer {
   position: relative;
   min-height: 400px;
+  /* Break out of parent container to fill full viewport width */
+  width: 100vw;
+  margin-left: calc(-50vw + 50%);
+  padding: 0 var(--space-lg);
+  box-sizing: border-box;
 }
 
 .gridOverlay {
