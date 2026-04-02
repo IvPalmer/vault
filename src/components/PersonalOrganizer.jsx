@@ -13,10 +13,10 @@ import { useProfile } from '../context/ProfileContext'
 import api from '../api/client'
 import styles from './PersonalOrganizer.module.css'
 
-// Reminders sidecar runs on the local Mac (port 5176).
+// Reminders sidecar runs on the local Mac (port 5177).
 // Calling localhost directly (not through Vite proxy) means each user's
 // browser hits their own Mac's sidecar → sees their own Apple Reminders.
-const SIDECAR_BASE = 'http://localhost:5176'
+const SIDECAR_BASE = 'http://localhost:5177'
 async function sidecarGet(path) {
   const res = await fetch(`${SIDECAR_BASE}${path}`)
   if (!res.ok) throw new Error(`Sidecar ${res.status}`)
@@ -471,7 +471,8 @@ function PersonalCalendar() {
   const now = new Date()
   const [viewYear, setViewYear] = useState(now.getFullYear())
   const [viewMonth, setViewMonth] = useState(now.getMonth())
-  const [selectedDate, setSelectedDate] = useState(null)
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  const [selectedDate, setSelectedDate] = useState(todayKey)
 
   const timeMin = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-01`
   const lastDay = new Date(viewYear, viewMonth + 1, 0).getDate()
@@ -494,7 +495,6 @@ function PersonalCalendar() {
   }, [data])
 
   const days = useMemo(() => buildCalendarDays(viewYear, viewMonth), [viewYear, viewMonth])
-  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 
   const dateKey = (d) => {
     const m = d.month

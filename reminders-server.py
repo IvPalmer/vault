@@ -5,8 +5,8 @@ Runs OUTSIDE Docker on macOS — uses a compiled Swift EventKit helper
 for reminders and osascript for Apple Calendar access.
 
 Vite proxies:
-  /api/home/reminders/*  → this server on port 5176
-  /api/home/calendar/*   → this server on port 5176
+  /api/home/reminders/*  → this server on port 5177
+  /api/home/calendar/*   → this server on port 5177
 
 Usage:
     python3 reminders-server.py
@@ -19,7 +19,7 @@ import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
-PORT = 5176
+PORT = 5177
 HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reminders-helper')
 
 # Only show these lists on the Home screen (the shared R&R lists)

@@ -9,7 +9,7 @@
 set -e
 
 VAULT_DIR="$HOME/.vault-sidecar"
-SIDECAR_PORT=5176
+SIDECAR_PORT=5177
 
 echo ""
 echo "╔══════════════════════════════════════╗"
@@ -107,7 +107,7 @@ import json, os, subprocess, sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
-PORT = 5176
+PORT = 5177
 HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reminders-helper')
 
 def run_helper(*args, timeout=15):

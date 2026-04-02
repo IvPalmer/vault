@@ -1,14 +1,14 @@
 /**
  * RemindersSettings.jsx — Apple Reminders sidecar status + setup.
  *
- * Checks if the local sidecar is running (localhost:5176).
+ * Checks if the local sidecar is running (localhost:5177).
  * If running: shows available reminder lists.
  * If not: shows setup instructions with one-click install.
  */
 import { useQuery } from '@tanstack/react-query'
 import styles from './CalendarSettings.module.css'
 
-const SIDECAR_URL = 'http://localhost:5176'
+const SIDECAR_URL = 'http://localhost:5177'
 
 async function checkSidecar() {
   try {
@@ -64,7 +64,7 @@ export default function RemindersSettings() {
                 color: 'var(--color-green, #34C759)',
                 fontWeight: 600,
               }}>
-                localhost:{5176}
+                localhost:{5177}
               </span>
             </div>
           </div>

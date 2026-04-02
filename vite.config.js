@@ -12,7 +12,7 @@ export default defineConfig({
     proxy: {
       // Apple Reminders → host-side sidecar (needs macOS EventKit/osascript)
       '/api/home/reminders': {
-        target: 'http://127.0.0.1:5176',
+        target: 'http://127.0.0.1:5177',
         changeOrigin: true,
       },
       // Everything else → Django in Docker
