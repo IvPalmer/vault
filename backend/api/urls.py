@@ -37,6 +37,7 @@ from .views import (
     CalendarEventsView, CalendarAddEventView,
     SalaryProjectionView, SalarySyncView, SalaryConfigView,
     PluggySyncView,
+    ProjectViewSet, PersonalTaskViewSet, PersonalNoteViewSet,
 )
 
 router = DefaultRouter()
@@ -54,6 +55,9 @@ router.register(r'budget-configs', BudgetConfigViewSet, basename='budgetconfig')
 router.register(r'balance-overrides', BalanceOverrideViewSet, basename='balanceoverride')
 router.register(r'setup-templates', SetupTemplateViewSet, basename='setuptemplate')
 router.register(r'home/notes', FamilyNoteViewSet, basename='familynote')
+router.register(r'pessoal/projects', ProjectViewSet, basename='project')
+router.register(r'pessoal/tasks', PersonalTaskViewSet, basename='personaltask')
+router.register(r'pessoal/notes', PersonalNoteViewSet, basename='personalnote')
 
 urlpatterns = [
     # Category manager
@@ -122,6 +126,8 @@ urlpatterns = [
     path('calendar/accounts/', CalendarAccountsView.as_view(), name='calendar-accounts'),
     path('calendar/connect/', CalendarConnectView.as_view(), name='calendar-connect'),
     path('calendar/oauth-callback/', CalendarOAuthCallbackView.as_view(), name='calendar-oauth-callback'),
+    # Google Cloud Console has this as the authorized redirect URI
+    path('home/calendar/oauth-callback/', CalendarOAuthCallbackView.as_view(), name='calendar-oauth-callback-legacy'),
     path('calendar/accounts/<uuid:account_id>/', CalendarDisconnectView.as_view(), name='calendar-disconnect'),
     path('calendar/available/<uuid:account_id>/', CalendarAvailableView.as_view(), name='calendar-available'),
     path('calendar/selections/', CalendarSelectionsView.as_view(), name='calendar-selections'),

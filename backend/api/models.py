@@ -611,3 +611,72 @@ class CalendarSelection(models.Model):
 
     def __str__(self):
         return f"{self.calendar_name} ({self.account.email})"
+
+
+class Project(models.Model):
+    """Personal project for grouping tasks and notes."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='projects')
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=[('active', 'Ativo'), ('paused', 'Pausado'), ('done', 'Concluido')],
+        default='active',
+    )
+    color = models.CharField(max_length=7, blank=True)
+    position = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['position', 'name']
+
+    def __str__(self):
+        return f"{self.profile.name}: {self.name}"
+
+
+class PersonalTask(models.Model):
+    """Individual task, optionally linked to a project."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='personal_tasks')
+    project = models.ForeignKey(Project, on_delete=models.SET_NULL, null=True, blank=True, related_name='tasks')
+    title = models.CharField(max_length=300)
+    notes = models.TextField(blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    priority = models.IntegerField(
+        default=0,
+        choices=[(0, 'Nenhuma'), (1, 'Baixa'), (2, 'Media'), (3, 'Alta')],
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=[('todo', 'A fazer'), ('doing', 'Fazendo'), ('done', 'Feito')],
+        default='todo',
+    )
+    position = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['position', '-priority', 'due_date']
+
+    def __str__(self):
+        return self.title
+
+
+class PersonalNote(models.Model):
+    """Profile-scoped personal note, optionally linked to a project."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='personal_notes')
+    project = models.ForeignKey(Project, on_delete=models.SET_NULL, null=True, blank=True, related_name='notes')
+    title = models.CharField(max_length=200, blank=True)
+    content = models.TextField()
+    pinned = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-pinned', '-updated_at']
+
+    def __str__(self):
+        return f"{self.title or self.content[:40]}"

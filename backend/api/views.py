@@ -63,6 +63,7 @@ from .models import (
     RecurringTemplate, BudgetConfig, BalanceOverride, Profile,
     BankTemplate, SetupTemplate, FamilyNote, SalaryConfig,
     GoogleCalendarAccount, CalendarSelection,
+    Project, PersonalTask, PersonalNote,
 )
 from .serializers import (
     AccountSerializer, CategorySerializer, SubcategorySerializer,
@@ -74,6 +75,7 @@ from .serializers import (
     ProfileSerializer, BankTemplateSerializer, SetupTemplateSerializer,
     FamilyNoteSerializer,
     GoogleCalendarAccountSerializer, CalendarSelectionSerializer,
+    ProjectSerializer, PersonalTaskSerializer, PersonalNoteSerializer,
 )
 from .services import (
     get_metricas,
@@ -2506,7 +2508,7 @@ from . import google_calendar as gcal
 
 def _get_calendar_redirect_uri(request):
     """Build the OAuth redirect URI from the incoming request."""
-    return 'http://localhost:8001/api/calendar/oauth-callback/'
+    return 'http://localhost:8001/api/home/calendar/oauth-callback/'
 
 
 class CalendarAccountsView(APIView):
@@ -2844,3 +2846,44 @@ class SalaryConfigView(APIView):
             },
         )
         return Response({'status': 'ok', 'id': str(cfg.id)})
+
+
+class ProjectViewSet(viewsets.ModelViewSet):
+    serializer_class = ProjectSerializer
+
+    def get_queryset(self):
+        return Project.objects.filter(profile=self.request.profile)
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)
+
+
+class PersonalTaskViewSet(viewsets.ModelViewSet):
+    serializer_class = PersonalTaskSerializer
+
+    def get_queryset(self):
+        qs = PersonalTask.objects.filter(profile=self.request.profile).select_related('project')
+        project = self.request.query_params.get('project')
+        if project:
+            qs = qs.filter(project_id=project)
+        status = self.request.query_params.get('status')
+        if status:
+            qs = qs.filter(status=status)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)
+
+
+class PersonalNoteViewSet(viewsets.ModelViewSet):
+    serializer_class = PersonalNoteSerializer
+
+    def get_queryset(self):
+        qs = PersonalNote.objects.filter(profile=self.request.profile).select_related('project')
+        project = self.request.query_params.get('project')
+        if project:
+            qs = qs.filter(project_id=project)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)

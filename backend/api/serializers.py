@@ -4,6 +4,7 @@ from .models import (
     PluggyCategoryMapping, RenameRule, RecurringTemplate, Transaction,
     RecurringMapping, BudgetConfig, BalanceOverride, BankTemplate,
     SetupTemplate, FamilyNote, GoogleCalendarAccount, CalendarSelection,
+    Project, PersonalTask, PersonalNote,
 )
 
 
@@ -152,3 +153,30 @@ class CalendarSelectionSerializer(serializers.ModelSerializer):
             'id', 'account', 'account_email', 'calendar_id',
             'calendar_name', 'color', 'show_in_home', 'show_in_personal',
         ]
+
+
+class ProjectSerializer(serializers.ModelSerializer):
+    task_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Project
+        fields = ['id', 'name', 'description', 'status', 'color', 'position', 'task_count', 'created_at', 'updated_at']
+
+    def get_task_count(self, obj):
+        return obj.tasks.exclude(status='done').count()
+
+
+class PersonalTaskSerializer(serializers.ModelSerializer):
+    project_name = serializers.CharField(source='project.name', read_only=True, default=None)
+
+    class Meta:
+        model = PersonalTask
+        fields = ['id', 'project', 'project_name', 'title', 'notes', 'due_date', 'priority', 'status', 'position', 'created_at', 'updated_at']
+
+
+class PersonalNoteSerializer(serializers.ModelSerializer):
+    project_name = serializers.CharField(source='project.name', read_only=True, default=None)
+
+    class Meta:
+        model = PersonalNote
+        fields = ['id', 'project', 'project_name', 'title', 'content', 'pinned', 'created_at', 'updated_at']
