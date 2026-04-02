@@ -10,16 +10,11 @@
  *   - Calendar (personal context — profile's selected calendars)
  *   - Reminders (Apple sidecar)
  */
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ResponsiveGridLayout } from 'react-grid-layout'
-import 'react-grid-layout/css/styles.css'
-import 'react-resizable/css/styles.css'
 import { useProfile } from '../context/ProfileContext'
 import api from '../api/client'
 import styles from './PersonalOrganizer.module.css'
-
-// ResponsiveGridLayout imported directly from react-grid-layout
 
 // Reminders sidecar runs on the local Mac (port 5177).
 // Calling localhost directly (not through Vite proxy) means each user's
@@ -1125,48 +1120,17 @@ function PersonalReminders() {
 
 /* ── Main Component ──────────────────────────────────────── */
 
-/* ── Layout Persistence ───────────────────────────────────── */
+/* ── Widget Order Persistence ─────────────────────────────── */
 
-const STORAGE_KEY = 'vault-pessoal-layouts-v2'
+const DEFAULT_WIDGET_ORDER = ['tasks', 'calendar', 'reminders', 'events', 'notes']
+const LAYOUT_KEY = 'vault-pessoal-widget-order'
 
-const DEFAULT_LAYOUTS = {
-  lg: [
-    { i: 'tasks',     x: 0, y: 0,  w: 5,  h: 12, minW: 3, minH: 4 },
-    { i: 'calendar',  x: 5, y: 0,  w: 4,  h: 12, minW: 3, minH: 6 },
-    { i: 'reminders', x: 9, y: 0,  w: 3,  h: 8,  minW: 2, minH: 3 },
-    { i: 'notes',     x: 9, y: 8,  w: 3,  h: 6,  minW: 2, minH: 3 },
-    { i: 'events',    x: 5, y: 12, w: 4,  h: 6,  minW: 2, minH: 3 },
-  ],
-  md: [
-    { i: 'tasks',     x: 0, y: 0,  w: 5, h: 12, minW: 3, minH: 4 },
-    { i: 'calendar',  x: 5, y: 0,  w: 5, h: 12, minW: 3, minH: 6 },
-    { i: 'reminders', x: 0, y: 12, w: 5, h: 7,  minW: 2, minH: 3 },
-    { i: 'events',    x: 5, y: 12, w: 5, h: 7,  minW: 2, minH: 3 },
-    { i: 'notes',     x: 0, y: 19, w: 10, h: 5, minW: 2, minH: 3 },
-  ],
-  sm: [
-    { i: 'tasks',     x: 0, y: 0,  w: 6, h: 10, minW: 3, minH: 4 },
-    { i: 'calendar',  x: 0, y: 10, w: 6, h: 12, minW: 3, minH: 6 },
-    { i: 'events',    x: 0, y: 22, w: 6, h: 6,  minW: 2, minH: 3 },
-    { i: 'reminders', x: 0, y: 28, w: 6, h: 7,  minW: 2, minH: 3 },
-    { i: 'notes',     x: 0, y: 35, w: 6, h: 5,  minW: 2, minH: 3 },
-  ],
-}
-
-function loadLayouts() {
-  // Clear stale v1 layout
-  localStorage.removeItem('vault-pessoal-layouts')
+function loadWidgetOrder() {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY)
+    const saved = localStorage.getItem(LAYOUT_KEY)
     if (saved) return JSON.parse(saved)
   } catch { /* ignore */ }
-  return DEFAULT_LAYOUTS
-}
-
-function saveLayouts(layouts) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(layouts))
-  } catch { /* ignore */ }
+  return DEFAULT_WIDGET_ORDER
 }
 
 /* ── Main Component ──────────────────────────────────────── */
@@ -1175,12 +1139,9 @@ export default function PersonalOrganizer() {
   const { currentProfile } = useProfile()
   const queryClient = useQueryClient()
   const [activeProject, setActiveProject] = useState(null)
-  const [layouts, setLayouts] = useState(() => {
-    // Force clean start — clear any stale layouts
-    localStorage.removeItem('vault-pessoal-layouts')
-    localStorage.removeItem('vault-pessoal-layouts-v2')
-    return DEFAULT_LAYOUTS
-  })
+  const [widgetOrder, setWidgetOrder] = useState(loadWidgetOrder)
+  const [dragId, setDragId] = useState(null)
+  const [dragOverId, setDragOverId] = useState(null)
 
   const { data: tasksData } = useQuery({
     queryKey: ['pessoal-tasks'],
@@ -1215,15 +1176,35 @@ export default function PersonalOrganizer() {
     return 'Boa noite'
   }, [])
 
-  const handleLayoutChange = useCallback((_, allLayouts) => {
-    setLayouts(allLayouts)
-    saveLayouts(allLayouts)
-  }, [])
+  // Drag and drop handlers
+  const handleDragStart = (id) => setDragId(id)
+  const handleDragOver = (e, id) => { e.preventDefault(); setDragOverId(id) }
+  const handleDragEnd = () => { setDragId(null); setDragOverId(null) }
+  const handleDrop = (targetId) => {
+    if (!dragId || dragId === targetId) return
+    const newOrder = [...widgetOrder]
+    const fromIdx = newOrder.indexOf(dragId)
+    const toIdx = newOrder.indexOf(targetId)
+    newOrder.splice(fromIdx, 1)
+    newOrder.splice(toIdx, 0, dragId)
+    setWidgetOrder(newOrder)
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(newOrder))
+    setDragId(null)
+    setDragOverId(null)
+  }
 
-  const handleResetLayout = useCallback(() => {
-    setLayouts(DEFAULT_LAYOUTS)
-    saveLayouts(DEFAULT_LAYOUTS)
-  }, [])
+  const handleReset = () => {
+    setWidgetOrder(DEFAULT_WIDGET_ORDER)
+    localStorage.removeItem(LAYOUT_KEY)
+  }
+
+  const WIDGETS = {
+    tasks: <TaskList activeProject={activeProject} />,
+    calendar: <PersonalCalendar />,
+    reminders: <PersonalReminders />,
+    events: <UpcomingEvents />,
+    notes: <NotesList activeProject={activeProject} projects={projects} />,
+  }
 
   return (
     <div className={styles.page}>
@@ -1232,7 +1213,7 @@ export default function PersonalOrganizer() {
           <h2 className={styles.pageTitle}>{greeting}, {currentProfile?.name}</h2>
           <p className={styles.pageSubtitle}>Pessoal</p>
         </div>
-        <button className={styles.resetLayoutBtn} onClick={handleResetLayout} title="Restaurar layout padrao">
+        <button className={styles.resetLayoutBtn} onClick={handleReset} title="Restaurar layout padrao">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M3 12a9 9 0 019-9 9.75 9.75 0 016.74 2.74L21 8" />
             <path d="M21 3v5h-5" />
@@ -1256,56 +1237,27 @@ export default function PersonalOrganizer() {
         onSelectProject={setActiveProject}
       />
 
-      <ResponsiveGridLayout
-        className={styles.gridLayout}
-        layouts={layouts}
-        breakpoints={{ lg: 1200, md: 900, sm: 0 }}
-        cols={{ lg: 12, md: 10, sm: 6 }}
-        rowHeight={36}
-        onLayoutChange={handleLayoutChange}
-        draggableHandle={`.${styles.widgetDragHandle}`}
-        margin={[12, 12]}
-        containerPadding={[0, 0]}
-        compactType="vertical"
-      >
-        <div key="tasks" className={styles.gridCell}>
-          <DragHandle />
-          <TaskList activeProject={activeProject} />
-        </div>
-
-        <div key="calendar" className={styles.gridCell}>
-          <DragHandle />
-          <PersonalCalendar />
-        </div>
-
-        <div key="reminders" className={styles.gridCell}>
-          <DragHandle />
-          <PersonalReminders />
-        </div>
-
-        <div key="events" className={styles.gridCell}>
-          <DragHandle />
-          <UpcomingEvents />
-        </div>
-
-        <div key="notes" className={styles.gridCell}>
-          <DragHandle />
-          <NotesList activeProject={activeProject} projects={projects} />
-        </div>
-      </ResponsiveGridLayout>
-    </div>
-  )
-}
-
-/* ── Drag Handle (floating in top-left of grid cells) ────── */
-
-function DragHandle() {
-  return (
-    <div className={styles.widgetDragHandle} title="Arrastar">
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-        <circle cx="5" cy="5" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="19" cy="5" r="2"/>
-        <circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>
-      </svg>
+      <div className={styles.grid}>
+        {widgetOrder.map((id) => (
+          <div
+            key={id}
+            className={`${styles.gridCell} ${dragId === id ? styles.gridCellDragging : ''} ${dragOverId === id ? styles.gridCellOver : ''}`}
+            draggable
+            onDragStart={() => handleDragStart(id)}
+            onDragOver={(e) => handleDragOver(e, id)}
+            onDragEnd={handleDragEnd}
+            onDrop={() => handleDrop(id)}
+          >
+            <div className={styles.widgetDragHandle}>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="5" cy="5" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="19" cy="5" r="2"/>
+                <circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>
+              </svg>
+            </div>
+            {WIDGETS[id]}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

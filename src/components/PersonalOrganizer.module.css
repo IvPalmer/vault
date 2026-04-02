@@ -403,11 +403,7 @@
   opacity: 0.4;
 }
 
-/* ─── Grid Layout (react-grid-layout) ───────────────────── */
-
-.gridLayout {
-  margin: 0 -6px;
-}
+/* ─── Grid Layout ───────────────────────────────────────── */
 
 .header {
   display: flex;
@@ -431,23 +427,33 @@
   border-color: var(--color-accent);
 }
 
-/* Grid cells — contain the widget + floating drag handle */
-.gridCell {
-  height: 100%;
-  position: relative;
-  display: flex;
-  flex-direction: column;
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: var(--space-md);
+  align-items: start;
 }
 
-.gridCell > div:last-child {
-  flex: 1;
-  overflow: auto;
+.gridCell {
+  position: relative;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.gridCellDragging {
+  opacity: 0.4;
+  transform: scale(0.98);
+}
+
+.gridCellOver {
+  outline: 2px dashed var(--color-accent);
+  outline-offset: 4px;
+  border-radius: var(--radius-md);
 }
 
 .widgetDragHandle {
   position: absolute;
-  top: 4px;
-  left: 6px;
+  top: 6px;
+  left: 8px;
   z-index: 2;
   cursor: grab;
   color: var(--color-text-secondary);
@@ -471,45 +477,6 @@
 
 .widgetDragHandle:active {
   cursor: grabbing;
-}
-
-/* react-grid-layout overrides */
-:global(.react-grid-item) {
-  transition: all 200ms ease;
-}
-
-:global(.react-grid-item.react-grid-placeholder) {
-  background: var(--color-accent);
-  opacity: 0.12;
-  border-radius: var(--radius-md);
-}
-
-:global(.react-grid-item > .react-resizable-handle) {
-  background: none;
-  width: 16px;
-  height: 16px;
-}
-
-:global(.react-grid-item > .react-resizable-handle::after) {
-  content: '';
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
-  width: 8px;
-  height: 8px;
-  border-right: 2px solid var(--color-text-secondary);
-  border-bottom: 2px solid var(--color-text-secondary);
-  opacity: 0.3;
-  transition: opacity 0.15s;
-}
-
-:global(.react-grid-item:hover > .react-resizable-handle::after) {
-  opacity: 0.7;
-}
-
-/* Items inside grid that aren't GridWidget (dashboard, capture, projects) */
-:global(.react-grid-item) > div:only-child {
-  height: 100%;
 }
 
 /* ─── Shared Widget ─────────────────────────────────────── */
