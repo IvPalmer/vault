@@ -4,7 +4,7 @@ from .models import (
     PluggyCategoryMapping, RenameRule, RecurringTemplate, Transaction,
     RecurringMapping, BudgetConfig, BalanceOverride, BankTemplate,
     SetupTemplate, FamilyNote, GoogleAccount, CalendarSelection,
-    Project, PersonalTask, PersonalNote,
+    Project, PersonalTask, PersonalNote, DashboardState,
 )
 
 
@@ -180,3 +180,10 @@ class PersonalNoteSerializer(serializers.ModelSerializer):
     class Meta:
         model = PersonalNote
         fields = ['id', 'project', 'project_name', 'title', 'content', 'pinned', 'created_at', 'updated_at']
+
+
+class DashboardStateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DashboardState
+        fields = ['state', 'updated_at']
+        read_only_fields = ['updated_at']

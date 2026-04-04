@@ -690,3 +690,14 @@ class PersonalNote(models.Model):
 
     def __str__(self):
         return f"{self.title or self.content[:40]}"
+
+
+class DashboardState(models.Model):
+    """Server-side storage for dashboard widget layouts, tabs, and configs.
+    Replaces localStorage for cross-device sync."""
+    profile = models.OneToOneField(Profile, on_delete=models.CASCADE, related_name='dashboard_state')
+    state = models.JSONField(default=dict, help_text='Full dashboard state: tabs, widgets, configs')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'DashboardState({self.profile.name})'
