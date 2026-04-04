@@ -22,6 +22,8 @@ import TextBlock from './widgets/TextBlock'
 import ClockWidget from './widgets/ClockWidget'
 import GreetingWidget from './widgets/GreetingWidget'
 import { FinSaldo, FinSobra, FinFatura } from './widgets/FinanceWidgets'
+import EmailWidget from './widgets/EmailWidget'
+import DriveWidget from './widgets/DriveWidget'
 import ChatWidget from './widgets/ChatWidget'
 
 // Reminders sidecar runs on the local Mac (port 5177).
@@ -1480,6 +1482,20 @@ function PersonalOrganizerInner({ profileId }) {
       case 'fin-saldo':     return <FinSaldo />
       case 'fin-sobra':     return <FinSobra />
       case 'fin-fatura':    return <FinFatura />
+      case 'email-inbox':
+        return (
+          <EmailWidget
+            config={widgetConfigs[widget.id]}
+            onConfigChange={(cfg) => updateWidgetConfig(widget.id, cfg)}
+          />
+        )
+      case 'drive-files':
+        return (
+          <DriveWidget
+            config={widgetConfigs[widget.id]}
+            onConfigChange={(cfg) => updateWidgetConfig(widget.id, cfg)}
+          />
+        )
       default:              return <div className={styles.emptyState}>Widget desconhecido</div>
     }
   }

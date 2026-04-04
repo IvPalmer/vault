@@ -20,6 +20,10 @@ const WIDGET_REGISTRY = {
   'clock':         { label: 'Relogio', category: 'Display', defaultW: 2, defaultH: 2, minW: 2, minH: 2 },
   'greeting':      { label: 'Saudacao', category: 'Display', defaultW: 4, defaultH: 1, minW: 3, minH: 1 },
 
+  // ── Google ──
+  'email-inbox':   { label: 'Emails', category: 'Google', defaultW: 4, defaultH: 5, minW: 3, minH: 3 },
+  'drive-files':   { label: 'Arquivos', category: 'Google', defaultW: 4, defaultH: 5, minW: 3, minH: 3 },
+
   // ── Financeiro (new) ──
   'fin-saldo':     { label: 'Saldo Projetado', category: 'Financeiro', defaultW: 3, defaultH: 2, minW: 2, minH: 2 },
   'fin-sobra':     { label: 'Sobra do Mes', category: 'Financeiro', defaultW: 3, defaultH: 2, minW: 2, minH: 2 },
