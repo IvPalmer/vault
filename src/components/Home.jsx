@@ -12,6 +12,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { useProfile } from '../context/ProfileContext'
+import { useAuth } from '../context/AuthContext'
 import api from '../api/client'
 import styles from './Home.module.css'
 
@@ -770,13 +771,15 @@ function CalendarWidget() {
 
 export default function Home() {
   const { currentProfile, profileSlug } = useProfile()
+  const { user } = useAuth()
+  const userName = user?.name?.split(' ')[0] || localStorage.getItem('vaultUserName') || 'Visitante'
 
   return (
     <div className={styles.home}>
       {/* Greeting */}
       <header className={styles.greeting}>
         <h2 className={styles.greetingTitle}>
-          {getGreeting()}, {getVisitorName()}
+          {getGreeting()}, {userName}
         </h2>
         <p className={styles.greetingDate}>{formatDate()}</p>
       </header>
