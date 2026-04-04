@@ -3,7 +3,7 @@ from .models import (
     Profile, Account, Category, Subcategory, CategorizationRule,
     PluggyCategoryMapping, RenameRule, RecurringTemplate, Transaction,
     RecurringMapping, BudgetConfig, BalanceOverride, BankTemplate,
-    SetupTemplate, FamilyNote, GoogleCalendarAccount, CalendarSelection,
+    SetupTemplate, FamilyNote, GoogleAccount, CalendarSelection,
     Project, PersonalTask, PersonalNote,
 )
 
@@ -132,12 +132,12 @@ class FamilyNoteSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-class GoogleCalendarAccountSerializer(serializers.ModelSerializer):
+class GoogleAccountSerializer(serializers.ModelSerializer):
     connected = serializers.SerializerMethodField()
 
     class Meta:
-        model = GoogleCalendarAccount
-        fields = ['id', 'email', 'connected', 'created_at']
+        model = GoogleAccount
+        fields = ['id', 'email', 'connected', 'authorized_scopes', 'created_at']
 
     def get_connected(self, obj):
         """Cheap heuristic: connected if refresh_token exists in token_data."""

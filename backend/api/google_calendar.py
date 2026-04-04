@@ -2,7 +2,7 @@
 Google Calendar integration via OAuth2 — per-profile, multi-account.
 
 Each profile can connect multiple Google accounts. OAuth tokens are stored
-in the GoogleCalendarAccount model (not on disk).
+in the GoogleAccount model (not on disk).
 
 Setup:
   1. Go to console.cloud.google.com → your project
@@ -42,7 +42,7 @@ DEFAULT_REDIRECT_URI = 'http://localhost:8001/api/home/calendar/oauth-callback/'
 
 
 def get_credentials_for_account(account):
-    """Load OAuth2 credentials from a GoogleCalendarAccount instance.
+    """Load OAuth2 credentials from a GoogleAccount instance.
 
     Refreshes if expired and saves the updated token back to the DB.
     Returns Credentials or None if the token is invalid/revoked.

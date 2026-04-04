@@ -562,18 +562,22 @@ class SalaryConfig(models.Model):
         return f"Salary {self.profile.name}: ${self.hourly_rate_usd}/h"
 
 
-class GoogleCalendarAccount(models.Model):
+class GoogleAccount(models.Model):
     """
     OAuth credentials for a connected Google account.
     One profile can have multiple Google accounts.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     profile = models.ForeignKey(
-        Profile, on_delete=models.CASCADE, related_name='google_calendar_accounts',
+        Profile, on_delete=models.CASCADE, related_name='google_accounts',
     )
     email = models.CharField(max_length=200, help_text='Google account email')
     token_data = models.JSONField(
         help_text='OAuth token JSON: access_token, refresh_token, token_uri, client_id, client_secret, scopes',
+    )
+    authorized_scopes = models.JSONField(
+        default=list, blank=True,
+        help_text='List of OAuth scopes this account has authorized',
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -595,7 +599,7 @@ class CalendarSelection(models.Model):
         Profile, on_delete=models.CASCADE, related_name='calendar_selections',
     )
     account = models.ForeignKey(
-        GoogleCalendarAccount, on_delete=models.CASCADE, related_name='selections',
+        GoogleAccount, on_delete=models.CASCADE, related_name='selections',
     )
     calendar_id = models.CharField(
         max_length=300, help_text='Google Calendar ID (email-like string)',

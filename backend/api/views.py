@@ -62,7 +62,7 @@ from .models import (
     PluggyCategoryMapping, RenameRule, Transaction, RecurringMapping,
     RecurringTemplate, BudgetConfig, BalanceOverride, Profile,
     BankTemplate, SetupTemplate, FamilyNote, SalaryConfig,
-    GoogleCalendarAccount, CalendarSelection,
+    GoogleAccount, CalendarSelection,
     Project, PersonalTask, PersonalNote,
 )
 from .serializers import (
@@ -74,7 +74,7 @@ from .serializers import (
     BudgetConfigSerializer, BalanceOverrideSerializer,
     ProfileSerializer, BankTemplateSerializer, SetupTemplateSerializer,
     FamilyNoteSerializer,
-    GoogleCalendarAccountSerializer, CalendarSelectionSerializer,
+    GoogleAccountSerializer, CalendarSelectionSerializer,
     ProjectSerializer, PersonalTaskSerializer, PersonalNoteSerializer,
 )
 from .services import (
@@ -2515,8 +2515,8 @@ class CalendarAccountsView(APIView):
     """GET /api/calendar/accounts/ — list connected Google accounts for current profile."""
 
     def get(self, request):
-        accounts = GoogleCalendarAccount.objects.filter(profile=request.profile)
-        serializer = GoogleCalendarAccountSerializer(accounts, many=True)
+        accounts = GoogleAccount.objects.filter(profile=request.profile)
+        serializer = GoogleAccountSerializer(accounts, many=True)
         return Response({'accounts': serializer.data})
 
 
@@ -2553,7 +2553,7 @@ class CalendarOAuthCallbackView(APIView):
             )
 
             # Create or update the account
-            account, created = GoogleCalendarAccount.objects.update_or_create(
+            account, created = GoogleAccount.objects.update_or_create(
                 profile_id=profile_id,
                 email=email,
                 defaults={'token_data': token_data},
@@ -2571,10 +2571,10 @@ class CalendarDisconnectView(APIView):
 
     def delete(self, request, account_id):
         try:
-            account = GoogleCalendarAccount.objects.get(
+            account = GoogleAccount.objects.get(
                 id=account_id, profile=request.profile,
             )
-        except GoogleCalendarAccount.DoesNotExist:
+        except GoogleAccount.DoesNotExist:
             return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
         account.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -2585,10 +2585,10 @@ class CalendarAvailableView(APIView):
 
     def get(self, request, account_id):
         try:
-            account = GoogleCalendarAccount.objects.get(
+            account = GoogleAccount.objects.get(
                 id=account_id, profile=request.profile,
             )
-        except GoogleCalendarAccount.DoesNotExist:
+        except GoogleAccount.DoesNotExist:
             return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
 
         calendars = gcal.list_calendars_for_account(account)
@@ -2623,10 +2623,10 @@ class CalendarSelectionsView(APIView):
         created = []
         for sel in incoming:
             try:
-                account = GoogleCalendarAccount.objects.get(
+                account = GoogleAccount.objects.get(
                     id=sel['account_id'], profile=profile,
                 )
-            except (GoogleCalendarAccount.DoesNotExist, KeyError):
+            except (GoogleAccount.DoesNotExist, KeyError):
                 continue
 
             obj = CalendarSelection.objects.create(
@@ -2718,10 +2718,10 @@ class CalendarAddEventView(APIView):
             )
 
         try:
-            account = GoogleCalendarAccount.objects.get(
+            account = GoogleAccount.objects.get(
                 id=account_id, profile=request.profile,
             )
-        except GoogleCalendarAccount.DoesNotExist:
+        except GoogleAccount.DoesNotExist:
             return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
 
         result = gcal.add_event_for_account(
