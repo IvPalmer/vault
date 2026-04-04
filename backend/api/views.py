@@ -2501,6 +2501,7 @@ end tell'''
 # ═══════════════════════════════════════════════════════════
 
 from . import google_calendar as gcal
+from . import google_auth
 
 
 # ─── Calendar (per-profile, multi-account) ───────────────────────────
@@ -2525,7 +2526,7 @@ class CalendarConnectView(APIView):
 
     def post(self, request):
         redirect_uri = _get_calendar_redirect_uri(request)
-        auth_url, err = gcal.start_auth_flow(
+        auth_url, err = google_auth.start_auth_flow(
             profile_id=request.profile.id,
             redirect_uri=redirect_uri,
         )
@@ -2548,7 +2549,7 @@ class CalendarOAuthCallbackView(APIView):
 
         try:
             redirect_uri = _get_calendar_redirect_uri(request)
-            token_data, profile_id, email = gcal.complete_auth_flow(
+            token_data, profile_id, email, _scopes = google_auth.complete_auth_flow(
                 code, state, redirect_uri=redirect_uri,
             )
 
