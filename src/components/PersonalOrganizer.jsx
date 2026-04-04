@@ -29,8 +29,9 @@ import ChatWidget from './widgets/ChatWidget'
 // Reminders sidecar runs on the local Mac (port 5177).
 // Calling localhost directly (not through Vite proxy) means each user's
 // browser hits their own Mac's sidecar → sees their own Apple Reminders.
-// Use current hostname so reminders sidecar works from other machines on the network
-const SIDECAR_BASE = `http://${window.location.hostname}:5177`
+// Reminders sidecar runs on each user's own Mac (localhost).
+// Each browser hits their own machine's Apple Reminders.
+const SIDECAR_BASE = 'http://localhost:5177'
 async function sidecarGet(path) {
   const res = await fetch(`${SIDECAR_BASE}${path}`)
   if (!res.ok) throw new Error(`Sidecar ${res.status}`)
@@ -1042,21 +1043,59 @@ function PersonalReminders({ config, onConfigChange }) {
     if (newReminder.trim()) addMutation.mutate(newReminder.trim())
   }
 
+  // Check if sidecar is reachable
+  const { data: sidecarStatus } = useQuery({
+    queryKey: ['sidecar-check'],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`${SIDECAR_BASE}/api/home/reminders/lists/?all=true`, { signal: AbortSignal.timeout(2000) })
+        return res.ok ? 'connected' : 'error'
+      } catch { return 'not-running' }
+    },
+    staleTime: 10000,
+    enabled: !enabled,
+  })
+
   if (!enabled) {
+    const setupCmd = `curl -fsSL ${window.location.origin}/reminders-setup.sh | bash`
+    const sidecarUp = sidecarStatus === 'connected'
+
     return (
       <div className={styles.widget}>
         <div className={styles.widgetHeader}>
           <h3 className={styles.widgetTitle}>LEMBRETES</h3>
         </div>
         <div className={styles.emptyState}>
-          <p>Lembretes nao configurados</p>
-          <button
-            className={styles.captureBtn}
-            style={{ width: 'auto', padding: '6px 16px', fontSize: '0.78rem', margin: '8px auto 0' }}
-            onClick={() => onConfigChange({ ...config, enabled: true })}
-          >
-            Conectar Apple Reminders
-          </button>
+          {sidecarUp ? (
+            <>
+              <p style={{ margin: '0 0 8px' }}>Sidecar detectado</p>
+              <button
+                className={styles.captureBtn}
+                style={{ width: 'auto', padding: '6px 16px', fontSize: '0.78rem', position: 'relative', zIndex: 5 }}
+                onClick={(e) => { e.stopPropagation(); onConfigChange({ enabled: true }) }}
+              >
+                Conectar Apple Reminders
+              </button>
+            </>
+          ) : (
+            <>
+              <p style={{ margin: '0 0 8px' }}>Abra o Terminal no seu Mac e execute:</p>
+              <div
+                style={{
+                  background: 'var(--color-bg)', border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: '0.72rem',
+                  fontFamily: 'monospace', cursor: 'pointer', wordBreak: 'break-all', position: 'relative', zIndex: 5,
+                }}
+                onClick={() => { navigator.clipboard.writeText(setupCmd) }}
+                title="Clique para copiar"
+              >
+                {setupCmd}
+              </div>
+              <p style={{ fontSize: '0.68rem', color: 'var(--color-text-secondary)', margin: '6px 0 0' }}>
+                Clique para copiar. Apos rodar, atualize a pagina.
+              </p>
+            </>
+          )}
         </div>
       </div>
     )
