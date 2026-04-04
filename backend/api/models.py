@@ -54,6 +54,12 @@ class Profile(models.Model):
         help_text='How budget limits are calculated',
     )
     setup_completed = models.BooleanField(default=False)
+    google_email = models.EmailField(unique=True, null=True, blank=True,
+        help_text='Google account email used for login')
+    google_picture = models.URLField(max_length=500, null=True, blank=True,
+        help_text='Google profile picture URL')
+    google_name = models.CharField(max_length=200, null=True, blank=True,
+        help_text='Google display name')
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
