@@ -1,8 +1,11 @@
 /**
- * CalendarSettings.jsx — Manage Google Calendar accounts and calendar selections.
+ * CalendarSettings.jsx — Manage Google accounts and service access.
  *
- * Used inside Settings page. Profile-scoped: each profile connects their own
- * Google accounts and selects which calendars to show in Home vs Pessoal.
+ * Shows all connected Google accounts with their authorized services
+ * (Calendar, Gmail, Drive, Sheets, Docs). Each account can expand to
+ * configure calendar selections (Home vs Pessoal).
+ *
+ * Also provides the connect flow for new accounts (full Suite scopes).
  */
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -10,17 +13,46 @@ import api from '../api/client'
 import { useProfile } from '../context/ProfileContext'
 import styles from './CalendarSettings.module.css'
 
+const SCOPE_LABELS = {
+  'calendar': 'Calendario',
+  'gmail': 'Gmail',
+  'drive': 'Drive',
+  'spreadsheets': 'Sheets',
+  'documents': 'Docs',
+}
+
+function getServiceBadges(scopes) {
+  if (!scopes || !scopes.length) return ['Calendario']
+  const services = []
+  for (const [key, label] of Object.entries(SCOPE_LABELS)) {
+    if (scopes.some(s => s.includes(key))) services.push(label)
+  }
+  return services.length ? services : ['Calendario']
+}
+
 export default function CalendarSettings() {
   const { currentProfile } = useProfile()
   const queryClient = useQueryClient()
   const [expandedAccount, setExpandedAccount] = useState(null)
 
-  // Fetch connected accounts
+  // Fetch connected accounts (use new google endpoint, fall back to calendar)
+  const { data: googleAccountsData } = useQuery({
+    queryKey: ['google-accounts'],
+    queryFn: () => api.get('/google/accounts/'),
+  })
+
   const { data: accountsData, isLoading: loadingAccounts } = useQuery({
     queryKey: ['calendar-accounts'],
     queryFn: () => api.get('/calendar/accounts/'),
   })
   const accounts = accountsData?.accounts || []
+
+  // Build a map of email → authorized_scopes from google endpoint
+  const googleAccounts = googleAccountsData?.accounts || (Array.isArray(googleAccountsData) ? googleAccountsData : [])
+  const scopesByEmail = {}
+  for (const ga of googleAccounts) {
+    scopesByEmail[ga.email] = ga.authorized_scopes || []
+  }
 
   // Fetch current selections
   const { data: selectionsData } = useQuery({
@@ -37,9 +69,9 @@ export default function CalendarSettings() {
   })
   const availableCalendars = availableData?.calendars || []
 
-  // Connect new account
+  // Connect new account (use new google endpoint for full scopes)
   const connectMutation = useMutation({
-    mutationFn: () => api.post('/calendar/connect/'),
+    mutationFn: () => api.post('/google/connect/'),
     onSuccess: (data) => {
       if (data.auth_url) {
         window.location.href = data.auth_url
@@ -52,6 +84,7 @@ export default function CalendarSettings() {
     mutationFn: (accountId) => api.delete(`/calendar/accounts/${accountId}/`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['calendar-accounts'] })
+      queryClient.invalidateQueries({ queryKey: ['google-accounts'] })
       queryClient.invalidateQueries({ queryKey: ['calendar-selections'] })
       setExpandedAccount(null)
     },
@@ -78,7 +111,6 @@ export default function CalendarSettings() {
 
     let newSelections
     if (!existing && field) {
-      // Add new selection
       newSelections = [
         ...selections.map((s) => ({
           account_id: s.account,
@@ -99,7 +131,6 @@ export default function CalendarSettings() {
       ]
     } else if (existing) {
       const updated = { ...existing, [field]: !existing[field] }
-      // If both are now false, remove the selection
       if (!updated.show_in_home && !updated.show_in_personal) {
         newSelections = selections
           .filter((s) => !(s.account === accountId && s.calendar_id === cal.calendar_id))
@@ -136,82 +167,92 @@ export default function CalendarSettings() {
 
   return (
     <div className={styles.section}>
-      <h2 className={styles.title}>Calendarios</h2>
+      <h2 className={styles.title}>Contas Google</h2>
 
       {/* Connected accounts */}
       <div className={styles.accounts}>
         {loadingAccounts && <p className={styles.muted}>Carregando...</p>}
-        {accounts.map((acc) => (
-          <div key={acc.id} className={styles.accountCard}>
-            <div className={styles.accountHeader}>
-              <div className={styles.accountInfo}>
-                <span className={styles.accountEmail}>{acc.email}</span>
-                {!acc.connected && (
-                  <span className={styles.accountWarning}>Token expirado</span>
-                )}
-              </div>
-              <div className={styles.accountActions}>
-                <button
-                  className={styles.btnSmall}
-                  onClick={() =>
-                    setExpandedAccount(expandedAccount === acc.id ? null : acc.id)
-                  }
-                >
-                  {expandedAccount === acc.id ? 'Fechar' : 'Calendarios'}
-                </button>
-                <button
-                  className={styles.btnDanger}
-                  onClick={() => {
-                    if (confirm(`Desconectar ${acc.email}?`)) {
-                      disconnectMutation.mutate(acc.id)
-                    }
-                  }}
-                >
-                  Desconectar
-                </button>
-              </div>
-            </div>
+        {accounts.map((acc) => {
+          const scopes = scopesByEmail[acc.email] || []
+          const services = getServiceBadges(scopes)
 
-            {/* Calendar list for this account */}
-            {expandedAccount === acc.id && (
-              <div className={styles.calendarList}>
-                {loadingAvailable && <p className={styles.muted}>Carregando calendarios...</p>}
-                {availableCalendars.map((cal) => {
-                  const key = `${acc.id}:${cal.calendar_id}`
-                  const sel = selectionMap[key]
-                  return (
-                    <div key={cal.calendar_id} className={styles.calendarRow}>
-                      <div
-                        className={styles.calendarDot}
-                        style={{ backgroundColor: cal.color || '#666' }}
-                      />
-                      <span className={styles.calendarName}>{cal.name}</span>
-                      <label className={styles.checkLabel}>
-                        <input
-                          type="checkbox"
-                          checked={sel?.show_in_home || false}
-                          onChange={() => toggleSelection(acc.id, cal, 'show_in_home')}
-                        />
-                        Home
-                      </label>
-                      <label className={styles.checkLabel}>
-                        <input
-                          type="checkbox"
-                          checked={sel?.show_in_personal || false}
-                          onChange={() => toggleSelection(acc.id, cal, 'show_in_personal')}
-                        />
-                        Pessoal
-                      </label>
-                    </div>
-                  )
-                })}
-                {availableCalendars.length === 0 && !loadingAvailable && (
-                  <p className={styles.muted}>Nenhum calendario encontrado</p>
-                )}
+          return (
+            <div key={acc.id} className={styles.accountCard}>
+              <div className={styles.accountHeader}>
+                <div className={styles.accountInfo}>
+                  <span className={styles.accountEmail}>{acc.email}</span>
+                  <div className={styles.serviceBadges}>
+                    {services.map(s => (
+                      <span key={s} className={styles.serviceBadge}>{s}</span>
+                    ))}
+                  </div>
+                  {!acc.connected && (
+                    <span className={styles.accountWarning}>Token expirado</span>
+                  )}
+                </div>
+                <div className={styles.accountActions}>
+                  <button
+                    className={styles.btnSmall}
+                    onClick={() =>
+                      setExpandedAccount(expandedAccount === acc.id ? null : acc.id)
+                    }
+                  >
+                    {expandedAccount === acc.id ? 'Fechar' : 'Calendarios'}
+                  </button>
+                  <button
+                    className={styles.btnDanger}
+                    onClick={() => {
+                      if (confirm(`Desconectar ${acc.email}?`)) {
+                        disconnectMutation.mutate(acc.id)
+                      }
+                    }}
+                  >
+                    Desconectar
+                  </button>
+                </div>
               </div>
-            )}
-          </div>
-        ))}
+
+              {/* Calendar list for this account */}
+              {expandedAccount === acc.id && (
+                <div className={styles.calendarList}>
+                  {loadingAvailable && <p className={styles.muted}>Carregando calendarios...</p>}
+                  {availableCalendars.map((cal) => {
+                    const key = `${acc.id}:${cal.calendar_id}`
+                    const sel = selectionMap[key]
+                    return (
+                      <div key={cal.calendar_id} className={styles.calendarRow}>
+                        <div
+                          className={styles.calendarDot}
+                          style={{ backgroundColor: cal.color || '#666' }}
+                        />
+                        <span className={styles.calendarName}>{cal.name}</span>
+                        <label className={styles.checkLabel}>
+                          <input
+                            type="checkbox"
+                            checked={sel?.show_in_home || false}
+                            onChange={() => toggleSelection(acc.id, cal, 'show_in_home')}
+                          />
+                          Home
+                        </label>
+                        <label className={styles.checkLabel}>
+                          <input
+                            type="checkbox"
+                            checked={sel?.show_in_personal || false}
+                            onChange={() => toggleSelection(acc.id, cal, 'show_in_personal')}
+                          />
+                          Pessoal
+                        </label>
+                      </div>
+                    )
+                  })}
+                  {availableCalendars.length === 0 && !loadingAvailable && (
+                    <p className={styles.muted}>Nenhum calendario encontrado</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
 
       {/* Connect button */}

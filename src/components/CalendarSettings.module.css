@@ -36,6 +36,24 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.serviceBadges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.serviceBadge {
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-accent-light, rgba(184, 101, 48, 0.1));
+  color: var(--color-accent);
 }
 
 .accountEmail {
