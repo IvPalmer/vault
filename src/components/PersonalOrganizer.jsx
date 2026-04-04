@@ -16,6 +16,7 @@ import { GridStack } from 'gridstack'
 import 'gridstack/dist/gridstack.min.css'
 import { useProfile } from '../context/ProfileContext'
 import api from '../api/client'
+import useDashboardState from '../hooks/useDashboardState'
 import styles from './PersonalOrganizer.module.css'
 import WIDGET_REGISTRY, { getWidgetCategories, getWidgetMeta, generateWidgetId, findNextPosition } from './widgets/WidgetRegistry'
 import TextBlock from './widgets/TextBlock'
@@ -1234,128 +1235,6 @@ function PersonalReminders({ config, onConfigChange }) {
 
 /* ── Grid Layout (gridstack) ──────────────────────────────── */
 
-function gridKey(profileId, tabId) { return `vault-pessoal-grid-${profileId}-${tabId || 'default'}` }
-function widgetsKey(profileId) { return `vault-pessoal-widgets-v1-${profileId}` }
-function configKey(profileId) { return `vault-pessoal-widget-config-v1-${profileId}` }
-function tabsKey(profileId) { return `vault-pessoal-tabs-v1-${profileId}` }
-
-const DEFAULT_WIDGETS = [
-  { id: 'kpi-hoje',      type: 'kpi-hoje',      x: 0,  y: 0, w: 3, h: 2 },
-  { id: 'kpi-atrasadas', type: 'kpi-atrasadas', x: 3,  y: 0, w: 3, h: 2 },
-  { id: 'kpi-ativas',    type: 'kpi-ativas',    x: 6,  y: 0, w: 3, h: 2 },
-  { id: 'kpi-projetos',  type: 'kpi-projetos',  x: 9,  y: 0, w: 3, h: 2 },
-  { id: 'capture',       type: 'capture',       x: 0,  y: 2, w: 8, h: 1 },
-  { id: 'projects',      type: 'projects',      x: 8,  y: 2, w: 4, h: 1 },
-  { id: 'tasks',         type: 'tasks',         x: 0,  y: 3, w: 4, h: 6 },
-  { id: 'reminders',     type: 'reminders',     x: 4,  y: 3, w: 5, h: 6 },
-  { id: 'calendar',      type: 'calendar',      x: 9,  y: 3, w: 3, h: 8 },
-  { id: 'events',        type: 'events',        x: 0,  y: 9, w: 4, h: 5 },
-  { id: 'notes',         type: 'notes',         x: 4,  y: 9, w: 5, h: 5 },
-]
-
-function loadWidgets(profileId) {
-  // 1. Profile-scoped widgets key (canonical)
-  try {
-    const saved = localStorage.getItem(widgetsKey(profileId))
-    if (saved) return JSON.parse(saved)
-  } catch {}
-
-  // 2. Migrate: old unscoped widgets key → profile-scoped
-  try {
-    const old = localStorage.getItem('vault-pessoal-widgets-v1')
-    if (old) {
-      const items = JSON.parse(old)
-      const migrated = items.map(item => ({ ...item, type: item.type || item.id }))
-      // Also pull positions from old unscoped gridstack key
-      try {
-        const oldGrid = localStorage.getItem('vault-pessoal-gridstack-v5')
-        if (oldGrid) {
-          const positions = JSON.parse(oldGrid)
-          const posMap = {}
-          positions.forEach(p => { posMap[p.id] = p })
-          return migrated.map(w => {
-            const pos = posMap[w.id]
-            return pos ? { ...w, x: pos.x, y: pos.y, w: pos.w, h: pos.h } : w
-          })
-        }
-      } catch {}
-      return migrated
-    }
-  } catch {}
-
-  // 3. Migrate: old unscoped gridstack key only (no widgets key yet)
-  try {
-    const oldGrid = localStorage.getItem('vault-pessoal-gridstack-v5')
-    if (oldGrid) {
-      const items = JSON.parse(oldGrid)
-      return items.map(item => ({ ...item, type: item.type || item.id }))
-    }
-  } catch {}
-
-  return DEFAULT_WIDGETS
-}
-
-function saveWidgets(profileId, widgets) {
-  localStorage.setItem(widgetsKey(profileId), JSON.stringify(widgets))
-}
-
-function loadWidgetConfigs(profileId) {
-  try {
-    const saved = localStorage.getItem(configKey(profileId))
-    if (saved) return JSON.parse(saved)
-  } catch {}
-  // Try old unscoped key
-  try {
-    const old = localStorage.getItem('vault-pessoal-widget-config-v1')
-    if (old) return JSON.parse(old)
-  } catch {}
-  return {}
-}
-
-function saveWidgetConfigs(profileId, configs) {
-  localStorage.setItem(configKey(profileId), JSON.stringify(configs))
-}
-
-/* ── Tab persistence ────────────────────────────────────── */
-
-function loadTabs(profileId) {
-  try {
-    const saved = localStorage.getItem(tabsKey(profileId))
-    if (saved) return JSON.parse(saved)
-  } catch {}
-
-  // Migrate: create default tab from existing widgets with positions from grid key
-  let existingWidgets = loadWidgets(profileId)
-
-  // Merge positions from any old grid key into widgets
-  const gridKeys = [
-    `vault-pessoal-grid-${profileId}-default`,
-    `vault-pessoal-gridstack-v5-${profileId}`,
-    'vault-pessoal-gridstack-v5',
-  ]
-  for (const key of gridKeys) {
-    try {
-      const gridData = localStorage.getItem(key)
-      if (gridData) {
-        const positions = JSON.parse(gridData)
-        const posMap = {}
-        positions.forEach(p => { posMap[p.id] = p })
-        existingWidgets = existingWidgets.map(w => {
-          const pos = posMap[w.id]
-          return pos ? { ...w, x: pos.x, y: pos.y, w: pos.w, h: pos.h } : w
-        })
-        break // use first found
-      }
-    } catch {}
-  }
-
-  return [{ id: 'default', name: 'Principal', widgets: existingWidgets }]
-}
-
-function saveTabs(profileId, tabs) {
-  localStorage.setItem(tabsKey(profileId), JSON.stringify(tabs))
-}
-
 /* ── Tab Bar ────────────────────────────────────────────── */
 
 function TabBar({ tabs, activeTabId, onSwitch, onAdd, onRename, onDelete }) {
@@ -1522,27 +1401,40 @@ const PALMER_ID = 'a29184ea-9d4d-4c65-8300-386ed5b07fca'
 function PersonalOrganizerInner({ profileId }) {
   const queryClient = useQueryClient()
   const [activeProject, setActiveProject] = useState(null)
-  const [tabs, setTabs] = useState(() => loadTabs(profileId))
-  const [activeTabId, setActiveTabId] = useState(() => {
-    const t = loadTabs(profileId)
-    return t[0]?.id || 'default'
-  })
-  const [widgetConfigs, setWidgetConfigs] = useState(() => {
-    const configs = loadWidgetConfigs(profileId)
-    // Auto-enable reminders for Palmer (Mac owner) if no config set yet
-    if (profileId === PALMER_ID && !configs.reminders) {
-      configs.reminders = { enabled: true }
-    }
-    return configs
-  })
+  const [dashState, updateDashState, dashLoading] = useDashboardState(profileId)
 
-  // Derive active tab and widgets
+  const tabs = dashState?.tabs || [{ id: 'default', name: 'Principal', widgets: [] }]
+  const widgetConfigs = dashState?.configs || {}
+  const [activeTabId, setActiveTabId] = useState(null)
+
+  // Set initial active tab when state loads
+  useEffect(() => {
+    if (dashState && !activeTabId) {
+      setActiveTabId(dashState.tabs?.[0]?.id || 'default')
+    }
+  }, [dashState, activeTabId])
+
+  // Auto-enable reminders for Palmer
+  useEffect(() => {
+    if (dashState && profileId === PALMER_ID && !widgetConfigs.reminders) {
+      updateDashState({ configs: { ...widgetConfigs, reminders: { enabled: true } } })
+    }
+  }, [dashState, profileId])
+
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0]
   const widgets = activeTab?.widgets || []
 
-  // Persist tabs and configs
-  useEffect(() => { saveTabs(profileId, tabs) }, [profileId, tabs])
-  useEffect(() => { saveWidgetConfigs(profileId, widgetConfigs) }, [profileId, widgetConfigs])
+  const setTabs = useCallback((updater) => {
+    const newTabs = typeof updater === 'function' ? updater(tabs) : updater
+    updateDashState({ tabs: newTabs })
+  }, [tabs, updateDashState])
+
+  const setWidgetConfigs = useCallback((updater) => {
+    const newConfigs = typeof updater === 'function' ? updater(widgetConfigs) : updater
+    updateDashState({ configs: newConfigs })
+  }, [widgetConfigs, updateDashState])
+
+  if (dashLoading) return <div className={styles.emptyState}>Carregando dashboard...</div>
 
   // ── Tab actions ──
 
@@ -1570,11 +1462,9 @@ function PersonalOrganizerInner({ profileId }) {
       if (tabId === activeTabId) {
         setActiveTabId(next[0].id)
       }
-      // Clean up grid layout for deleted tab
-      localStorage.removeItem(gridKey(profileId, tabId))
       return next
     })
-  }, [activeTabId, profileId])
+  }, [activeTabId])
 
   // ── Add / Remove widgets (scoped to active tab) ──
 
