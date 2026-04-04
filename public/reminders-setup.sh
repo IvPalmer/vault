@@ -7,7 +7,7 @@
 set -e
 
 INSTALL_DIR="$HOME/.vault-reminders"
-VAULT_HOST="${VAULT_REMINDERS_HOST:-http://localhost:5175}"
+VAULT_HOST="${VAULT_REMINDERS_HOST:-http://raphaels-mac-studio.local:5175}"
 PLIST_LABEL="com.vault.reminders-sidecar"
 PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
 
