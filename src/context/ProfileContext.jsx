@@ -2,26 +2,16 @@ import { createContext, useContext, useState, useCallback, useEffect } from 'rea
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { api, setProfileId, getProfileId } from '../api/client'
+import { useAuth } from './AuthContext'
 
 const ProfileContext = createContext(null)
 
-/** Known page sections — used to distinguish profile slugs from pages */
 const SECTIONS = ['overview', 'analytics', 'settings', 'pessoal', 'financeiro']
 
-/**
- * Derive a URL-friendly slug from profile name.
- * "Palmer" → "palmer", "Rafa" → "rafa"
- */
 function toSlug(name) {
   return name?.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || ''
 }
 
-/**
- * Extract profile slug from pathname.
- * "/palmer/overview" → "palmer"
- * "/overview" → null (legacy route)
- * "/" → null
- */
 function getSlugFromPath(pathname) {
   const parts = pathname.split('/').filter(Boolean)
   if (parts.length >= 2 && SECTIONS.includes(parts[1])) {
@@ -31,6 +21,7 @@ function getSlugFromPath(pathname) {
 }
 
 export function ProfileProvider({ children }) {
+  const { user, isAuthenticated } = useAuth()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const location = useLocation()
@@ -39,42 +30,46 @@ export function ProfileProvider({ children }) {
   const { data: profiles = [], isLoading } = useQuery({
     queryKey: ['profiles'],
     queryFn: () => api.get('/profiles/'),
-    staleTime: 60 * 60 * 1000, // 1 hour — profiles rarely change
+    staleTime: 60 * 60 * 1000,
+    enabled: isAuthenticated,
   })
 
   const profileList = profiles.results || profiles
 
-  // Resolve profile from URL slug
+  // When auth user changes, sync profile ID
+  useEffect(() => {
+    if (user?.id && user.id !== profileId) {
+      setProfileIdState(user.id)
+      setProfileId(user.id)
+      queryClient.resetQueries({ predicate: (query) => query.queryKey[0] !== 'profiles' })
+    }
+  }, [user?.id])
+
+  // URL slug resolution
   useEffect(() => {
     if (isLoading || !profileList.length) return
-
-    // /home is shared (not profile-scoped) — skip redirect logic
     if (location.pathname === '/home' || location.pathname.startsWith('/home/')) return
+    if (location.pathname === '/login') return
 
     const urlSlug = getSlugFromPath(location.pathname)
 
     if (urlSlug) {
-      // Find profile matching the URL slug
       const matchedProfile = profileList.find(p => toSlug(p.name) === urlSlug)
       if (matchedProfile && matchedProfile.id !== profileId) {
-        // URL slug points to a different profile — switch to it
         setProfileIdState(matchedProfile.id)
         setProfileId(matchedProfile.id)
         queryClient.resetQueries({ predicate: (query) => query.queryKey[0] !== 'profiles' })
       } else if (!matchedProfile) {
-        // Invalid slug — redirect to first profile
         const firstProfile = profileList[0]
         if (firstProfile) {
           navigate(`/${toSlug(firstProfile.name)}/overview`, { replace: true })
         }
       }
     } else {
-      // No slug in URL (root or legacy route) — redirect to stored/first profile
       const storedProfile = profileList.find(p => p.id === profileId) || profileList[0]
       if (storedProfile) {
         const slug = toSlug(storedProfile.name)
         const parts = location.pathname.split('/').filter(Boolean)
-        // Check if it's a legacy route like /overview
         if (parts.length === 1 && SECTIONS.includes(parts[0])) {
           navigate(`/${slug}/${parts[0]}`, { replace: true })
         } else if (parts.length === 0) {
@@ -84,10 +79,9 @@ export function ProfileProvider({ children }) {
     }
   }, [profileList, isLoading, location.pathname])
 
-  // Auto-select first profile if none stored (skip if URL already specifies a profile)
+  // Auto-select first profile if none stored
   useEffect(() => {
     if (isLoading || !profileList.length) return
-    // If URL already has a valid profile slug, the URL-slug effect handles selection
     const urlSlug = getSlugFromPath(location.pathname)
     if (urlSlug && profileList.find(p => toSlug(p.name) === urlSlug)) return
     if (!profileId || !profileList.find(p => p.id === profileId)) {
@@ -103,10 +97,7 @@ export function ProfileProvider({ children }) {
     const targetProfile = profileList.find(p => p.id === id)
     setProfileIdState(id)
     setProfileId(id)
-    // Nuclear: reset all cached data so active queries refetch for new profile
     queryClient.resetQueries({ predicate: (query) => query.queryKey[0] !== 'profiles' })
-
-    // Navigate to new profile's URL, keeping the current page section
     if (targetProfile) {
       const slug = toSlug(targetProfile.name)
       const parts = location.pathname.split('/').filter(Boolean)
@@ -126,7 +117,7 @@ export function ProfileProvider({ children }) {
       currentProfile,
       switchProfile,
       isLoading,
-      profileSlug: currentProfile ? toSlug(currentProfile.name) : '',
+      profileSlug: currentProfile ? toSlug(currentProfile.name) : (user ? toSlug(user.name) : ''),
       toSlug,
     }}>
       {children}
