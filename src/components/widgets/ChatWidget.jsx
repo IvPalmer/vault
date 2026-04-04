@@ -11,7 +11,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useProfile } from '../../context/ProfileContext'
 import styles from './ChatWidget.module.css'
 
-const SIDECAR_URL = 'http://localhost:5178'
+const SIDECAR_URL = `http://${window.location.hostname}:5178`
 const MAX_HISTORY = 50
 
 function storageKey(profileId) {

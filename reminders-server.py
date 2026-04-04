@@ -370,8 +370,8 @@ if __name__ == '__main__':
         print(f'Compile it first: swiftc -O reminders-helper.swift -o reminders-helper')
         sys.exit(1)
 
-    server = HTTPServer(('127.0.0.1', PORT), SidecarHandler)
-    print(f'Reminders sidecar running on http://127.0.0.1:{PORT}')
+    server = HTTPServer(('0.0.0.0', PORT), SidecarHandler)
+    print(f'Reminders sidecar running on http://0.0.0.0:{PORT}')
     print(f'Using EventKit helper: {HELPER}')
     print(f'Lists: {", ".join(HOME_LISTS)}')
     try:

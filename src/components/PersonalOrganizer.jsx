@@ -29,7 +29,8 @@ import ChatWidget from './widgets/ChatWidget'
 // Reminders sidecar runs on the local Mac (port 5177).
 // Calling localhost directly (not through Vite proxy) means each user's
 // browser hits their own Mac's sidecar → sees their own Apple Reminders.
-const SIDECAR_BASE = 'http://localhost:5177'
+// Use current hostname so reminders sidecar works from other machines on the network
+const SIDECAR_BASE = `http://${window.location.hostname}:5177`
 async function sidecarGet(path) {
   const res = await fetch(`${SIDECAR_BASE}${path}`)
   if (!res.ok) throw new Error(`Sidecar ${res.status}`)
@@ -1704,15 +1705,22 @@ function DashboardGrid({ widgets, profileId, tabId, renderWidgetContent, removeW
   // When widgets are added dynamically, register new ones with gridstack
   useEffect(() => {
     if (!gridInstanceRef.current || !gridRef.current) return
+    // Use double-rAF to ensure React has flushed DOM
     requestAnimationFrame(() => {
-      const grid = gridInstanceRef.current
-      if (!grid || !gridRef.current) return
-      const existing = new Set(grid.getGridItems().map(el => el.getAttribute('gs-id')))
-      widgets.forEach(w => {
-        if (!existing.has(w.id)) {
-          const el = gridRef.current.querySelector(`[gs-id="${w.id}"]`)
-          if (el) grid.makeWidget(el)
-        }
+      requestAnimationFrame(() => {
+        const grid = gridInstanceRef.current
+        if (!grid || !gridRef.current) return
+        const existing = new Set(grid.getGridItems().map(el => el.getAttribute('gs-id')))
+        widgets.forEach(w => {
+          if (!existing.has(w.id)) {
+            const el = gridRef.current.querySelector(`[gs-id="${w.id}"]`)
+            if (el) {
+              grid.makeWidget(el)
+              // Ensure position attributes are applied
+              grid.update(el, { x: w.x, y: w.y, w: w.w, h: w.h })
+            }
+          }
+        })
       })
     })
   }, [widgets])
