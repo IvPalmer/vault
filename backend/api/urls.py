@@ -39,6 +39,7 @@ from .views import (
     PluggySyncView,
     ProjectViewSet, PersonalTaskViewSet, PersonalNoteViewSet,
 )
+from .auth_views import GoogleLoginView, TokenRefreshView, AuthMeView
 from .google_views import (
     GoogleConnectView, GoogleOAuthCallbackView, GoogleAccountsView,
     GmailMessagesView, GmailMessageDetailView, GmailSendView,
@@ -66,6 +67,10 @@ router.register(r'pessoal/tasks', PersonalTaskViewSet, basename='personaltask')
 router.register(r'pessoal/notes', PersonalNoteViewSet, basename='personalnote')
 
 urlpatterns = [
+    # Auth
+    path('auth/google/', GoogleLoginView.as_view(), name='auth-google'),
+    path('auth/refresh/', TokenRefreshView.as_view(), name='auth-refresh'),
+    path('auth/me/', AuthMeView.as_view(), name='auth-me'),
     # Category manager
     path('categories/tree/', CategoryTreeView.as_view(), name='category-tree'),
     path('categories/bulk/', CategoryBulkReassignView.as_view(), name='category-bulk'),

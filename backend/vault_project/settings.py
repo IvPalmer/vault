@@ -156,6 +156,12 @@ CORS_ALLOW_HEADERS = [
 # JWT
 from datetime import timedelta
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
 }
+
+# Google OAuth Client ID for ID token verification
+GOOGLE_CLIENT_ID = '322466188232-agarvcbekbncq69237rcrllq43mm7ejk.apps.googleusercontent.com'

@@ -10,7 +10,7 @@ from .models import Profile
 
 
 # Paths that don't require a profile
-EXEMPT_PREFIXES = ('/api/profiles', '/api/home', '/api/calendar/oauth-callback', '/admin', '/static')
+EXEMPT_PREFIXES = ('/api/profiles', '/api/home', '/api/calendar/oauth-callback', '/api/auth', '/admin', '/static')
 
 
 class ProfileMiddleware:
