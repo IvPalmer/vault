@@ -39,6 +39,12 @@ from .views import (
     PluggySyncView,
     ProjectViewSet, PersonalTaskViewSet, PersonalNoteViewSet,
 )
+from .google_views import (
+    GoogleConnectView, GoogleOAuthCallbackView, GoogleAccountsView,
+    GmailMessagesView, GmailMessageDetailView, GmailSendView,
+    GmailTrashView, GmailLabelsView,
+    DriveFilesView, DriveFileContentView, SpreadsheetView, DocumentView,
+)
 
 router = DefaultRouter()
 router.register(r'profiles', ProfileViewSet, basename='profile')
@@ -133,4 +139,19 @@ urlpatterns = [
     path('calendar/selections/', CalendarSelectionsView.as_view(), name='calendar-selections'),
     path('calendar/events/', CalendarEventsView.as_view(), name='calendar-events'),
     path('calendar/add-event/', CalendarAddEventView.as_view(), name='calendar-add-event'),
+    # Google Suite (OAuth + Gmail + Drive)
+    path('google/connect/', GoogleConnectView.as_view(), name='google-connect'),
+    path('google/oauth-callback/', GoogleOAuthCallbackView.as_view(), name='google-oauth-callback'),
+    path('google/accounts/', GoogleAccountsView.as_view(), name='google-accounts'),
+    # Gmail
+    path('google/gmail/messages/', GmailMessagesView.as_view(), name='gmail-messages'),
+    path('google/gmail/messages/<str:message_id>/', GmailMessageDetailView.as_view(), name='gmail-message-detail'),
+    path('google/gmail/send/', GmailSendView.as_view(), name='gmail-send'),
+    path('google/gmail/trash/<str:message_id>/', GmailTrashView.as_view(), name='gmail-trash'),
+    path('google/gmail/labels/', GmailLabelsView.as_view(), name='gmail-labels'),
+    # Drive
+    path('google/drive/files/', DriveFilesView.as_view(), name='drive-files'),
+    path('google/drive/files/<str:file_id>/content/', DriveFileContentView.as_view(), name='drive-file-content'),
+    path('google/drive/sheets/<str:spreadsheet_id>/', SpreadsheetView.as_view(), name='drive-spreadsheet'),
+    path('google/drive/docs/<str:document_id>/', DocumentView.as_view(), name='drive-document'),
 ]
