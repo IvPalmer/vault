@@ -6,7 +6,7 @@ import { api, setProfileId, getProfileId } from '../api/client'
 const ProfileContext = createContext(null)
 
 /** Known page sections — used to distinguish profile slugs from pages */
-const SECTIONS = ['overview', 'analytics', 'settings']
+const SECTIONS = ['overview', 'analytics', 'settings', 'pessoal', 'financeiro']
 
 /**
  * Derive a URL-friendly slug from profile name.

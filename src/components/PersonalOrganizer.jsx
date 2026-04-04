@@ -17,6 +17,12 @@ import 'gridstack/dist/gridstack.min.css'
 import { useProfile } from '../context/ProfileContext'
 import api from '../api/client'
 import styles from './PersonalOrganizer.module.css'
+import WIDGET_REGISTRY, { getWidgetCategories, getWidgetMeta, generateWidgetId, findNextPosition } from './widgets/WidgetRegistry'
+import TextBlock from './widgets/TextBlock'
+import ClockWidget from './widgets/ClockWidget'
+import GreetingWidget from './widgets/GreetingWidget'
+import { FinSaldo, FinSobra, FinFatura } from './widgets/FinanceWidgets'
+import ChatWidget from './widgets/ChatWidget'
 
 // Reminders sidecar runs on the local Mac (port 5177).
 // Calling localhost directly (not through Vite proxy) means each user's
@@ -990,10 +996,11 @@ function PersonalCalendar() {
 
 /* ── Personal Reminders ──────────────────────────────────── */
 
-function PersonalReminders() {
+function PersonalReminders({ config, onConfigChange }) {
   const queryClient = useQueryClient()
   const [activeListIdx, setActiveListIdx] = useState(0)
   const [newReminder, setNewReminder] = useState('')
+  const enabled = config?.enabled === true
 
   // Fetch ALL reminder lists (not just R&R)
   const { data: listsData } = useQuery({
@@ -1001,6 +1008,7 @@ function PersonalReminders() {
     queryFn: () => sidecarGet('/api/home/reminders/lists/?all=true'),
     retry: 1,
     staleTime: 5 * 60 * 1000,
+    enabled,
   })
 
   const availableLists = listsData?.lists || []
@@ -1029,6 +1037,26 @@ function PersonalReminders() {
   const handleAdd = (e) => {
     e.preventDefault()
     if (newReminder.trim()) addMutation.mutate(newReminder.trim())
+  }
+
+  if (!enabled) {
+    return (
+      <div className={styles.widget}>
+        <div className={styles.widgetHeader}>
+          <h3 className={styles.widgetTitle}>LEMBRETES</h3>
+        </div>
+        <div className={styles.emptyState}>
+          <p>Lembretes nao configurados</p>
+          <button
+            className={styles.captureBtn}
+            style={{ width: 'auto', padding: '6px 16px', fontSize: '0.78rem', margin: '8px auto 0' }}
+            onClick={() => onConfigChange({ ...config, enabled: true })}
+          >
+            Conectar Apple Reminders
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -1100,30 +1128,164 @@ function PersonalReminders() {
 
 /* ── Grid Layout (gridstack) ──────────────────────────────── */
 
-const GRID_KEY = 'vault-pessoal-gridstack-v5'
+function gridKey(profileId) { return `vault-pessoal-gridstack-v5-${profileId}` }
+function widgetsKey(profileId) { return `vault-pessoal-widgets-v1-${profileId}` }
+function configKey(profileId) { return `vault-pessoal-widget-config-v1-${profileId}` }
 
-const DEFAULT_ITEMS = [
-  { id: 'kpi-hoje',      x: 0,  y: 0, w: 3, h: 2 },
-  { id: 'kpi-atrasadas', x: 3,  y: 0, w: 3, h: 2 },
-  { id: 'kpi-ativas',    x: 6,  y: 0, w: 3, h: 2 },
-  { id: 'kpi-projetos',  x: 9,  y: 0, w: 3, h: 2 },
-  { id: 'capture',       x: 0,  y: 2, w: 8, h: 1 },
-  { id: 'projects',      x: 8,  y: 2, w: 4, h: 1 },
-  { id: 'tasks',         x: 0,  y: 3, w: 4, h: 6 },
-  { id: 'reminders',     x: 4,  y: 3, w: 5, h: 6 },
-  { id: 'calendar',      x: 9,  y: 3, w: 3, h: 8 },
-  { id: 'events',        x: 0,  y: 9, w: 4, h: 5 },
-  { id: 'notes',         x: 4,  y: 9, w: 5, h: 5 },
+const DEFAULT_WIDGETS = [
+  { id: 'kpi-hoje',      type: 'kpi-hoje',      x: 0,  y: 0, w: 3, h: 2 },
+  { id: 'kpi-atrasadas', type: 'kpi-atrasadas', x: 3,  y: 0, w: 3, h: 2 },
+  { id: 'kpi-ativas',    type: 'kpi-ativas',    x: 6,  y: 0, w: 3, h: 2 },
+  { id: 'kpi-projetos',  type: 'kpi-projetos',  x: 9,  y: 0, w: 3, h: 2 },
+  { id: 'capture',       type: 'capture',       x: 0,  y: 2, w: 8, h: 1 },
+  { id: 'projects',      type: 'projects',      x: 8,  y: 2, w: 4, h: 1 },
+  { id: 'tasks',         type: 'tasks',         x: 0,  y: 3, w: 4, h: 6 },
+  { id: 'reminders',     type: 'reminders',     x: 4,  y: 3, w: 5, h: 6 },
+  { id: 'calendar',      type: 'calendar',      x: 9,  y: 3, w: 3, h: 8 },
+  { id: 'events',        type: 'events',        x: 0,  y: 9, w: 4, h: 5 },
+  { id: 'notes',         type: 'notes',         x: 4,  y: 9, w: 5, h: 5 },
 ]
+
+function loadWidgets(profileId) {
+  // 1. Profile-scoped widgets key (canonical)
+  try {
+    const saved = localStorage.getItem(widgetsKey(profileId))
+    if (saved) return JSON.parse(saved)
+  } catch {}
+
+  // 2. Migrate: old unscoped widgets key → profile-scoped
+  try {
+    const old = localStorage.getItem('vault-pessoal-widgets-v1')
+    if (old) {
+      const items = JSON.parse(old)
+      const migrated = items.map(item => ({ ...item, type: item.type || item.id }))
+      // Also pull positions from old unscoped gridstack key
+      try {
+        const oldGrid = localStorage.getItem('vault-pessoal-gridstack-v5')
+        if (oldGrid) {
+          const positions = JSON.parse(oldGrid)
+          const posMap = {}
+          positions.forEach(p => { posMap[p.id] = p })
+          return migrated.map(w => {
+            const pos = posMap[w.id]
+            return pos ? { ...w, x: pos.x, y: pos.y, w: pos.w, h: pos.h } : w
+          })
+        }
+      } catch {}
+      return migrated
+    }
+  } catch {}
+
+  // 3. Migrate: old unscoped gridstack key only (no widgets key yet)
+  try {
+    const oldGrid = localStorage.getItem('vault-pessoal-gridstack-v5')
+    if (oldGrid) {
+      const items = JSON.parse(oldGrid)
+      return items.map(item => ({ ...item, type: item.type || item.id }))
+    }
+  } catch {}
+
+  return DEFAULT_WIDGETS
+}
+
+function saveWidgets(profileId, widgets) {
+  localStorage.setItem(widgetsKey(profileId), JSON.stringify(widgets))
+}
+
+function loadWidgetConfigs(profileId) {
+  try {
+    const saved = localStorage.getItem(configKey(profileId))
+    if (saved) return JSON.parse(saved)
+  } catch {}
+  // Try old unscoped key
+  try {
+    const old = localStorage.getItem('vault-pessoal-widget-config-v1')
+    if (old) return JSON.parse(old)
+  } catch {}
+  return {}
+}
+
+function saveWidgetConfigs(profileId, configs) {
+  localStorage.setItem(configKey(profileId), JSON.stringify(configs))
+}
+
+/* ── Widget Catalog Dropdown ────────────────────────────── */
+
+function WidgetCatalog({ onAdd, activeWidgetTypes }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const categories = useMemo(() => getWidgetCategories(), [])
+
+  useEffect(() => {
+    if (!open) return
+    const handleClick = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [open])
+
+  return (
+    <div ref={ref} className={styles.catalogWrap}>
+      <button
+        className={styles.catalogBtn}
+        onClick={() => setOpen(!open)}
+        title="Adicionar widget"
+      >
+        +
+      </button>
+      {open && (
+        <div className={styles.catalogDropdown}>
+          {Object.entries(categories).map(([cat, widgets]) => (
+            <div key={cat} className={styles.catalogCategory}>
+              <div className={styles.catalogCategoryLabel}>{cat}</div>
+              {widgets.map((w) => (
+                <button
+                  key={w.type}
+                  className={styles.catalogItem}
+                  onClick={() => { onAdd(w.type); setOpen(false) }}
+                >
+                  {w.label}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 /* ── Main Component ──────────────────────────────────────── */
 
 export default function PersonalOrganizer() {
   const { currentProfile } = useProfile()
+  const profileId = currentProfile?.id || 'default'
+
+  // Key forces full remount on profile switch — clean grid lifecycle
+  return <PersonalOrganizerInner key={profileId} profileId={profileId} />
+}
+
+const PALMER_ID = 'a29184ea-9d4d-4c65-8300-386ed5b07fca'
+
+function PersonalOrganizerInner({ profileId }) {
   const queryClient = useQueryClient()
   const [activeProject, setActiveProject] = useState(null)
+  const [widgets, setWidgets] = useState(() => loadWidgets(profileId))
+  const [widgetConfigs, setWidgetConfigs] = useState(() => {
+    const configs = loadWidgetConfigs(profileId)
+    // Auto-enable reminders for Palmer (Mac owner) if no config set yet
+    if (profileId === PALMER_ID && !configs.reminders) {
+      configs.reminders = { enabled: true }
+    }
+    return configs
+  })
   const gridRef = useRef(null)
   const gridInstanceRef = useRef(null)
+
+  // Persist widget list whenever it changes
+  useEffect(() => { saveWidgets(profileId, widgets) }, [profileId, widgets])
+  useEffect(() => { saveWidgetConfigs(profileId, widgetConfigs) }, [profileId, widgetConfigs])
 
   useEffect(() => {
     if (!gridRef.current || gridInstanceRef.current) return
@@ -1134,26 +1296,36 @@ export default function PersonalOrganizer() {
       margin: 8,
       float: true,
       animate: true,
-      draggable: { handle: `.${styles.widgetHeader}` },
+      draggable: { handle: `.${styles.widgetHeader}, .${styles.catalogDragHandle}` },
       resizable: { handles: 'se' },
     }, gridRef.current)
 
-    // Load saved layout or default
-    let items = DEFAULT_ITEMS
-    try {
-      const saved = localStorage.getItem(GRID_KEY)
-      if (saved) items = JSON.parse(saved)
-    } catch {}
+    // Apply saved layout positions (with migration from old unscoped key)
+    const savedLayout = (() => {
+      try {
+        const s = localStorage.getItem(gridKey(profileId))
+        if (s) return JSON.parse(s)
+      } catch {}
+      // Migrate from old unscoped gridstack key
+      try {
+        const old = localStorage.getItem('vault-pessoal-gridstack-v5')
+        if (old) {
+          const parsed = JSON.parse(old)
+          localStorage.setItem(gridKey(profileId), old)
+          return parsed
+        }
+      } catch {}
+      return null
+    })()
 
-    // Apply layout positions
-    items.forEach(item => {
-      const el = gridRef.current.querySelector(`[gs-id="${item.id}"]`)
-      if (el) {
-        grid.update(el, { x: item.x, y: item.y, w: item.w, h: item.h })
-      }
-    })
+    if (savedLayout) {
+      savedLayout.forEach(item => {
+        const el = gridRef.current.querySelector(`[gs-id="${item.id}"]`)
+        if (el) grid.update(el, { x: item.x, y: item.y, w: item.w, h: item.h })
+      })
+    }
 
-    // Save on change
+    // Save layout on change
     grid.on('change', () => {
       const nodes = grid.getGridItems().map(el => ({
         id: el.getAttribute('gs-id'),
@@ -1162,10 +1334,9 @@ export default function PersonalOrganizer() {
         w: parseInt(el.getAttribute('gs-w')),
         h: parseInt(el.getAttribute('gs-h')),
       }))
-      localStorage.setItem(GRID_KEY, JSON.stringify(nodes))
+      localStorage.setItem(gridKey(profileId), JSON.stringify(nodes))
     })
 
-    // Toggle drag overlay class
     grid.on('dragstart resizestart', () => {
       gridRef.current.classList.add('gs-dragging')
     })
@@ -1180,6 +1351,53 @@ export default function PersonalOrganizer() {
       gridInstanceRef.current = null
     }
   }, [])
+
+  // ── Add / Remove widgets ──
+
+  const addWidget = useCallback((type) => {
+    const meta = getWidgetMeta(type)
+    if (!meta) return
+    const id = generateWidgetId(type)
+    const currentLayout = gridInstanceRef.current
+      ? gridInstanceRef.current.getGridItems().map(el => ({
+          x: parseInt(el.getAttribute('gs-x')),
+          y: parseInt(el.getAttribute('gs-y')),
+          w: parseInt(el.getAttribute('gs-w')),
+          h: parseInt(el.getAttribute('gs-h')),
+        }))
+      : widgets
+    const pos = findNextPosition(currentLayout, meta.defaultW, meta.defaultH)
+    const newWidget = { id, type, x: pos.x, y: pos.y, w: meta.defaultW, h: meta.defaultH }
+
+    setWidgets(prev => [...prev, newWidget])
+
+    // Add to gridstack after DOM renders
+    requestAnimationFrame(() => {
+      if (gridInstanceRef.current && gridRef.current) {
+        const el = gridRef.current.querySelector(`[gs-id="${id}"]`)
+        if (el) gridInstanceRef.current.makeWidget(el)
+      }
+    })
+  }, [widgets])
+
+  const removeWidget = useCallback((id) => {
+    if (gridInstanceRef.current && gridRef.current) {
+      const el = gridRef.current.querySelector(`[gs-id="${id}"]`)
+      if (el) gridInstanceRef.current.removeWidget(el, false)
+    }
+    setWidgets(prev => prev.filter(w => w.id !== id))
+    setWidgetConfigs(prev => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+  }, [])
+
+  const updateWidgetConfig = useCallback((id, config) => {
+    setWidgetConfigs(prev => ({ ...prev, [id]: config }))
+  }, [])
+
+  // ── Data queries ──
 
   const { data: tasksData } = useQuery({
     queryKey: ['pessoal-tasks'],
@@ -1207,8 +1425,6 @@ export default function PersonalOrganizer() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pessoal-notes'] }),
   })
 
-
-
   // KPI computations
   const todayStr = new Date().toISOString().slice(0, 10)
   const activeTasks = tasks.filter((t) => t.status !== 'done')
@@ -1216,72 +1432,123 @@ export default function PersonalOrganizer() {
   const overdueCount = activeTasks.filter((t) => t.due_date && t.due_date < todayStr).length
   const activeProjectCount = projects.filter((p) => p.status === 'active').length
 
+  // ── Render widget content by type ──
+
+  const renderWidgetContent = (widget) => {
+    const type = widget.type
+    switch (type) {
+      case 'kpi-hoje':      return <KpiCard value={todayCount} label="Hoje" />
+      case 'kpi-atrasadas': return <KpiCard value={overdueCount} label="Atrasadas" danger={overdueCount > 0} />
+      case 'kpi-ativas':    return <KpiCard value={activeTasks.length} label="Ativas" />
+      case 'kpi-projetos':  return <KpiCard value={activeProjectCount} label="Projetos" />
+      case 'capture':
+        return (
+          <QuickCapture
+            onAddTask={(data) => addTaskMutation.mutate(data)}
+            onAddNote={(data) => addNoteMutation.mutate(data)}
+            projects={projects}
+          />
+        )
+      case 'projects':
+        return (
+          <ProjectsBar
+            projects={projects}
+            activeProject={activeProject}
+            onSelectProject={setActiveProject}
+          />
+        )
+      case 'tasks':         return <TaskList activeProject={activeProject} />
+      case 'reminders':
+        return (
+          <PersonalReminders
+            config={widgetConfigs[widget.id]}
+            onConfigChange={(cfg) => updateWidgetConfig(widget.id, cfg)}
+          />
+        )
+      case 'calendar':      return <PersonalCalendar />
+      case 'events':        return <UpcomingEvents />
+      case 'notes':         return <NotesList activeProject={activeProject} projects={projects} />
+      case 'text-block':
+        return (
+          <TextBlock
+            config={widgetConfigs[widget.id]}
+            onConfigChange={(cfg) => updateWidgetConfig(widget.id, cfg)}
+          />
+        )
+      case 'clock':         return <ClockWidget />
+      case 'greeting':      return <GreetingWidget />
+      case 'fin-saldo':     return <FinSaldo />
+      case 'fin-sobra':     return <FinSobra />
+      case 'fin-fatura':    return <FinFatura />
+      default:              return <div className={styles.emptyState}>Widget desconhecido</div>
+    }
+  }
+
+  // Some widgets are self-contained (no header needed)
+  // All widgets are headerless — the ones that need headers render them internally
+  const HEADERLESS = new Set(Object.keys(WIDGET_REGISTRY))
+
+  const activeWidgetTypes = new Set(widgets.map(w => w.type))
+
   return (
     <div className={styles.page}>
+      <ChatWidget />
+      <WidgetCatalog onAdd={addWidget} activeWidgetTypes={activeWidgetTypes} />
       <div ref={gridRef} className={`grid-stack ${styles.gridContainer}`}>
-        <div className="grid-stack-item" gs-id="kpi-hoje" gs-x="0" gs-y="0" gs-w="3" gs-h="2" gs-min-w="2" gs-min-h="1">
-          <div className="grid-stack-item-content">
-            <KpiCard value={todayCount} label="Hoje" />
-          </div>
-        </div>
-        <div className="grid-stack-item" gs-id="kpi-atrasadas" gs-x="3" gs-y="0" gs-w="3" gs-h="2" gs-min-w="2" gs-min-h="1">
-          <div className="grid-stack-item-content">
-            <KpiCard value={overdueCount} label="Atrasadas" danger={overdueCount > 0} />
-          </div>
-        </div>
-        <div className="grid-stack-item" gs-id="kpi-ativas" gs-x="6" gs-y="0" gs-w="3" gs-h="2" gs-min-w="2" gs-min-h="1">
-          <div className="grid-stack-item-content">
-            <KpiCard value={activeTasks.length} label="Ativas" />
-          </div>
-        </div>
-        <div className="grid-stack-item" gs-id="kpi-projetos" gs-x="9" gs-y="0" gs-w="3" gs-h="2" gs-min-w="2" gs-min-h="1">
-          <div className="grid-stack-item-content">
-            <KpiCard value={activeProjectCount} label="Projetos" />
-          </div>
-        </div>
-        <div className="grid-stack-item" gs-id="capture" gs-x="0" gs-y="2" gs-w="8" gs-h="2" gs-min-w="3" gs-min-h="1">
-          <div className="grid-stack-item-content">
-            <QuickCapture
-              onAddTask={(data) => addTaskMutation.mutate(data)}
-              onAddNote={(data) => addNoteMutation.mutate(data)}
-              projects={projects}
-            />
-          </div>
-        </div>
-        <div className="grid-stack-item" gs-id="projects" gs-x="8" gs-y="2" gs-w="4" gs-h="2" gs-min-w="2" gs-min-h="1">
-          <div className="grid-stack-item-content">
-            <ProjectsBar
-              projects={projects}
-              activeProject={activeProject}
-              onSelectProject={setActiveProject}
-            />
-          </div>
-        </div>
-        <div className="grid-stack-item" gs-id="tasks" gs-x="0" gs-y="5" gs-w="4" gs-h="6" gs-min-w="2" gs-min-h="3">
-          <div className="grid-stack-item-content">
-            <TaskList activeProject={activeProject} />
-          </div>
-        </div>
-        <div className="grid-stack-item" gs-id="reminders" gs-x="4" gs-y="5" gs-w="5" gs-h="6" gs-min-w="2" gs-min-h="3">
-          <div className="grid-stack-item-content">
-            <PersonalReminders />
-          </div>
-        </div>
-        <div className="grid-stack-item" gs-id="calendar" gs-x="9" gs-y="5" gs-w="3" gs-h="8" gs-min-w="2" gs-min-h="4">
-          <div className="grid-stack-item-content">
-            <PersonalCalendar />
-          </div>
-        </div>
-        <div className="grid-stack-item" gs-id="events" gs-x="0" gs-y="11" gs-w="4" gs-h="5" gs-min-w="2" gs-min-h="3">
-          <div className="grid-stack-item-content">
-            <UpcomingEvents />
-          </div>
-        </div>
-        <div className="grid-stack-item" gs-id="notes" gs-x="4" gs-y="11" gs-w="5" gs-h="5" gs-min-w="2" gs-min-h="3">
-          <div className="grid-stack-item-content">
-            <NotesList activeProject={activeProject} projects={projects} />
-          </div>
-        </div>
+        {widgets.map((widget) => {
+          const meta = getWidgetMeta(widget.type)
+          const minW = meta?.minW || 2
+          const minH = meta?.minH || 1
+          const headerless = HEADERLESS.has(widget.type)
+
+          return (
+            <div
+              key={widget.id}
+              className="grid-stack-item"
+              gs-id={widget.id}
+              gs-x={widget.x}
+              gs-y={widget.y}
+              gs-w={widget.w}
+              gs-h={widget.h}
+              gs-min-w={minW}
+              gs-min-h={minH}
+            >
+              <div className="grid-stack-item-content">
+                {headerless ? (
+                  <div style={{ height: '100%', position: 'relative' }}>
+                    <div className={styles.catalogDragHandle} />
+                    <button
+                      className={styles.removeBtn}
+                      onClick={() => removeWidget(widget.id)}
+                      title="Remover widget"
+                    >
+                      ×
+                    </button>
+                    {renderWidgetContent(widget)}
+                  </div>
+                ) : (
+                  <div className={styles.widget}>
+                    <div className={styles.widgetHeader}>
+                      <h3 className={styles.widgetTitle}>{meta?.label || widget.type}</h3>
+                      <div className={styles.widgetHeaderRight}>
+                        <button
+                          className={styles.removeBtnHeader}
+                          onClick={() => removeWidget(widget.id)}
+                          title="Remover widget"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+                      {renderWidgetContent(widget)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

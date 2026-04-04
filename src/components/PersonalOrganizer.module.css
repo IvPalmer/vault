@@ -1189,6 +1189,163 @@
   color: var(--color-text-secondary);
 }
 
+/* ─── Widget Catalog ───────────────────────────────────── */
+
+.catalogWrap {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 100;
+}
+
+.catalogBtn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-accent);
+  color: white;
+  font-size: 1.5rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.catalogBtn:hover {
+  transform: scale(1.08);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+}
+
+.catalogDropdown {
+  position: absolute;
+  bottom: 56px;
+  right: 0;
+  width: 220px;
+  max-height: 400px;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  padding: var(--space-sm) 0;
+}
+
+.catalogCategory {
+  padding: 0;
+}
+
+.catalogCategoryLabel {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--color-text-secondary);
+  padding: var(--space-sm) var(--space-md) 2px;
+  margin-top: var(--space-xs);
+}
+
+.catalogCategory:first-child .catalogCategoryLabel {
+  margin-top: 0;
+}
+
+.catalogItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px var(--space-md) 6px calc(var(--space-md) + 8px);
+  background: transparent;
+  border: none;
+  font-size: 0.82rem;
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.catalogItem:hover {
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+}
+
+/* ─── Remove Widget Button ─────────────────────────────── */
+
+.removeBtn {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  z-index: 2;
+  line-height: 1;
+}
+
+:global(.grid-stack-item):hover .removeBtn {
+  opacity: 1;
+}
+
+.removeBtn:hover {
+  background: var(--color-red);
+  color: white;
+}
+
+.removeBtnHeader {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  line-height: 1;
+}
+
+:global(.grid-stack-item):hover .removeBtnHeader {
+  opacity: 1;
+}
+
+.removeBtnHeader:hover {
+  background: var(--color-red);
+  color: white;
+}
+
+/* Drag handle for headerless widgets */
+.catalogDragHandle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 20px;
+  cursor: grab;
+  z-index: 1;
+}
+
+.catalogDragHandle:active {
+  cursor: grabbing;
+}
+
 /* ─── Responsive (dashboard cards only — grid layout handles widget breakpoints) ─── */
 
 @media (max-width: 500px) {
