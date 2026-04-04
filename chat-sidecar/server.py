@@ -171,6 +171,44 @@ async def _fetch_context(profile_id: str) -> str:
         except Exception:
             pass
 
+        # Google accounts and Gmail (unread emails)
+        google_accounts: list[str] = []
+        try:
+            resp = await client.get(f"{VAULT_API}/api/google/accounts/", headers=headers)
+            if resp.status_code == 200:
+                accounts = resp.json()
+                if isinstance(accounts, list):
+                    google_accounts = [a.get("email", a) if isinstance(a, dict) else str(a) for a in accounts]
+                elif isinstance(accounts, dict):
+                    google_accounts = [a.get("email", a) if isinstance(a, dict) else str(a)
+                                       for a in accounts.get("results", accounts.get("data", accounts.get("accounts", [])))]
+                if google_accounts:
+                    parts.append("CONTAS GOOGLE CONECTADAS: " + ", ".join(google_accounts))
+        except Exception:
+            pass
+
+        for acct_email in google_accounts[:2]:
+            try:
+                resp = await client.get(
+                    f"{VAULT_API}/api/google/gmail/messages/",
+                    headers=headers,
+                    params={"q": "is:unread", "limit": 5, "account_email": acct_email},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    messages = data if isinstance(data, list) else data.get("messages", data.get("results", data.get("data", [])))
+                    if messages:
+                        lines = []
+                        for msg in messages[:5]:
+                            sender = msg.get("from", msg.get("sender", "?"))
+                            subject = msg.get("subject", "(sem assunto)")
+                            lines.append(f"  - {sender}: {subject}")
+                        parts.append(f"EMAILS NAO LIDOS ({acct_email}):\n" + "\n".join(lines))
+                    else:
+                        parts.append(f"EMAILS NAO LIDOS ({acct_email}): nenhum")
+            except Exception:
+                pass
+
         # Calendar events (next 14 days)
         try:
             time_min = now.strftime("%Y-%m-%dT00:00:00Z")
@@ -243,6 +281,12 @@ Be concise but warm. Use markdown formatting (bold, lists) when helpful.
 When asked about tasks, finances, or schedule, use the context below to give accurate answers.
 If asked to do something (create task, draft document, etc.), help directly.
 If you don't have enough information, say so honestly.
+
+GOOGLE INTEGRATION:
+You can help with reading and summarizing emails from any connected Google account.
+You can search files in Google Drive, read Google Docs, and read/edit Google Sheets.
+When asked about emails, mention which accounts are available (shown in context below).
+When asked to send an email, draft it and confirm which account to send from.
 
 CURRENT DATE: {datetime.now().strftime('%A, %d de %B de %Y')}
 
