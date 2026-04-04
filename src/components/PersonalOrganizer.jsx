@@ -837,8 +837,13 @@ function UpcomingEvents() {
     return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
   }
 
-  const formatEventDate = (iso) => {
+  const getDateKey = (iso) => {
     const d = new Date(iso.includes('T') ? iso : iso + 'T12:00:00')
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  const formatDateHeader = (dateKey) => {
+    const d = new Date(dateKey + 'T12:00:00')
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     const evtDate = new Date(d)
@@ -846,7 +851,25 @@ function UpcomingEvents() {
     const diff = Math.floor((evtDate - today) / 86400000)
     if (diff === 0) return 'Hoje'
     if (diff === 1) return 'Amanha'
-    return d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' })
+    return d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'short' })
+  }
+
+  // Group events by date
+  const grouped = useMemo(() => {
+    const groups = {}
+    events.slice(0, 15).forEach((evt) => {
+      const key = getDateKey(evt.start)
+      if (!groups[key]) groups[key] = []
+      groups[key].push(evt)
+    })
+    return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b))
+  }, [events])
+
+  const calendarLabel = (cal) => {
+    if (!cal) return ''
+    // Show just the part before @ or a short name
+    const at = cal.indexOf('@')
+    return at > 0 ? cal.slice(0, at) : cal
   }
 
   return (
@@ -857,15 +880,28 @@ function UpcomingEvents() {
       </div>
       <div className={styles.eventsList}>
         {isLoading && <div className={styles.emptyState}>Carregando...</div>}
-        {events.slice(0, 10).map((evt, i) => (
-          <div key={i} className={styles.eventItem}>
-            <div className={styles.eventDate}>{formatEventDate(evt.start)}</div>
-            <div className={styles.eventInfo}>
-              <span className={styles.eventTitle}>{evt.title}</span>
-              <span className={styles.eventTime}>
-                {evt.all_day ? 'Dia todo' : formatTime(evt.start)}
-              </span>
-            </div>
+        {grouped.map(([dateKey, dayEvents]) => (
+          <div key={dateKey}>
+            <div className={styles.eventsDateHeader}>{formatDateHeader(dateKey)}</div>
+            {dayEvents.map((evt, i) => (
+              <div key={i} className={styles.eventItem}>
+                <span className={styles.eventColorDot} style={{ background: evt.calendar_color || 'var(--color-accent)' }} />
+                <div className={styles.eventInfo}>
+                  <span className={styles.eventTitle}>{evt.title}</span>
+                  <div className={styles.eventMeta}>
+                    <span className={styles.eventTime}>
+                      {evt.all_day ? 'Dia todo' : `${formatTime(evt.start)} — ${formatTime(evt.end)}`}
+                    </span>
+                    {evt.location && (
+                      <span className={styles.eventLocation}>{evt.location.length > 30 ? evt.location.slice(0, 30) + '...' : evt.location}</span>
+                    )}
+                  </div>
+                  {evt.calendar && (
+                    <span className={styles.eventCalendar}>{calendarLabel(evt.calendar)}</span>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         ))}
         {events.length === 0 && !isLoading && (
@@ -936,10 +972,19 @@ function PersonalCalendar() {
 
   const prevMonth = () => { if (viewMonth === 0) { setViewYear(viewYear - 1); setViewMonth(11) } else setViewMonth(viewMonth - 1); setSelectedDate(null) }
   const nextMonth = () => { if (viewMonth === 11) { setViewYear(viewYear + 1); setViewMonth(0) } else setViewMonth(viewMonth + 1); setSelectedDate(null) }
+  const goToday = () => { setViewYear(now.getFullYear()); setViewMonth(now.getMonth()); setSelectedDate(todayKey) }
 
   const selectedEvents = selectedDate ? (eventsByDate[selectedDate] || []) : []
 
   const formatTime = (iso) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+
+  const calendarLabel = (cal) => {
+    if (!cal) return ''
+    const at = cal.indexOf('@')
+    return at > 0 ? cal.slice(0, at) : cal
+  }
+
+  const MAX_PREVIEW = 2
 
   return (
     <div className={styles.widget}>
@@ -947,7 +992,7 @@ function PersonalCalendar() {
         <button className={styles.calNavBtn} onClick={prevMonth}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6" /></svg>
         </button>
-        <h3 className={styles.calTitle}>{MONTH_NAMES[viewMonth]} {viewYear}</h3>
+        <h3 className={styles.calTitle} onClick={goToday} style={{ cursor: 'pointer' }}>{MONTH_NAMES[viewMonth]} {viewYear}</h3>
         <button className={styles.calNavBtn} onClick={nextMonth}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6" /></svg>
         </button>
@@ -959,7 +1004,8 @@ function PersonalCalendar() {
           const key = dateKey(d)
           const isToday = key === todayKey
           const isSelected = key === selectedDate
-          const hasEvents = !!eventsByDate[key]
+          const dayEvents = eventsByDate[key] || []
+          const overflow = dayEvents.length - MAX_PREVIEW
           return (
             <button
               key={i}
@@ -967,7 +1013,14 @@ function PersonalCalendar() {
               onClick={() => setSelectedDate(key === selectedDate ? null : key)}
             >
               <span className={styles.calDayNum}>{d.day}</span>
-              {hasEvents && <span className={styles.calDot} />}
+              <div className={styles.calDayEvents}>
+                {dayEvents.slice(0, MAX_PREVIEW).map((evt, j) => (
+                  <span key={j} className={styles.calEventPill} style={{ borderLeftColor: evt.calendar_color || 'var(--color-accent)' }}>
+                    {evt.title}
+                  </span>
+                ))}
+                {overflow > 0 && <span className={styles.calEventMore}>+{overflow}</span>}
+              </div>
             </button>
           )
         })}
@@ -983,10 +1036,21 @@ function PersonalCalendar() {
           {selectedEvents.length > 0 ? (
             selectedEvents.map((evt, i) => (
               <div key={i} className={styles.calEvent}>
-                <span className={styles.calEventTitle}>{evt.title}</span>
-                <span className={styles.calEventTime}>
-                  {evt.all_day ? 'Dia todo' : `${formatTime(evt.start)} — ${formatTime(evt.end)}`}
-                </span>
+                <span className={styles.calEventDot} style={{ background: evt.calendar_color || 'var(--color-accent)' }} />
+                <div className={styles.calEventBody}>
+                  <span className={styles.calEventTitle}>{evt.title}</span>
+                  <span className={styles.calEventTime}>
+                    {evt.all_day ? 'Dia todo' : `${formatTime(evt.start)} — ${formatTime(evt.end)}`}
+                  </span>
+                  {evt.location && (
+                    <span className={styles.calEventLocation}>
+                      {evt.location.length > 40 ? evt.location.slice(0, 40) + '...' : evt.location}
+                    </span>
+                  )}
+                  {evt.calendar && (
+                    <span className={styles.calEventCalendar}>{calendarLabel(evt.calendar)}</span>
+                  )}
+                </div>
               </div>
             ))
           ) : (
