@@ -1189,6 +1189,103 @@
   color: var(--color-text-secondary);
 }
 
+/* ─── Tab Bar ──────────────────────────────────────────── */
+
+.tabBar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 var(--space-lg);
+  /* Same full-width breakout as gridContainer */
+  width: 100vw;
+  margin-left: calc(-50vw + 50%);
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-md);
+}
+
+.tab {
+  padding: 10px 20px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tab:hover {
+  color: var(--color-text);
+  background: rgba(184, 101, 48, 0.04);
+}
+
+.tabActive {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.tabAdd {
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.tabAdd:hover {
+  color: var(--color-accent);
+}
+
+.tabRenameInput {
+  padding: 6px 12px;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  background: var(--color-bg);
+  outline: none;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  width: 120px;
+}
+
+.tabContextMenu {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+  min-width: 120px;
+}
+
+.tabContextItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 14px;
+  background: transparent;
+  border: none;
+  font-size: 0.8rem;
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.tabContextItem:hover {
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+}
+
 /* ─── Widget Catalog ───────────────────────────────────── */
 
 .catalogWrap {

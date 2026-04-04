@@ -1130,9 +1130,10 @@ function PersonalReminders({ config, onConfigChange }) {
 
 /* ── Grid Layout (gridstack) ──────────────────────────────── */
 
-function gridKey(profileId) { return `vault-pessoal-gridstack-v5-${profileId}` }
+function gridKey(profileId, tabId) { return `vault-pessoal-grid-${profileId}-${tabId || 'default'}` }
 function widgetsKey(profileId) { return `vault-pessoal-widgets-v1-${profileId}` }
 function configKey(profileId) { return `vault-pessoal-widget-config-v1-${profileId}` }
+function tabsKey(profileId) { return `vault-pessoal-tabs-v1-${profileId}` }
 
 const DEFAULT_WIDGETS = [
   { id: 'kpi-hoje',      type: 'kpi-hoje',      x: 0,  y: 0, w: 3, h: 2 },
@@ -1211,6 +1212,138 @@ function saveWidgetConfigs(profileId, configs) {
   localStorage.setItem(configKey(profileId), JSON.stringify(configs))
 }
 
+/* ── Tab persistence ────────────────────────────────────── */
+
+function loadTabs(profileId) {
+  try {
+    const saved = localStorage.getItem(tabsKey(profileId))
+    if (saved) return JSON.parse(saved)
+  } catch {}
+
+  // Migrate: create default tab from existing widgets
+  const existingWidgets = loadWidgets(profileId)
+  const defaultTab = { id: 'default', name: 'Principal', widgets: existingWidgets }
+
+  // Also migrate the old grid layout key to the new tab-scoped key
+  try {
+    const oldGridKey = `vault-pessoal-gridstack-v5-${profileId}`
+    const oldGrid = localStorage.getItem(oldGridKey)
+    if (oldGrid) {
+      localStorage.setItem(gridKey(profileId, 'default'), oldGrid)
+    }
+  } catch {}
+
+  return [defaultTab]
+}
+
+function saveTabs(profileId, tabs) {
+  localStorage.setItem(tabsKey(profileId), JSON.stringify(tabs))
+}
+
+/* ── Tab Bar ────────────────────────────────────────────── */
+
+function TabBar({ tabs, activeTabId, onSwitch, onAdd, onRename, onDelete }) {
+  const [renamingId, setRenamingId] = useState(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [contextMenu, setContextMenu] = useState(null)
+  const contextRef = useRef(null)
+
+  useEffect(() => {
+    if (!contextMenu) return
+    const handleClick = (e) => {
+      if (contextRef.current && !contextRef.current.contains(e.target)) setContextMenu(null)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [contextMenu])
+
+  const startRename = (tab) => {
+    setRenamingId(tab.id)
+    setRenameValue(tab.name)
+    setContextMenu(null)
+  }
+
+  const commitRename = () => {
+    if (renamingId && renameValue.trim()) {
+      onRename(renamingId, renameValue.trim())
+    }
+    setRenamingId(null)
+  }
+
+  const handleContextMenu = (e, tab) => {
+    e.preventDefault()
+    setContextMenu({ tabId: tab.id, x: e.clientX, y: e.clientY })
+  }
+
+  return (
+    <div className={styles.tabBar}>
+      {tabs.map((tab) => {
+        if (renamingId === tab.id) {
+          return (
+            <input
+              key={tab.id}
+              className={styles.tabRenameInput}
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitRename()
+                if (e.key === 'Escape') setRenamingId(null)
+              }}
+              autoFocus
+            />
+          )
+        }
+        return (
+          <button
+            key={tab.id}
+            className={`${styles.tab} ${tab.id === activeTabId ? styles.tabActive : ''}`}
+            onClick={() => onSwitch(tab.id)}
+            onDoubleClick={() => startRename(tab)}
+            onContextMenu={(e) => handleContextMenu(e, tab)}
+          >
+            {tab.name}
+          </button>
+        )
+      })}
+      <button className={styles.tabAdd} onClick={onAdd} title="Nova aba">
+        +
+      </button>
+
+      {contextMenu && (
+        <div
+          ref={contextRef}
+          className={styles.tabContextMenu}
+          style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, zIndex: 200 }}
+        >
+          <button
+            className={styles.tabContextItem}
+            onClick={() => {
+              const tab = tabs.find(t => t.id === contextMenu.tabId)
+              if (tab) startRename(tab)
+            }}
+          >
+            Renomear
+          </button>
+          {tabs.length > 1 && (
+            <button
+              className={styles.tabContextItem}
+              onClick={() => {
+                if (window.confirm('Excluir esta aba?')) {
+                  onDelete(contextMenu.tabId)
+                }
+                setContextMenu(null)
+              }}
+            >
+              Excluir
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ── Widget Catalog Dropdown ────────────────────────────── */
 
 function WidgetCatalog({ onAdd, activeWidgetTypes }) {
@@ -1273,7 +1406,11 @@ const PALMER_ID = 'a29184ea-9d4d-4c65-8300-386ed5b07fca'
 function PersonalOrganizerInner({ profileId }) {
   const queryClient = useQueryClient()
   const [activeProject, setActiveProject] = useState(null)
-  const [widgets, setWidgets] = useState(() => loadWidgets(profileId))
+  const [tabs, setTabs] = useState(() => loadTabs(profileId))
+  const [activeTabId, setActiveTabId] = useState(() => {
+    const t = loadTabs(profileId)
+    return t[0]?.id || 'default'
+  })
   const [widgetConfigs, setWidgetConfigs] = useState(() => {
     const configs = loadWidgetConfigs(profileId)
     // Auto-enable reminders for Palmer (Mac owner) if no config set yet
@@ -1282,118 +1419,71 @@ function PersonalOrganizerInner({ profileId }) {
     }
     return configs
   })
-  const gridRef = useRef(null)
-  const gridInstanceRef = useRef(null)
 
-  // Persist widget list whenever it changes
-  useEffect(() => { saveWidgets(profileId, widgets) }, [profileId, widgets])
+  // Derive active tab and widgets
+  const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0]
+  const widgets = activeTab?.widgets || []
+
+  // Persist tabs and configs
+  useEffect(() => { saveTabs(profileId, tabs) }, [profileId, tabs])
   useEffect(() => { saveWidgetConfigs(profileId, widgetConfigs) }, [profileId, widgetConfigs])
 
-  useEffect(() => {
-    if (!gridRef.current || gridInstanceRef.current) return
+  // ── Tab actions ──
 
-    const grid = GridStack.init({
-      column: 12,
-      cellHeight: 70,
-      margin: 8,
-      float: true,
-      animate: true,
-      draggable: { handle: `.${styles.widgetHeader}, .${styles.catalogDragHandle}` },
-      resizable: { handles: 'se' },
-    }, gridRef.current)
-
-    // Apply saved layout positions (with migration from old unscoped key)
-    const savedLayout = (() => {
-      try {
-        const s = localStorage.getItem(gridKey(profileId))
-        if (s) return JSON.parse(s)
-      } catch {}
-      // Migrate from old unscoped gridstack key
-      try {
-        const old = localStorage.getItem('vault-pessoal-gridstack-v5')
-        if (old) {
-          const parsed = JSON.parse(old)
-          localStorage.setItem(gridKey(profileId), old)
-          return parsed
-        }
-      } catch {}
-      return null
-    })()
-
-    if (savedLayout) {
-      savedLayout.forEach(item => {
-        const el = gridRef.current.querySelector(`[gs-id="${item.id}"]`)
-        if (el) grid.update(el, { x: item.x, y: item.y, w: item.w, h: item.h })
-      })
-    }
-
-    // Save layout on change
-    grid.on('change', () => {
-      const nodes = grid.getGridItems().map(el => ({
-        id: el.getAttribute('gs-id'),
-        x: parseInt(el.getAttribute('gs-x')),
-        y: parseInt(el.getAttribute('gs-y')),
-        w: parseInt(el.getAttribute('gs-w')),
-        h: parseInt(el.getAttribute('gs-h')),
-      }))
-      localStorage.setItem(gridKey(profileId), JSON.stringify(nodes))
-    })
-
-    grid.on('dragstart resizestart', () => {
-      gridRef.current.classList.add('gs-dragging')
-    })
-    grid.on('dragstop resizestop', () => {
-      gridRef.current.classList.remove('gs-dragging')
-    })
-
-    gridInstanceRef.current = grid
-
-    return () => {
-      grid.destroy(false)
-      gridInstanceRef.current = null
-    }
+  const switchTab = useCallback((tabId) => {
+    setActiveTabId(tabId)
   }, [])
 
-  // ── Add / Remove widgets ──
+  const addTab = useCallback(() => {
+    const name = window.prompt('Nome da nova aba:')
+    if (!name?.trim()) return
+    const id = `tab-${Date.now().toString(36)}`
+    setTabs(prev => [...prev, { id, name: name.trim(), widgets: [] }])
+    setActiveTabId(id)
+  }, [])
+
+  const renameTab = useCallback((tabId, newName) => {
+    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, name: newName } : t))
+  }, [])
+
+  const deleteTab = useCallback((tabId) => {
+    setTabs(prev => {
+      if (prev.length <= 1) return prev
+      const next = prev.filter(t => t.id !== tabId)
+      // If deleting the active tab, switch to first remaining
+      if (tabId === activeTabId) {
+        setActiveTabId(next[0].id)
+      }
+      // Clean up grid layout for deleted tab
+      localStorage.removeItem(gridKey(profileId, tabId))
+      return next
+    })
+  }, [activeTabId, profileId])
+
+  // ── Add / Remove widgets (scoped to active tab) ──
 
   const addWidget = useCallback((type) => {
     const meta = getWidgetMeta(type)
     if (!meta) return
     const id = generateWidgetId(type)
-    const currentLayout = gridInstanceRef.current
-      ? gridInstanceRef.current.getGridItems().map(el => ({
-          x: parseInt(el.getAttribute('gs-x')),
-          y: parseInt(el.getAttribute('gs-y')),
-          w: parseInt(el.getAttribute('gs-w')),
-          h: parseInt(el.getAttribute('gs-h')),
-        }))
-      : widgets
-    const pos = findNextPosition(currentLayout, meta.defaultW, meta.defaultH)
+    const pos = findNextPosition(widgets, meta.defaultW, meta.defaultH)
     const newWidget = { id, type, x: pos.x, y: pos.y, w: meta.defaultW, h: meta.defaultH }
 
-    setWidgets(prev => [...prev, newWidget])
-
-    // Add to gridstack after DOM renders
-    requestAnimationFrame(() => {
-      if (gridInstanceRef.current && gridRef.current) {
-        const el = gridRef.current.querySelector(`[gs-id="${id}"]`)
-        if (el) gridInstanceRef.current.makeWidget(el)
-      }
-    })
-  }, [widgets])
+    setTabs(prev => prev.map(tab =>
+      tab.id === activeTabId ? { ...tab, widgets: [...tab.widgets, newWidget] } : tab
+    ))
+  }, [activeTabId, widgets])
 
   const removeWidget = useCallback((id) => {
-    if (gridInstanceRef.current && gridRef.current) {
-      const el = gridRef.current.querySelector(`[gs-id="${id}"]`)
-      if (el) gridInstanceRef.current.removeWidget(el, false)
-    }
-    setWidgets(prev => prev.filter(w => w.id !== id))
+    setTabs(prev => prev.map(tab =>
+      tab.id === activeTabId ? { ...tab, widgets: tab.widgets.filter(w => w.id !== id) } : tab
+    ))
     setWidgetConfigs(prev => {
       const next = { ...prev }
       delete next[id]
       return next
     })
-  }, [])
+  }, [activeTabId])
 
   const updateWidgetConfig = useCallback((id, config) => {
     setWidgetConfigs(prev => ({ ...prev, [id]: config }))
@@ -1510,62 +1600,170 @@ function PersonalOrganizerInner({ profileId }) {
     <div className={styles.page}>
       <ChatWidget />
       <WidgetCatalog onAdd={addWidget} activeWidgetTypes={activeWidgetTypes} />
-      <div ref={gridRef} className={`grid-stack ${styles.gridContainer}`}>
-        {widgets.map((widget) => {
-          const meta = getWidgetMeta(widget.type)
-          const minW = meta?.minW || 2
-          const minH = meta?.minH || 1
-          const headerless = HEADERLESS.has(widget.type)
+      <TabBar
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onSwitch={switchTab}
+        onAdd={addTab}
+        onRename={renameTab}
+        onDelete={deleteTab}
+      />
+      <DashboardGrid
+        key={activeTabId}
+        widgets={widgets}
+        profileId={profileId}
+        tabId={activeTabId}
+        renderWidgetContent={renderWidgetContent}
+        removeWidget={removeWidget}
+        headerlessTypes={HEADERLESS}
+      />
+    </div>
+  )
+}
 
-          return (
-            <div
-              key={widget.id}
-              className="grid-stack-item"
-              gs-id={widget.id}
-              gs-x={widget.x}
-              gs-y={widget.y}
-              gs-w={widget.w}
-              gs-h={widget.h}
-              gs-min-w={minW}
-              gs-min-h={minH}
-            >
-              <div className="grid-stack-item-content">
-                {headerless ? (
-                  <div style={{ height: '100%', position: 'relative' }}>
-                    <div className={styles.catalogDragHandle} />
-                    <button
-                      className={styles.removeBtn}
-                      onClick={() => removeWidget(widget.id)}
-                      title="Remover widget"
-                    >
-                      ×
-                    </button>
+/* ── Dashboard Grid (manages gridstack lifecycle per tab) ── */
+
+function DashboardGrid({ widgets, profileId, tabId, renderWidgetContent, removeWidget, headerlessTypes }) {
+  const gridRef = useRef(null)
+  const gridInstanceRef = useRef(null)
+
+  useEffect(() => {
+    if (!gridRef.current || gridInstanceRef.current) return
+
+    const grid = GridStack.init({
+      column: 12,
+      cellHeight: 70,
+      margin: 8,
+      float: true,
+      animate: true,
+      draggable: { handle: `.${styles.widgetHeader}, .${styles.catalogDragHandle}` },
+      resizable: { handles: 'se' },
+    }, gridRef.current)
+
+    // Apply saved layout positions
+    const savedLayout = (() => {
+      try {
+        const s = localStorage.getItem(gridKey(profileId, tabId))
+        if (s) return JSON.parse(s)
+      } catch {}
+      // Migrate from old unscoped gridstack key
+      try {
+        const old = localStorage.getItem('vault-pessoal-gridstack-v5')
+        if (old) {
+          const parsed = JSON.parse(old)
+          localStorage.setItem(gridKey(profileId, tabId), old)
+          return parsed
+        }
+      } catch {}
+      return null
+    })()
+
+    if (savedLayout) {
+      savedLayout.forEach(item => {
+        const el = gridRef.current.querySelector(`[gs-id="${item.id}"]`)
+        if (el) grid.update(el, { x: item.x, y: item.y, w: item.w, h: item.h })
+      })
+    }
+
+    // Save layout on change
+    grid.on('change', () => {
+      const nodes = grid.getGridItems().map(el => ({
+        id: el.getAttribute('gs-id'),
+        x: parseInt(el.getAttribute('gs-x')),
+        y: parseInt(el.getAttribute('gs-y')),
+        w: parseInt(el.getAttribute('gs-w')),
+        h: parseInt(el.getAttribute('gs-h')),
+      }))
+      localStorage.setItem(gridKey(profileId, tabId), JSON.stringify(nodes))
+    })
+
+    grid.on('dragstart resizestart', () => {
+      gridRef.current.classList.add('gs-dragging')
+    })
+    grid.on('dragstop resizestop', () => {
+      gridRef.current.classList.remove('gs-dragging')
+    })
+
+    gridInstanceRef.current = grid
+
+    return () => {
+      grid.destroy(false)
+      gridInstanceRef.current = null
+    }
+  }, [])
+
+  // When widgets are added dynamically, register new ones with gridstack
+  useEffect(() => {
+    if (!gridInstanceRef.current || !gridRef.current) return
+    requestAnimationFrame(() => {
+      const grid = gridInstanceRef.current
+      if (!grid || !gridRef.current) return
+      const existing = new Set(grid.getGridItems().map(el => el.getAttribute('gs-id')))
+      widgets.forEach(w => {
+        if (!existing.has(w.id)) {
+          const el = gridRef.current.querySelector(`[gs-id="${w.id}"]`)
+          if (el) grid.makeWidget(el)
+        }
+      })
+    })
+  }, [widgets])
+
+  return (
+    <div ref={gridRef} className={`grid-stack ${styles.gridContainer}`}>
+      {widgets.map((widget) => {
+        const meta = getWidgetMeta(widget.type)
+        const minW = meta?.minW || 2
+        const minH = meta?.minH || 1
+        const headerless = headerlessTypes.has(widget.type)
+
+        return (
+          <div
+            key={widget.id}
+            className="grid-stack-item"
+            gs-id={widget.id}
+            gs-x={widget.x}
+            gs-y={widget.y}
+            gs-w={widget.w}
+            gs-h={widget.h}
+            gs-min-w={minW}
+            gs-min-h={minH}
+          >
+            <div className="grid-stack-item-content">
+              {headerless ? (
+                <div style={{ height: '100%', position: 'relative' }}>
+                  <div className={styles.catalogDragHandle} />
+                  <button
+                    className={styles.removeBtn}
+                    onClick={() => removeWidget(widget.id)}
+                    title="Remover widget"
+                  >
+                    ×
+                  </button>
+                  {renderWidgetContent(widget)}
+                </div>
+              ) : (
+                <div className={styles.widget}>
+                  <div className={styles.widgetHeader}>
+                    <h3 className={styles.widgetTitle}>{meta?.label || widget.type}</h3>
+                    <div className={styles.widgetHeaderRight}>
+                      <button
+                        className={styles.removeBtnHeader}
+                        onClick={() => removeWidget(widget.id)}
+                        title="Remover widget"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
                     {renderWidgetContent(widget)}
                   </div>
-                ) : (
-                  <div className={styles.widget}>
-                    <div className={styles.widgetHeader}>
-                      <h3 className={styles.widgetTitle}>{meta?.label || widget.type}</h3>
-                      <div className={styles.widgetHeaderRight}>
-                        <button
-                          className={styles.removeBtnHeader}
-                          onClick={() => removeWidget(widget.id)}
-                          title="Remover widget"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    </div>
-                    <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
-                      {renderWidgetContent(widget)}
-                    </div>
-                  </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
-          )
-        })}
-      </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
