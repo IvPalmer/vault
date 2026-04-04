@@ -150,10 +150,13 @@ class GoogleAuthStartView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        # The 'next' param tells us where to redirect after auth
+        # The 'next' param is the frontend URL (e.g. http://localhost:5175/login)
+        # We derive the redirect_uri from this origin so the callback goes through Vite proxy
         next_url = request.GET.get('next', '/')
-        redirect_uri = request.build_absolute_uri('/api/auth/google-callback/')
-        state = urllib.parse.urlencode({'next': next_url})
+        parsed = urllib.parse.urlparse(next_url)
+        frontend_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.netloc else 'http://localhost:5175'
+        redirect_uri = f'{frontend_origin}/api/auth/google-callback/'
+        state = urllib.parse.urlencode({'next': next_url, 'redirect_uri': redirect_uri})
 
         params = urllib.parse.urlencode({
             'client_id': settings.GOOGLE_CLIENT_ID,
@@ -190,8 +193,10 @@ class GoogleAuthCallbackView(APIView):
         if not code:
             return HttpResponseRedirect(f'{frontend_origin}/login?error=no_code')
 
-        # Exchange code for tokens
-        redirect_uri = request.build_absolute_uri('/api/auth/google-callback/')
+        # Exchange code for tokens — use same redirect_uri that was sent to Google
+        redirect_uri = state_params.get('redirect_uri', [''])[0]
+        if not redirect_uri:
+            redirect_uri = request.build_absolute_uri('/api/auth/google-callback/')
         try:
             token_resp = http_requests.post('https://oauth2.googleapis.com/token', data={
                 'code': code,
