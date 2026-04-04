@@ -1220,20 +1220,32 @@ function loadTabs(profileId) {
     if (saved) return JSON.parse(saved)
   } catch {}
 
-  // Migrate: create default tab from existing widgets
-  const existingWidgets = loadWidgets(profileId)
-  const defaultTab = { id: 'default', name: 'Principal', widgets: existingWidgets }
+  // Migrate: create default tab from existing widgets with positions from grid key
+  let existingWidgets = loadWidgets(profileId)
 
-  // Also migrate the old grid layout key to the new tab-scoped key
-  try {
-    const oldGridKey = `vault-pessoal-gridstack-v5-${profileId}`
-    const oldGrid = localStorage.getItem(oldGridKey)
-    if (oldGrid) {
-      localStorage.setItem(gridKey(profileId, 'default'), oldGrid)
-    }
-  } catch {}
+  // Merge positions from any old grid key into widgets
+  const gridKeys = [
+    `vault-pessoal-grid-${profileId}-default`,
+    `vault-pessoal-gridstack-v5-${profileId}`,
+    'vault-pessoal-gridstack-v5',
+  ]
+  for (const key of gridKeys) {
+    try {
+      const gridData = localStorage.getItem(key)
+      if (gridData) {
+        const positions = JSON.parse(gridData)
+        const posMap = {}
+        positions.forEach(p => { posMap[p.id] = p })
+        existingWidgets = existingWidgets.map(w => {
+          const pos = posMap[w.id]
+          return pos ? { ...w, x: pos.x, y: pos.y, w: pos.w, h: pos.h } : w
+        })
+        break // use first found
+      }
+    } catch {}
+  }
 
-  return [defaultTab]
+  return [{ id: 'default', name: 'Principal', widgets: existingWidgets }]
 }
 
 function saveTabs(profileId, tabs) {
@@ -1489,6 +1501,22 @@ function PersonalOrganizerInner({ profileId }) {
     setWidgetConfigs(prev => ({ ...prev, [id]: config }))
   }, [])
 
+  // Sync gridstack layout changes back into the tab's widgets array
+  const handleLayoutChange = useCallback((nodes) => {
+    const posMap = {}
+    for (const n of nodes) posMap[n.id] = n
+    setTabs(prev => prev.map(tab => {
+      if (tab.id !== activeTabId) return tab
+      return {
+        ...tab,
+        widgets: tab.widgets.map(w => {
+          const pos = posMap[w.id]
+          return pos ? { ...w, x: pos.x, y: pos.y, w: pos.w, h: pos.h } : w
+        }),
+      }
+    }))
+  }, [activeTabId])
+
   // ── Data queries ──
 
   const { data: tasksData } = useQuery({
@@ -1615,6 +1643,7 @@ function PersonalOrganizerInner({ profileId }) {
         tabId={activeTabId}
         renderWidgetContent={renderWidgetContent}
         removeWidget={removeWidget}
+        onLayoutChange={handleLayoutChange}
         headerlessTypes={HEADERLESS}
       />
     </div>
@@ -1623,9 +1652,11 @@ function PersonalOrganizerInner({ profileId }) {
 
 /* ── Dashboard Grid (manages gridstack lifecycle per tab) ── */
 
-function DashboardGrid({ widgets, profileId, tabId, renderWidgetContent, removeWidget, headerlessTypes }) {
+function DashboardGrid({ widgets, profileId, tabId, renderWidgetContent, removeWidget, onLayoutChange, headerlessTypes }) {
   const gridRef = useRef(null)
   const gridInstanceRef = useRef(null)
+  const onLayoutChangeRef = useRef(onLayoutChange)
+  onLayoutChangeRef.current = onLayoutChange
 
   useEffect(() => {
     if (!gridRef.current || gridInstanceRef.current) return
@@ -1640,32 +1671,10 @@ function DashboardGrid({ widgets, profileId, tabId, renderWidgetContent, removeW
       resizable: { handles: 'se' },
     }, gridRef.current)
 
-    // Apply saved layout positions
-    const savedLayout = (() => {
-      try {
-        const s = localStorage.getItem(gridKey(profileId, tabId))
-        if (s) return JSON.parse(s)
-      } catch {}
-      // Migrate from old unscoped gridstack key
-      try {
-        const old = localStorage.getItem('vault-pessoal-gridstack-v5')
-        if (old) {
-          const parsed = JSON.parse(old)
-          localStorage.setItem(gridKey(profileId, tabId), old)
-          return parsed
-        }
-      } catch {}
-      return null
-    })()
+    // Positions come from the widgets prop (canonical source = tabs state)
+    // No separate grid key needed — positions live in the tab's widgets array
 
-    if (savedLayout) {
-      savedLayout.forEach(item => {
-        const el = gridRef.current.querySelector(`[gs-id="${item.id}"]`)
-        if (el) grid.update(el, { x: item.x, y: item.y, w: item.w, h: item.h })
-      })
-    }
-
-    // Save layout on change
+    // Save layout on change → push back to parent tabs state
     grid.on('change', () => {
       const nodes = grid.getGridItems().map(el => ({
         id: el.getAttribute('gs-id'),
@@ -1674,7 +1683,7 @@ function DashboardGrid({ widgets, profileId, tabId, renderWidgetContent, removeW
         w: parseInt(el.getAttribute('gs-w')),
         h: parseInt(el.getAttribute('gs-h')),
       }))
-      localStorage.setItem(gridKey(profileId, tabId), JSON.stringify(nodes))
+      if (onLayoutChangeRef.current) onLayoutChangeRef.current(nodes)
     })
 
     grid.on('dragstart resizestart', () => {
