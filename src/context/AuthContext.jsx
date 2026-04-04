@@ -59,6 +59,11 @@ export function AuthProvider({ children }) {
     setUser(null)
   }, [])
 
+  // Direct user set for redirect flow (tokens already stored by Login page)
+  const setUserDirect = useCallback((userData) => {
+    setUser(userData)
+  }, [])
+
   return (
     <AuthContext.Provider value={{
       user,
@@ -67,6 +72,7 @@ export function AuthProvider({ children }) {
       error,
       login,
       logout,
+      setUserDirect,
       googleClientId: GOOGLE_CLIENT_ID,
     }}>
       {children}

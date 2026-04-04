@@ -39,7 +39,8 @@ from .views import (
     PluggySyncView,
     ProjectViewSet, PersonalTaskViewSet, PersonalNoteViewSet,
 )
-from .auth_views import GoogleLoginView, TokenRefreshView, AuthMeView
+from .auth_views import GoogleLoginView, TokenRefreshView, AuthMeView, GoogleAuthStartView, GoogleAuthCallbackView
+from .dashboard_views import DashboardStateView
 from .google_views import (
     GoogleConnectView, GoogleOAuthCallbackView, GoogleAccountsView,
     GmailMessagesView, GmailMessageDetailView, GmailSendView,
@@ -71,6 +72,8 @@ urlpatterns = [
     path('auth/google/', GoogleLoginView.as_view(), name='auth-google'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='auth-refresh'),
     path('auth/me/', AuthMeView.as_view(), name='auth-me'),
+    path('auth/google-start/', GoogleAuthStartView.as_view(), name='auth-google-start'),
+    path('auth/google-callback/', GoogleAuthCallbackView.as_view(), name='auth-google-callback'),
     # Category manager
     path('categories/tree/', CategoryTreeView.as_view(), name='category-tree'),
     path('categories/bulk/', CategoryBulkReassignView.as_view(), name='category-bulk'),
@@ -144,6 +147,8 @@ urlpatterns = [
     path('calendar/selections/', CalendarSelectionsView.as_view(), name='calendar-selections'),
     path('calendar/events/', CalendarEventsView.as_view(), name='calendar-events'),
     path('calendar/add-event/', CalendarAddEventView.as_view(), name='calendar-add-event'),
+    # Dashboard state
+    path('dashboard-state/', DashboardStateView.as_view(), name='dashboard-state'),
     # Google Suite (OAuth + Gmail + Drive)
     path('google/connect/', GoogleConnectView.as_view(), name='google-connect'),
     path('google/oauth-callback/', GoogleOAuthCallbackView.as_view(), name='google-oauth-callback'),
