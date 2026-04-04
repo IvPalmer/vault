@@ -3,8 +3,9 @@
  *
  * Checks if the local sidecar is running (localhost:5177).
  * If running: shows available reminder lists.
- * If not: shows setup instructions with one-click install.
+ * If not: shows setup script with copy button.
  */
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import styles from './CalendarSettings.module.css'
 
@@ -24,6 +25,8 @@ async function checkSidecar() {
 }
 
 export default function RemindersSettings() {
+  const [copied, setCopied] = useState(false)
+
   const { data, isLoading } = useQuery({
     queryKey: ['sidecar-status'],
     queryFn: checkSidecar,
@@ -34,17 +37,14 @@ export default function RemindersSettings() {
   const connected = data?.connected || false
   const lists = data?.lists || []
 
-  const handleSetup = () => {
-    // Open Terminal with the setup command
-    const cmd = `curl -sL http://${window.location.hostname}:5175/sidecar-setup.sh | bash`
-    // Copy to clipboard and show instructions
-    navigator.clipboard.writeText(cmd).then(() => {
-      alert(
-        'Comando copiado! Cole no Terminal:\n\n' + cmd + '\n\n' +
-        'Isso vai instalar e iniciar o sidecar de Lembretes automaticamente.'
-      )
+  const setupCmd = `curl -fsSL ${window.location.origin}/reminders-setup.sh | bash`
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(setupCmd).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 3000)
     }).catch(() => {
-      prompt('Copie e cole no Terminal:', cmd)
+      window.prompt('Copie o comando:', setupCmd)
     })
   }
 
@@ -61,10 +61,10 @@ export default function RemindersSettings() {
               <span className={styles.accountEmail}>Sidecar conectado</span>
               <span style={{
                 fontSize: '0.7rem',
-                color: 'var(--color-green, #34C759)',
+                color: '#34C759',
                 fontWeight: 600,
               }}>
-                localhost:{5177}
+                localhost:5177
               </span>
             </div>
           </div>
@@ -85,17 +85,41 @@ export default function RemindersSettings() {
             <p style={{ fontSize: '0.85rem', color: 'var(--color-text)', margin: '0 0 0.5rem' }}>
               O sidecar de Lembretes nao esta rodando neste Mac.
             </p>
-            <p style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', margin: '0 0 1rem' }}>
-              O sidecar conecta seus Lembretes do Apple ao Vault.
-              Cada Mac precisa rodar seu proprio sidecar para ver seus lembretes pessoais.
+            <p style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', margin: '0 0 0.75rem' }}>
+              Cada Mac precisa rodar seu proprio sidecar para conectar seus Lembretes do Apple ao Vault.
+              Abra o Terminal e execute o comando abaixo:
             </p>
-            <button
-              className={styles.btnConnect}
-              onClick={handleSetup}
-              style={{ borderStyle: 'solid' }}
-            >
-              Configurar Lembretes neste Mac
-            </button>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: 'var(--color-bg)',
+              border: '1px solid var(--color-border)',
+              borderRadius: '6px',
+              padding: '10px 12px',
+              marginBottom: '8px',
+            }}>
+              <code style={{
+                flex: 1,
+                fontSize: '0.72rem',
+                fontFamily: "'SF Mono', 'Fira Code', monospace",
+                color: 'var(--color-text)',
+                wordBreak: 'break-all',
+              }}>
+                {setupCmd}
+              </code>
+              <button
+                onClick={handleCopy}
+                className={styles.btnSmall}
+                style={{ flexShrink: 0, minWidth: '70px' }}
+              >
+                {copied ? 'Copiado!' : 'Copiar'}
+              </button>
+            </div>
+            <p style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', margin: 0 }}>
+              O script baixa, compila e inicia o sidecar automaticamente.
+              Apos rodar, atualize esta pagina.
+            </p>
           </div>
         </div>
       )}
