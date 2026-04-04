@@ -1,43 +1,94 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
-// Profile management — injected into every request as X-Profile-ID header
-let currentProfileId = localStorage.getItem('vaultProfileId')
+// Token management
+let accessToken = localStorage.getItem('vaultAccessToken')
+let refreshToken = localStorage.getItem('vaultRefreshToken')
+let refreshPromise = null
 
-export function setProfileId(id) {
-  currentProfileId = id
-  if (id) {
-    localStorage.setItem('vaultProfileId', id)
-  } else {
-    localStorage.removeItem('vaultProfileId')
-  }
+export function setTokens(access, refresh) {
+  accessToken = access
+  refreshToken = refresh
+  if (access) localStorage.setItem('vaultAccessToken', access)
+  else localStorage.removeItem('vaultAccessToken')
+  if (refresh) localStorage.setItem('vaultRefreshToken', refresh)
+  else localStorage.removeItem('vaultRefreshToken')
 }
 
-export function getProfileId() {
-  return currentProfileId
+export function clearTokens() {
+  accessToken = null
+  refreshToken = null
+  localStorage.removeItem('vaultAccessToken')
+  localStorage.removeItem('vaultRefreshToken')
+  localStorage.removeItem('vaultProfileId')
+}
+
+export function getAccessToken() { return accessToken }
+export function getRefreshToken() { return refreshToken }
+
+// Legacy profile ID — fallback when no JWT
+let currentProfileId = localStorage.getItem('vaultProfileId')
+export function setProfileId(id) {
+  currentProfileId = id
+  if (id) localStorage.setItem('vaultProfileId', id)
+  else localStorage.removeItem('vaultProfileId')
+}
+export function getProfileId() { return currentProfileId }
+
+async function attemptRefresh() {
+  if (!refreshToken) return false
+  if (refreshPromise) return refreshPromise
+
+  refreshPromise = (async () => {
+    try {
+      const resp = await fetch(`${API_BASE_URL}/auth/refresh/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh: refreshToken }),
+      })
+      if (!resp.ok) return false
+      const data = await resp.json()
+      setTokens(data.access, data.refresh)
+      return true
+    } catch {
+      return false
+    } finally {
+      refreshPromise = null
+    }
+  })()
+  return refreshPromise
 }
 
 async function request(endpoint, options = {}) {
   const url = `${API_BASE_URL}${endpoint}`
   const { headers: optionHeaders, ...restOptions } = options
-  const config = {
-    ...restOptions,
-    headers: {
+
+  const buildHeaders = () => {
+    const h = {
       'Content-Type': 'application/json',
-      ...(currentProfileId && { 'X-Profile-ID': currentProfileId }),
       ...optionHeaders,
-    },
+    }
+    if (accessToken) {
+      h['Authorization'] = `Bearer ${accessToken}`
+    } else if (currentProfileId) {
+      h['X-Profile-ID'] = currentProfileId
+    }
+    return h
   }
 
-  const response = await fetch(url, config)
+  let response = await fetch(url, { ...restOptions, headers: buildHeaders() })
+
+  // On 401, try refresh once
+  if (response.status === 401 && refreshToken) {
+    const refreshed = await attemptRefresh()
+    if (refreshed) {
+      response = await fetch(url, { ...restOptions, headers: buildHeaders() })
+    }
+  }
 
   if (!response.ok) {
     const error = new Error(`API Error: ${response.status} ${response.statusText}`)
     error.status = response.status
-    try {
-      error.data = await response.json()
-    } catch {
-      error.data = null
-    }
+    try { error.data = await response.json() } catch { error.data = null }
     throw error
   }
 
