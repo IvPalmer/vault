@@ -1,5 +1,12 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import fs from 'fs'
+import path from 'path'
+
+const certDir = path.resolve(__dirname, 'certs')
+const certFile = path.join(certDir, 'raphaels-mac-studio.tail5d4d09.ts.net.crt')
+const keyFile = path.join(certDir, 'raphaels-mac-studio.tail5d4d09.ts.net.key')
+const hasCerts = fs.existsSync(certFile) && fs.existsSync(keyFile)
 
 export default defineConfig({
   plugins: [react()],
@@ -8,7 +15,13 @@ export default defineConfig({
     strictPort: true,
     host: true,
     open: false,
-    allowedHosts: ['.local', 'vault.local'],
+    allowedHosts: ['.local', 'vault.local', '.ts.net'],
+    ...(hasCerts && {
+      https: {
+        cert: fs.readFileSync(certFile),
+        key: fs.readFileSync(keyFile),
+      },
+    }),
     proxy: {
       // Apple Reminders → host-side sidecar (needs macOS EventKit/osascript)
       '/api/home/reminders': {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api from '../api/client'
 
-const DEBOUNCE_MS = 2000
+const DEBOUNCE_MS = 800
 
 /**
  * Server-side dashboard state with localStorage migration.
@@ -14,8 +14,13 @@ const DEBOUNCE_MS = 2000
 export default function useDashboardState(profileId) {
   const [state, setState] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [saveStatus, setSaveStatus] = useState(null) // null | 'saving' | 'saved'
   const saveTimer = useRef(null)
   const latestState = useRef(null)
+  const serverLoaded = useRef(false)
+  const profileIdRef = useRef(profileId)
+  profileIdRef.current = profileId
+  const savedTimer = useRef(null)
 
   // Load state from server (or migrate from localStorage)
   useEffect(() => {
@@ -24,19 +29,37 @@ export default function useDashboardState(profileId) {
 
     async function load() {
       try {
-        const data = await api.get('/dashboard-state/')
+        const data = await api.get(`/dashboard-state/?profile_id=${profileId}`)
         if (cancelled) return
 
-        if (data.state && Object.keys(data.state).length > 0) {
-          setState(data.state)
+        if (data.state && data.state.tabs) {
+          // Server has state — check if tabs have widgets
+          const hasWidgets = data.state.tabs.some(t => t.widgets && t.widgets.length > 0)
+          if (hasWidgets) {
+            setState(data.state)
+            // Delay enabling saves to let GridStack settle without overwriting
+            serverLoaded.current = true
+
+          } else {
+            // Server tabs exist but no widgets — try localStorage migration
+            const migrated = migrateFromLocalStorage(profileId)
+            const migratedHasWidgets = migrated.tabs.some(t => t.widgets && t.widgets.length > 0)
+            if (migratedHasWidgets) {
+              setState(migrated)
+              serverLoaded.current = true
+              try { await api.put(`/dashboard-state/?profile_id=${profileIdRef.current}`, { state: migrated }) } catch {}
+            } else {
+              // Both empty — use server state as-is (don't overwrite with defaults)
+              setState(data.state)
+              serverLoaded.current = true
+            }
+          }
         } else {
-          // Migrate from localStorage
+          // No server state — migrate from localStorage
           const migrated = migrateFromLocalStorage(profileId)
           setState(migrated)
-          // Save to server
-          try {
-            await api.put('/dashboard-state/', { state: migrated })
-          } catch {}
+          settleTimer.current = setTimeout(() => { serverLoaded.current = true }, 3000)
+          try { await api.put(`/dashboard-state/?profile_id=${profileIdRef.current}`, { state: migrated }) } catch {}
         }
       } catch {
         // Offline or error — fall back to localStorage
@@ -52,19 +75,27 @@ export default function useDashboardState(profileId) {
 
   // Debounced save to server
   const saveToServer = useCallback((newState) => {
+    if (!serverLoaded.current) return
     latestState.current = newState
+    setSaveStatus('saving')
+    if (savedTimer.current) clearTimeout(savedTimer.current)
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(async () => {
       try {
-        await api.put('/dashboard-state/', { state: latestState.current })
+        await api.put(`/dashboard-state/?profile_id=${profileIdRef.current}`, { state: latestState.current })
+        setSaveStatus('saved')
+        savedTimer.current = setTimeout(() => setSaveStatus(null), 1500)
       } catch (err) {
         console.warn('Failed to save dashboard state:', err)
+        setSaveStatus(null)
       }
     }, DEBOUNCE_MS)
   }, [])
 
-  const updateState = useCallback((partial) => {
+  const updateState = useCallback((partialOrFn) => {
     setState(prev => {
+      // Support functional updater: partialOrFn(prev) => partial
+      const partial = typeof partialOrFn === 'function' ? partialOrFn(prev) : partialOrFn
       const next = { ...prev, ...partial }
       saveToServer(next)
       return next
@@ -77,14 +108,14 @@ export default function useDashboardState(profileId) {
       if (saveTimer.current) {
         clearTimeout(saveTimer.current)
         // Flush pending save
-        if (latestState.current) {
-          api.put('/dashboard-state/', { state: latestState.current }).catch(() => {})
+        if (latestState.current && serverLoaded.current) {
+          api.put(`/dashboard-state/?profile_id=${profileIdRef.current}`, { state: latestState.current }).catch(() => {})
         }
       }
     }
   }, [])
 
-  return [state, updateState, isLoading]
+  return [state, updateState, isLoading, saveStatus]
 }
 
 // ── localStorage migration ──

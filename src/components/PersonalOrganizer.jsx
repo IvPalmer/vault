@@ -27,19 +27,36 @@ import EmailWidget from './widgets/EmailWidget'
 import DriveWidget from './widgets/DriveWidget'
 import ChatWidget from './widgets/ChatWidget'
 
-// Reminders sidecar runs on the local Mac (port 5177).
-// Calling localhost directly (not through Vite proxy) means each user's
-// browser hits their own Mac's sidecar → sees their own Apple Reminders.
-// Reminders sidecar runs on each user's own Mac (localhost).
-// Each browser hits their own machine's Apple Reminders.
-const SIDECAR_BASE = 'http://localhost:5177'
+// Reminders sidecar runs on each user's own Mac.
+// Try HTTPS localhost first (works from HTTPS pages), then HTTP, then Vite proxy.
+const SIDECAR_HTTPS = 'https://localhost:5179'
+const SIDECAR_HTTP = 'http://localhost:5177'
+const SIDECAR_PROXY = '/api/home/reminders'
+let _sidecarBase = null // cached after first successful probe
+
+async function _getSidecarBase() {
+  if (_sidecarBase) return _sidecarBase
+  // Try HTTPS sidecar (no mixed-content issues)
+  for (const base of [SIDECAR_HTTPS, SIDECAR_HTTP]) {
+    try {
+      const res = await fetch(`${base}/api/home/reminders/lists/?all=true`, { signal: AbortSignal.timeout(1500) })
+      if (res.ok) { _sidecarBase = base; return _sidecarBase }
+    } catch {}
+  }
+  // Fall back to Vite proxy (server's sidecar — not per-user)
+  _sidecarBase = SIDECAR_PROXY
+  return _sidecarBase
+}
+
 async function sidecarGet(path) {
-  const res = await fetch(`${SIDECAR_BASE}${path}`)
+  const base = await _getSidecarBase()
+  const res = await fetch(`${base}${path}`)
   if (!res.ok) throw new Error(`Sidecar ${res.status}`)
   return res.json()
 }
 async function sidecarPost(path, data) {
-  const res = await fetch(`${SIDECAR_BASE}${path}`, {
+  const base = await _getSidecarBase()
+  const res = await fetch(`${base}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -322,6 +339,8 @@ function TaskList({ activeProject }) {
   const [groupBy, setGroupBy] = useState('all') // 'all' | 'project'
   const [expandedId, setExpandedId] = useState(null)
   const [editFields, setEditFields] = useState({})
+  const [newTitle, setNewTitle] = useState('')
+  const [newProject, setNewProject] = useState('')
 
   const { data, isLoading } = useQuery({
     queryKey: ['pessoal-tasks'],
@@ -389,6 +408,24 @@ function TaskList({ activeProject }) {
       queryClient.invalidateQueries({ queryKey: ['pessoal-projects'] })
     },
   })
+
+  const addMutation = useMutation({
+    mutationFn: (data) => api.post('/pessoal/tasks/', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pessoal-tasks'] })
+      queryClient.invalidateQueries({ queryKey: ['pessoal-projects'] })
+      setNewTitle('')
+    },
+  })
+
+  const handleAddTask = (e) => {
+    e.preventDefault()
+    if (!newTitle.trim()) return
+    const data = { title: newTitle.trim() }
+    if (newProject) data.project = newProject
+    if (activeProject) data.project = activeProject
+    addMutation.mutate(data)
+  }
 
   const activeCount = allTasks.filter((t) => t.status !== 'done').length
   const doingCount = allTasks.filter((t) => t.status === 'doing').length
@@ -628,6 +665,28 @@ function TaskList({ activeProject }) {
           Feitas {doneCount > 0 && `(${doneCount})`}
         </button>
       </div>
+
+      <form className={styles.taskAddForm} onSubmit={handleAddTask}>
+        <input
+          className={styles.taskAddInput}
+          placeholder="Nova tarefa..."
+          value={newTitle}
+          onChange={(e) => setNewTitle(e.target.value)}
+        />
+        {projects.length > 0 && !activeProject && (
+          <select
+            className={styles.taskAddProject}
+            value={newProject}
+            onChange={(e) => setNewProject(e.target.value)}
+          >
+            <option value="">Projeto</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        )}
+        <button type="submit" className={styles.taskAddBtn} disabled={!newTitle.trim()}>+</button>
+      </form>
 
       <div className={styles.taskList}>
         {isLoading && <div className={styles.emptyState}>Carregando...</div>}
@@ -1108,18 +1167,26 @@ function PersonalReminders({ config, onConfigChange }) {
     if (newReminder.trim()) addMutation.mutate(newReminder.trim())
   }
 
-  // Check if sidecar is reachable
+  // Check if sidecar is reachable — auto-enable when detected
   const { data: sidecarStatus } = useQuery({
     queryKey: ['sidecar-check'],
     queryFn: async () => {
       try {
-        const res = await fetch(`${SIDECAR_BASE}/api/home/reminders/lists/?all=true`, { signal: AbortSignal.timeout(2000) })
+        const base = await _getSidecarBase()
+        const res = await fetch(`${base}/api/home/reminders/lists/?all=true`, { signal: AbortSignal.timeout(2000) })
         return res.ok ? 'connected' : 'error'
       } catch { return 'not-running' }
     },
     staleTime: 10000,
     enabled: !enabled,
   })
+
+  // Auto-enable when sidecar is detected
+  useEffect(() => {
+    if (!enabled && sidecarStatus === 'connected') {
+      onConfigChange({ enabled: true })
+    }
+  }, [enabled, sidecarStatus])
 
   if (!enabled) {
     const setupCmd = `curl -fsSL ${window.location.origin}/reminders-setup.sh | bash`
@@ -1290,7 +1357,7 @@ function TabBar({ tabs, activeTabId, onSwitch, onAdd, onRename, onDelete }) {
           )
         }
         return (
-          <button
+          <div
             key={tab.id}
             className={`${styles.tab} ${tab.id === activeTabId ? styles.tabActive : ''}`}
             onClick={() => onSwitch(tab.id)}
@@ -1298,7 +1365,19 @@ function TabBar({ tabs, activeTabId, onSwitch, onAdd, onRename, onDelete }) {
             onContextMenu={(e) => handleContextMenu(e, tab)}
           >
             {tab.name}
-          </button>
+            {tabs.length > 1 && (
+              <button
+                className={styles.tabClose}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (window.confirm('Excluir esta aba?')) onDelete(tab.id)
+                }}
+                title="Excluir aba"
+              >
+                ×
+              </button>
+            )}
+          </div>
         )
       })}
       <button className={styles.tabAdd} onClick={onAdd} title="Nova aba">
@@ -1401,7 +1480,7 @@ const PALMER_ID = 'a29184ea-9d4d-4c65-8300-386ed5b07fca'
 function PersonalOrganizerInner({ profileId }) {
   const queryClient = useQueryClient()
   const [activeProject, setActiveProject] = useState(null)
-  const [dashState, updateDashState, dashLoading] = useDashboardState(profileId)
+  const [dashState, updateDashState, dashLoading, saveStatus] = useDashboardState(profileId)
 
   const tabs = dashState?.tabs || [{ id: 'default', name: 'Principal', widgets: [] }]
   const widgetConfigs = dashState?.configs || {}
@@ -1425,16 +1504,20 @@ function PersonalOrganizerInner({ profileId }) {
   const widgets = activeTab?.widgets || []
 
   const setTabs = useCallback((updater) => {
-    const newTabs = typeof updater === 'function' ? updater(tabs) : updater
-    updateDashState({ tabs: newTabs })
-  }, [tabs, updateDashState])
+    updateDashState((prev) => {
+      const currentTabs = prev?.tabs || []
+      const newTabs = typeof updater === 'function' ? updater(currentTabs) : updater
+      return { tabs: newTabs }
+    })
+  }, [updateDashState])
 
   const setWidgetConfigs = useCallback((updater) => {
-    const newConfigs = typeof updater === 'function' ? updater(widgetConfigs) : updater
-    updateDashState({ configs: newConfigs })
-  }, [widgetConfigs, updateDashState])
-
-  if (dashLoading) return <div className={styles.emptyState}>Carregando dashboard...</div>
+    updateDashState((prev) => {
+      const currentConfigs = prev?.configs || {}
+      const newConfigs = typeof updater === 'function' ? updater(currentConfigs) : updater
+      return { configs: newConfigs }
+    })
+  }, [updateDashState])
 
   // ── Tab actions ──
 
@@ -1539,6 +1622,8 @@ function PersonalOrganizerInner({ profileId }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pessoal-notes'] }),
   })
 
+  if (dashLoading) return <div className={styles.emptyState}>Carregando dashboard...</div>
+
   // KPI computations
   const todayStr = new Date().toISOString().slice(0, 10)
   const activeTasks = tasks.filter((t) => t.status !== 'done')
@@ -1622,14 +1707,21 @@ function PersonalOrganizerInner({ profileId }) {
     <div className={styles.page}>
       <ChatWidget />
       <WidgetCatalog onAdd={addWidget} activeWidgetTypes={activeWidgetTypes} />
-      <TabBar
-        tabs={tabs}
-        activeTabId={activeTabId}
-        onSwitch={switchTab}
-        onAdd={addTab}
-        onRename={renameTab}
-        onDelete={deleteTab}
-      />
+      <div className={styles.tabBarRow}>
+        <TabBar
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onSwitch={switchTab}
+          onAdd={addTab}
+          onRename={renameTab}
+          onDelete={deleteTab}
+        />
+        {saveStatus && (
+          <span className={`${styles.saveIndicator} ${saveStatus === 'saved' ? styles.saveIndicatorDone : ''}`}>
+            {saveStatus === 'saving' ? 'Salvando...' : 'Salvo'}
+          </span>
+        )}
+      </div>
       <DashboardGrid
         key={activeTabId}
         widgets={widgets}
@@ -1651,6 +1743,8 @@ function DashboardGrid({ widgets, profileId, tabId, renderWidgetContent, removeW
   const gridInstanceRef = useRef(null)
   const onLayoutChangeRef = useRef(onLayoutChange)
   onLayoutChangeRef.current = onLayoutChange
+  const widgetIdsRef = useRef(new Set())
+  widgetIdsRef.current = new Set(widgets.map(w => w.id))
 
   useEffect(() => {
     if (!gridRef.current || gridInstanceRef.current) return
@@ -1668,23 +1762,33 @@ function DashboardGrid({ widgets, profileId, tabId, renderWidgetContent, removeW
     // Positions come from the widgets prop (canonical source = tabs state)
     // No separate grid key needed — positions live in the tab's widgets array
 
-    // Save layout on change → push back to parent tabs state
-    grid.on('change', () => {
-      const nodes = grid.getGridItems().map(el => ({
-        id: el.getAttribute('gs-id'),
-        x: parseInt(el.getAttribute('gs-x')),
-        y: parseInt(el.getAttribute('gs-y')),
-        w: parseInt(el.getAttribute('gs-w')),
-        h: parseInt(el.getAttribute('gs-h')),
-      }))
-      if (onLayoutChangeRef.current) onLayoutChangeRef.current(nodes)
-    })
+    // Track user interaction — only save layout on actual drag/resize, not init
+    let userInteracting = false
+
+    const readLayout = () => {
+      const validIds = widgetIdsRef.current
+      return grid.getGridItems()
+        .map(el => ({
+          id: el.getAttribute('gs-id'),
+          x: parseInt(el.getAttribute('gs-x')),
+          y: parseInt(el.getAttribute('gs-y')),
+          w: parseInt(el.getAttribute('gs-w')),
+          h: parseInt(el.getAttribute('gs-h')),
+        }))
+        .filter(n => n.id && validIds.has(n.id))
+    }
 
     grid.on('dragstart resizestart', () => {
+      userInteracting = true
       gridRef.current.classList.add('gs-dragging')
     })
     grid.on('dragstop resizestop', () => {
       gridRef.current.classList.remove('gs-dragging')
+    })
+    grid.on('change', () => {
+      if (!userInteracting) return
+      userInteracting = false
+      if (onLayoutChangeRef.current) onLayoutChangeRef.current(readLayout())
     })
 
     gridInstanceRef.current = grid
@@ -1695,27 +1799,45 @@ function DashboardGrid({ widgets, profileId, tabId, renderWidgetContent, removeW
     }
   }, [])
 
-  // When widgets are added dynamically, register new ones with gridstack
+  // Sync GridStack with React widget state — add new items, remove stale
+  const prevWidgetIds = useRef(new Set())
+
   useEffect(() => {
     if (!gridInstanceRef.current || !gridRef.current) return
-    // Use double-rAF to ensure React has flushed DOM
-    requestAnimationFrame(() => {
+    const grid = gridInstanceRef.current
+    const currentIds = new Set(widgets.map(w => w.id))
+
+    // Remove GridStack items that were deleted from React state
+    const removedIds = [...prevWidgetIds.current].filter(id => !currentIds.has(id))
+    if (removedIds.length > 0) {
+      const items = grid.getGridItems()
+      items.forEach(el => {
+        const id = el.getAttribute('gs-id')
+        if (removedIds.includes(id)) {
+          grid.removeWidget(el, true) // true = also remove DOM
+        }
+      })
+    }
+
+    // Add new widgets to GridStack (delayed to let React flush DOM)
+    const addedIds = [...currentIds].filter(id => !prevWidgetIds.current.has(id))
+    if (addedIds.length > 0) {
       requestAnimationFrame(() => {
-        const grid = gridInstanceRef.current
-        if (!grid || !gridRef.current) return
-        const existing = new Set(grid.getGridItems().map(el => el.getAttribute('gs-id')))
-        widgets.forEach(w => {
-          if (!existing.has(w.id)) {
-            const el = gridRef.current.querySelector(`[gs-id="${w.id}"]`)
+        requestAnimationFrame(() => {
+          if (!gridInstanceRef.current || !gridRef.current) return
+          addedIds.forEach(id => {
+            const el = gridRef.current.querySelector(`[gs-id="${id}"]`)
             if (el) {
-              grid.makeWidget(el)
-              // Ensure position attributes are applied
-              grid.update(el, { x: w.x, y: w.y, w: w.w, h: w.h })
+              const w = widgets.find(w => w.id === id)
+              gridInstanceRef.current.makeWidget(el)
+              if (w) gridInstanceRef.current.update(el, { x: w.x, y: w.y, w: w.w, h: w.h })
             }
-          }
+          })
         })
       })
-    })
+    }
+
+    prevWidgetIds.current = currentIds
   }, [widgets])
 
   return (

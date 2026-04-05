@@ -14,12 +14,15 @@ Usage:
 
 import json
 import os
+import ssl
 import subprocess
 import sys
+import tempfile
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 PORT = 5177
+SSL_PORT = 5179
 HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reminders-helper')
 
 # Only show these lists on the Home screen (the shared R&R lists)
@@ -364,18 +367,53 @@ end tell
         print(f'[sidecar] {args[0]}')
 
 
+def _find_localhost_certs():
+    """Find mkcert localhost certs in common locations."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    search_paths = [
+        script_dir,  # same dir as script (Rafa's ~/vault-reminders/)
+        os.path.join(script_dir, 'certs', 'localhost'),  # dev repo
+    ]
+    for d in search_paths:
+        cert = os.path.join(d, 'localhost+1.pem')
+        key = os.path.join(d, 'localhost+1-key.pem')
+        if os.path.isfile(cert) and os.path.isfile(key):
+            return cert, key
+    return None, None
+
+
 if __name__ == '__main__':
     if not os.path.isfile(HELPER):
         print(f'Error: Helper binary not found at {HELPER}')
         print(f'Compile it first: swiftc -O reminders-helper.swift -o reminders-helper')
         sys.exit(1)
 
+    import threading
+
+    # HTTP server
     server = HTTPServer(('0.0.0.0', PORT), SidecarHandler)
     print(f'Reminders sidecar running on http://0.0.0.0:{PORT}')
+
+    # HTTPS server (if certs available)
+    cert_file, key_file = _find_localhost_certs()
+    ssl_server = None
+    if cert_file:
+        ssl_server = HTTPServer(('0.0.0.0', SSL_PORT), SidecarHandler)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(cert_file, key_file)
+        ssl_server.socket = ctx.wrap_socket(ssl_server.socket, server_side=True)
+        print(f'Reminders sidecar (HTTPS) on https://localhost:{SSL_PORT}')
+
     print(f'Using EventKit helper: {HELPER}')
     print(f'Lists: {", ".join(HOME_LISTS)}')
+
     try:
+        if ssl_server:
+            t = threading.Thread(target=ssl_server.serve_forever, daemon=True)
+            t.start()
         server.serve_forever()
     except KeyboardInterrupt:
         print('\nShutting down.')
         server.server_close()
+        if ssl_server:
+            ssl_server.server_close()

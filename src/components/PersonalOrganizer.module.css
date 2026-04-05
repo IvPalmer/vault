@@ -538,6 +538,62 @@
 
 /* ─── Task List ─────────────────────────────────────────── */
 
+.taskAddForm {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.taskAddInput {
+  flex: 1;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font-size: 0.78rem;
+  font-family: var(--font-sans);
+  background: var(--color-surface);
+  color: var(--color-text);
+  outline: none;
+}
+
+.taskAddInput:focus {
+  border-color: var(--color-accent);
+}
+
+.taskAddProject {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  font-size: 0.72rem;
+  font-family: var(--font-sans);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  max-width: 100px;
+}
+
+.taskAddBtn {
+  background: var(--color-accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  width: 28px;
+  height: 28px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.taskAddBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .taskList {
   flex: 1;
   overflow-y: auto;
@@ -1018,17 +1074,17 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-md);
-  padding: var(--space-md) var(--space-lg);
+  gap: var(--space-sm);
+  padding: 6px var(--space-sm);
   border-bottom: 1px solid var(--color-border);
 }
 
 .calTitle {
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   font-weight: 700;
   color: var(--color-text);
   margin: 0;
-  min-width: 140px;
+  min-width: 110px;
   text-align: center;
   transition: color 0.15s;
 }
@@ -1056,31 +1112,34 @@
 .calGrid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  padding: var(--space-sm) 4px;
+  padding: 2px;
   gap: 1px;
+  flex: 1;
+  min-height: 0;
 }
 
 .calWeekday {
   text-align: center;
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   font-weight: 700;
   color: var(--color-text-secondary);
   text-transform: uppercase;
-  padding: 4px 0;
+  padding: 2px 0;
 }
 
 .calDay {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 3px 1px 2px;
+  padding: 2px 1px 1px;
   border: none;
   background: none;
   cursor: pointer;
   border-radius: var(--radius-sm);
   transition: background 0.1s;
-  min-height: 52px;
+  min-height: 28px;
   gap: 1px;
+  overflow: hidden;
 }
 
 .calDay:hover {
@@ -1092,7 +1151,7 @@
 }
 
 .calDayNum {
-  font-size: 0.72rem;
+  font-size: 0.65rem;
   font-weight: 500;
   color: var(--color-text);
   line-height: 1;
@@ -1105,14 +1164,14 @@
 .calDayToday .calDayNum {
   background: var(--color-accent);
   color: white;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 0.7rem;
+  font-size: 0.62rem;
   box-shadow: 0 1px 3px rgba(184, 101, 48, 0.3);
 }
 
@@ -1156,11 +1215,12 @@
 
 /* Detail panel */
 .calDetail {
-  padding: var(--space-sm) var(--space-md) var(--space-md);
+  padding: var(--space-sm) var(--space-sm) var(--space-sm);
   border-top: 1px solid var(--color-border);
   background: var(--color-bg);
-  max-height: 200px;
+  max-height: 140px;
   overflow-y: auto;
+  flex-shrink: 0;
 }
 
 .calDetailDate {
@@ -1310,21 +1370,47 @@
 
 /* ─── Tab Bar ──────────────────────────────────────────── */
 
-.tabBar {
+.tabBarRow {
   display: flex;
   align-items: center;
-  gap: 0;
-  padding: 0 var(--space-lg);
-  /* Same full-width breakout as gridContainer */
   width: 100vw;
   margin-left: calc(-50vw + 50%);
   box-sizing: border-box;
   border-bottom: 1px solid var(--color-border);
   margin-bottom: var(--space-md);
+  padding-right: var(--space-lg);
+}
+
+.tabBar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 var(--space-lg);
+  flex: 1;
+}
+
+.saveIndicator {
+  font-size: 0.7rem;
+  color: var(--color-accent);
+  font-weight: 500;
+  white-space: nowrap;
+  animation: fadeIn 0.2s;
+}
+
+.saveIndicatorDone {
+  color: #4caf50;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .tab {
-  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 12px 10px 20px;
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
@@ -1336,6 +1422,27 @@
   transition: all 0.15s;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.tabClose {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.tab:hover .tabClose {
+  opacity: 0.6;
+}
+
+.tabClose:hover {
+  opacity: 1 !important;
+  color: var(--color-red);
 }
 
 .tab:hover {

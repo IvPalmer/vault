@@ -1,9 +1,11 @@
 .bar {
   display: flex;
-  gap: 2px;
+  gap: 0;
   overflow-x: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  padding: 0;
+  border-top: 1px solid var(--color-border);
 }
 
 .bar::-webkit-scrollbar {
@@ -11,39 +13,40 @@
 }
 
 .tab {
-  padding: 6px 14px;
+  padding: 8px 14px;
   background: transparent;
   border: none;
-  border-radius: var(--radius-sm);
+  border-bottom: 2px solid transparent;
   color: var(--color-text-secondary);
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
   transition: all 0.15s;
   font-family: var(--font-sans);
+  margin-bottom: -1px;
 }
 
 .tab:hover {
   color: var(--color-text);
-  background: var(--color-surface-hover);
 }
 
 .active {
-  background: var(--color-accent);
-  color: white;
+  background: transparent;
+  color: var(--color-accent);
   font-weight: 600;
+  border-bottom-color: var(--color-accent);
 }
 
 .active:hover {
-  background: var(--color-accent);
-  color: white;
+  background: transparent;
+  color: var(--color-accent);
 }
 
 .future {
-  opacity: 0.45;
+  opacity: 0.35;
 }
 
 .future:hover {
-  opacity: 0.75;
+  opacity: 0.7;
 }

@@ -56,3 +56,6 @@ postgres_data/
 
 # Worktrees
 .worktrees/
+
+# TLS certs
+certs/

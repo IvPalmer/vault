@@ -122,7 +122,21 @@ class AuthMeView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
+        # Auth paths are exempt from ProfileMiddleware, so resolve JWT here
+        from rest_framework_simplejwt.authentication import JWTAuthentication
         profile = getattr(request, 'profile', None)
+        if not profile:
+            auth_header = request.headers.get('Authorization', '')
+            if auth_header.startswith('Bearer '):
+                try:
+                    jwt_auth = JWTAuthentication()
+                    validated_token = jwt_auth.get_validated_token(auth_header.split(' ', 1)[1])
+                    profile_id = validated_token.get('profile_id')
+                    if profile_id:
+                        profile = Profile.objects.get(id=profile_id, is_active=True)
+                except Exception:
+                    pass
+
         if not profile:
             return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
 

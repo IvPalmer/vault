@@ -7,11 +7,9 @@
 .header {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
-  padding: var(--space-md) var(--space-xl) var(--space-sm);
+  padding: 0 var(--space-xl);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
-  box-shadow: var(--shadow-sm);
   position: sticky;
   top: 0;
   z-index: 100;
@@ -20,29 +18,37 @@
 .topRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  height: 52px;
+  gap: var(--space-lg);
 }
 
 .title {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   color: var(--color-accent);
   text-transform: lowercase;
+  margin-right: var(--space-sm);
 }
 
 .nav {
   display: flex;
-  gap: 2px;
+  align-items: center;
+  height: 100%;
+  gap: 0;
 }
 
 .navTab, .activeTab {
-  padding: 6px 14px;
-  border-radius: var(--radius-sm);
-  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 16px;
+  font-size: 0.82rem;
   font-weight: 500;
   text-decoration: none;
-  transition: all 0.15s;
+  transition: color 0.15s;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
 }
 
 .navTab {
@@ -51,15 +57,14 @@
 }
 
 .navTab:hover {
-  background: var(--color-surface-hover);
   color: var(--color-text);
   text-decoration: none;
 }
 
 .activeTab {
-  background: var(--color-accent-light);
   color: var(--color-accent);
   font-weight: 600;
+  border-bottom-color: var(--color-accent);
 }
 
 .activeTab:hover {
