@@ -11,7 +11,7 @@ const WIDGET_REGISTRY = {
   'projects':      { label: 'Projetos Bar', category: 'Pessoal', defaultW: 4, defaultH: 1, minW: 2, minH: 1 },
   'tasks':         { label: 'Tarefas', category: 'Pessoal', defaultW: 4, defaultH: 6, minW: 2, minH: 3 },
   'reminders':     { label: 'Lembretes', category: 'Pessoal', defaultW: 5, defaultH: 6, minW: 2, minH: 3 },
-  'calendar':      { label: 'Calendario', category: 'Pessoal', defaultW: 3, defaultH: 8, minW: 2, minH: 4 },
+  'calendar':      { label: 'Calendario', category: 'Pessoal', defaultW: 6, defaultH: 10, minW: 3, minH: 6 },
   'events':        { label: 'Eventos', category: 'Pessoal', defaultW: 4, defaultH: 5, minW: 2, minH: 3 },
   'notes':         { label: 'Notas', category: 'Pessoal', defaultW: 5, defaultH: 5, minW: 2, minH: 3 },
 
@@ -23,6 +23,9 @@ const WIDGET_REGISTRY = {
   // ── Google ──
   'email-inbox':   { label: 'Emails', category: 'Google', defaultW: 4, defaultH: 5, minW: 3, minH: 3 },
   'drive-files':   { label: 'Arquivos', category: 'Google', defaultW: 4, defaultH: 5, minW: 3, minH: 3 },
+
+  // ── Custom (agent-generated) ──
+  'custom':        { label: 'Custom', category: 'Custom', defaultW: 4, defaultH: 4, minW: 2, minH: 2 },
 
   // ── Financeiro (new) ──
   'fin-saldo':     { label: 'Saldo Projetado', category: 'Financeiro', defaultW: 3, defaultH: 2, minW: 2, minH: 2 },

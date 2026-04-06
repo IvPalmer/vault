@@ -46,7 +46,7 @@ const s = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '8px 12px',
+    padding: '8px 30px 8px 12px',
     borderBottom: '1px solid var(--color-border)',
     minHeight: 36,
   },

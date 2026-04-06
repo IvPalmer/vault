@@ -337,3 +337,26 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* Confirmation messages from agent */
+.confirmMessage {
+  border-left: 3px solid var(--color-accent) !important;
+  background: rgba(184, 101, 48, 0.06) !important;
+}
+
+/* Voice mode active indicator */
+.voiceActive {
+  color: var(--color-accent) !important;
+  background: var(--color-accent-light) !important;
+}
+
+/* Mic button active (listening) */
+.micActive {
+  color: #e53e3e !important;
+  animation: micPulse 1s ease-in-out infinite;
+}
+
+@keyframes micPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}

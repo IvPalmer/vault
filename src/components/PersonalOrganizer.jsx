@@ -26,6 +26,8 @@ import { FinSaldo, FinSobra, FinFatura } from './widgets/FinanceWidgets'
 import EmailWidget from './widgets/EmailWidget'
 import DriveWidget from './widgets/DriveWidget'
 import ChatWidget from './widgets/ChatWidget'
+import CustomWidget from './widgets/CustomWidget'
+import { WidgetSettingsPanel, SettingsGearButton, SettingsField, settingsStyles as ss } from './widgets/WidgetSettingsPanel'
 
 // Reminders sidecar runs on each user's own Mac.
 // Try HTTPS localhost first (works from HTTPS pages), then HTTP, then Vite proxy.
@@ -878,10 +880,14 @@ function NotesList({ activeProject, projects }) {
 
 /* ── Upcoming Events ─────────────────────────────────────── */
 
-function UpcomingEvents() {
+function UpcomingEvents({ config, onConfigChange }) {
+  const daysAhead = config?.daysAhead || 14
+  const maxEvents = config?.maxEvents || 15
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
   const now = new Date()
   const timeMin = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-  const future = new Date(now.getTime() + 14 * 86400000)
+  const future = new Date(now.getTime() + daysAhead * 86400000)
   const timeMax = `${future.getFullYear()}-${String(future.getMonth() + 1).padStart(2, '0')}-${String(future.getDate()).padStart(2, '0')}`
 
   const { data, isLoading } = useQuery({
@@ -917,7 +923,7 @@ function UpcomingEvents() {
   // Group events by date
   const grouped = useMemo(() => {
     const groups = {}
-    events.slice(0, 15).forEach((evt) => {
+    events.slice(0, maxEvents).forEach((evt) => {
       const key = getDateKey(evt.start)
       if (!groups[key]) groups[key] = []
       groups[key].push(evt)
@@ -932,12 +938,31 @@ function UpcomingEvents() {
     return at > 0 ? cal.slice(0, at) : cal
   }
 
+  const update = (patch) => onConfigChange({ ...config, ...patch })
+
   return (
-    <div className={styles.widget}>
+    <div className={styles.widget} style={{ position: 'relative' }}>
       <div className={styles.widgetHeader}>
         <h3 className={styles.widgetTitle}>PROXIMOS EVENTOS</h3>
-        {events.length > 0 && <span className={styles.badge}>{events.length}</span>}
+        <div className={styles.widgetHeaderRight}>
+          <SettingsGearButton onClick={() => setSettingsOpen(true)} />
+          {events.length > 0 && <span className={styles.badge}>{events.length}</span>}
+        </div>
       </div>
+
+      <WidgetSettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)}>
+        <SettingsField label="Dias a frente">
+          <select style={ss.select} value={daysAhead} onChange={(e) => update({ daysAhead: Number(e.target.value) })}>
+            {[7, 14, 21, 30].map((n) => <option key={n} value={n}>{n} dias</option>)}
+          </select>
+        </SettingsField>
+        <SettingsField label="Max eventos">
+          <select style={ss.select} value={maxEvents} onChange={(e) => update({ maxEvents: Number(e.target.value) })}>
+            {[10, 15, 20, 30].map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </SettingsField>
+      </WidgetSettingsPanel>
+
       <div className={styles.eventsList}>
         {isLoading && <div className={styles.emptyState}>Carregando...</div>}
         {grouped.map(([dateKey, dayEvents]) => (
@@ -965,7 +990,7 @@ function UpcomingEvents() {
           </div>
         ))}
         {events.length === 0 && !isLoading && (
-          <div className={styles.emptyState}>Nenhum evento nos proximos 14 dias</div>
+          <div className={styles.emptyState}>Nenhum evento nos proximos {daysAhead} dias</div>
         )}
       </div>
     </div>
@@ -994,19 +1019,53 @@ function buildCalendarDays(year, month) {
   return days
 }
 
-function PersonalCalendar() {
+function getWeekDays(date) {
+  const d = new Date(date)
+  const day = d.getDay()
+  const start = new Date(d)
+  start.setDate(d.getDate() - day)
+  const days = []
+  for (let i = 0; i < 7; i++) {
+    const dd = new Date(start)
+    dd.setDate(start.getDate() + i)
+    days.push(dd)
+  }
+  return days
+}
+
+const HOURS = Array.from({ length: 18 }, (_, i) => i + 6) // 6:00–23:00
+
+function PersonalCalendar({ config, onConfigChange }) {
   const now = new Date()
   const [viewYear, setViewYear] = useState(now.getFullYear())
   const [viewMonth, setViewMonth] = useState(now.getMonth())
   const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   const [selectedDate, setSelectedDate] = useState(todayKey)
+  const viewMode = config?.viewMode || 'month' // 'month' | 'week' | 'day'
+  const [detailHeight, setDetailHeight] = useState(config?.detailHeight || 180)
+  const update = (patch) => onConfigChange?.({ ...config, ...patch })
+  const dragRef = useRef(null)
 
-  const timeMin = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-01`
-  const lastDay = new Date(viewYear, viewMonth + 1, 0).getDate()
-  const timeMax = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+  // Compute date range based on view mode
+  const { timeMin, timeMax } = useMemo(() => {
+    if (viewMode === 'day') {
+      return { timeMin: selectedDate || todayKey, timeMax: selectedDate || todayKey }
+    }
+    if (viewMode === 'week') {
+      const ref = selectedDate ? new Date(selectedDate + 'T12:00:00') : now
+      const weekDays = getWeekDays(ref)
+      const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      return { timeMin: fmt(weekDays[0]), timeMax: fmt(weekDays[6]) }
+    }
+    const lastDay = new Date(viewYear, viewMonth + 1, 0).getDate()
+    return {
+      timeMin: `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-01`,
+      timeMax: `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`,
+    }
+  }, [viewMode, viewYear, viewMonth, selectedDate, todayKey])
 
   const { data, isLoading } = useQuery({
-    queryKey: ['pessoal-cal-month', viewYear, viewMonth],
+    queryKey: ['pessoal-cal', viewMode, timeMin, timeMax],
     queryFn: () => api.get(`/calendar/events/?context=personal&time_min=${timeMin}&time_max=${timeMax}`),
     refetchInterval: 60000,
   })
@@ -1023,15 +1082,49 @@ function PersonalCalendar() {
 
   const days = useMemo(() => buildCalendarDays(viewYear, viewMonth), [viewYear, viewMonth])
 
-  const dateKey = (d) => {
+  const mkDateKey = (d) => {
     const m = d.month
     const y = m < 0 ? viewYear - 1 : m > 11 ? viewYear + 1 : viewYear
     const mm = ((m % 12) + 12) % 12
     return `${y}-${String(mm + 1).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`
   }
 
-  const prevMonth = () => { if (viewMonth === 0) { setViewYear(viewYear - 1); setViewMonth(11) } else setViewMonth(viewMonth - 1); setSelectedDate(null) }
-  const nextMonth = () => { if (viewMonth === 11) { setViewYear(viewYear + 1); setViewMonth(0) } else setViewMonth(viewMonth + 1); setSelectedDate(null) }
+  const prev = () => {
+    if (viewMode === 'day') {
+      const d = new Date((selectedDate || todayKey) + 'T12:00:00')
+      d.setDate(d.getDate() - 1)
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      setSelectedDate(key)
+      setViewMonth(d.getMonth()); setViewYear(d.getFullYear())
+    } else if (viewMode === 'week') {
+      const d = new Date((selectedDate || todayKey) + 'T12:00:00')
+      d.setDate(d.getDate() - 7)
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      setSelectedDate(key)
+      setViewMonth(d.getMonth()); setViewYear(d.getFullYear())
+    } else {
+      if (viewMonth === 0) { setViewYear(viewYear - 1); setViewMonth(11) } else setViewMonth(viewMonth - 1)
+      setSelectedDate(null)
+    }
+  }
+  const next = () => {
+    if (viewMode === 'day') {
+      const d = new Date((selectedDate || todayKey) + 'T12:00:00')
+      d.setDate(d.getDate() + 1)
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      setSelectedDate(key)
+      setViewMonth(d.getMonth()); setViewYear(d.getFullYear())
+    } else if (viewMode === 'week') {
+      const d = new Date((selectedDate || todayKey) + 'T12:00:00')
+      d.setDate(d.getDate() + 7)
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      setSelectedDate(key)
+      setViewMonth(d.getMonth()); setViewYear(d.getFullYear())
+    } else {
+      if (viewMonth === 11) { setViewYear(viewYear + 1); setViewMonth(0) } else setViewMonth(viewMonth + 1)
+      setSelectedDate(null)
+    }
+  }
   const goToday = () => { setViewYear(now.getFullYear()); setViewMonth(now.getMonth()); setSelectedDate(todayKey) }
 
   const selectedEvents = selectedDate ? (eventsByDate[selectedDate] || []) : []
@@ -1044,79 +1137,255 @@ function PersonalCalendar() {
     return at > 0 ? cal.slice(0, at) : cal
   }
 
-  const MAX_PREVIEW = 2
+  const MAX_PREVIEW = 3
+
+  // Header title
+  const headerTitle = viewMode === 'day'
+    ? new Date((selectedDate || todayKey) + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })
+    : viewMode === 'week'
+      ? (() => {
+          const ref = selectedDate ? new Date(selectedDate + 'T12:00:00') : now
+          const wd = getWeekDays(ref)
+          const fmt = (d) => `${d.getDate()}/${d.getMonth() + 1}`
+          return `${fmt(wd[0])} — ${fmt(wd[6])}`
+        })()
+      : `${MONTH_NAMES[viewMonth]} ${viewYear}`
+
+  // Week view days
+  const weekDays = useMemo(() => {
+    if (viewMode !== 'week') return []
+    const ref = selectedDate ? new Date(selectedDate + 'T12:00:00') : now
+    return getWeekDays(ref)
+  }, [viewMode, selectedDate])
+
+  // Day view events sorted by time
+  const dayViewEvents = useMemo(() => {
+    if (viewMode !== 'day') return []
+    const evts = eventsByDate[selectedDate || todayKey] || []
+    return [...evts].sort((a, b) => {
+      if (a.all_day && !b.all_day) return -1
+      if (!a.all_day && b.all_day) return 1
+      return (a.start || '').localeCompare(b.start || '')
+    })
+  }, [viewMode, eventsByDate, selectedDate, todayKey])
+
+  const detailHeightRef = useRef(detailHeight)
+  const handleDragStart = (e) => {
+    e.preventDefault()
+    const startY = e.clientY
+    const startH = detailHeight
+    const onMove = (ev) => {
+      const delta = startY - ev.clientY
+      const newH = Math.max(60, Math.min(400, startH + delta))
+      detailHeightRef.current = newH
+      setDetailHeight(newH)
+    }
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      update({ detailHeight: detailHeightRef.current })
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+
+  const renderEventDetail = (evt, i) => (
+    <div key={i} className={styles.calEvent}>
+      <span className={styles.calEventDot} style={{ background: evt.calendar_color || 'var(--color-accent)' }} />
+      <div className={styles.calEventBody}>
+        <span className={styles.calEventTitle}>{evt.title}</span>
+        <span className={styles.calEventTime}>
+          {evt.all_day ? 'Dia todo' : `${formatTime(evt.start)} — ${formatTime(evt.end)}`}
+        </span>
+        {evt.location && (
+          <span className={styles.calEventLocation}>
+            {evt.location.length > 40 ? evt.location.slice(0, 40) + '...' : evt.location}
+          </span>
+        )}
+        {evt.calendar && (
+          <span className={styles.calEventCalendar}>{calendarLabel(evt.calendar)}</span>
+        )}
+      </div>
+    </div>
+  )
 
   return (
-    <div className={styles.widget}>
-      <div className={styles.calHeader}>
-        <button className={styles.calNavBtn} onClick={prevMonth}>
+    <div className={styles.widget} style={{ position: 'relative' }}>
+      <div className={styles.calHeader} style={{ position: 'relative' }}>
+        <button className={styles.calNavBtn} onClick={prev}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6" /></svg>
         </button>
-        <h3 className={styles.calTitle} onClick={goToday} style={{ cursor: 'pointer' }}>{MONTH_NAMES[viewMonth]} {viewYear}</h3>
-        <button className={styles.calNavBtn} onClick={nextMonth}>
+        <h3 className={styles.calTitle} onClick={goToday} style={{ cursor: 'pointer', textTransform: 'capitalize' }}>{headerTitle}</h3>
+        <button className={styles.calNavBtn} onClick={next}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6" /></svg>
         </button>
       </div>
 
-      <div className={styles.calGrid}>
-        {WEEKDAYS.map((wd) => <div key={wd} className={styles.calWeekday}>{wd}</div>)}
-        {days.map((d, i) => {
-          const key = dateKey(d)
-          const isToday = key === todayKey
-          const isSelected = key === selectedDate
-          const dayEvents = eventsByDate[key] || []
-          const overflow = dayEvents.length - MAX_PREVIEW
-          return (
-            <button
-              key={i}
-              className={[styles.calDay, d.outside && styles.calDayOutside, isToday && styles.calDayToday, isSelected && styles.calDaySelected].filter(Boolean).join(' ')}
-              onClick={() => setSelectedDate(key === selectedDate ? null : key)}
-            >
-              <span className={styles.calDayNum}>{d.day}</span>
-              <div className={styles.calDayEvents}>
-                {dayEvents.slice(0, MAX_PREVIEW).map((evt, j) => (
-                  <span key={j} className={styles.calEventPill} style={{ borderLeftColor: evt.calendar_color || 'var(--color-accent)' }}>
-                    {evt.title}
-                  </span>
-                ))}
-                {overflow > 0 && <span className={styles.calEventMore}>+{overflow}</span>}
-              </div>
-            </button>
-          )
-        })}
+      {/* View mode toggle pills */}
+      <div className={styles.calViewToggle}>
+        {[['month', 'Mes'], ['week', 'Sem'], ['day', 'Dia']].map(([mode, label]) => (
+          <button
+            key={mode}
+            className={`${styles.calViewBtn} ${viewMode === mode ? styles.calViewBtnActive : ''}`}
+            onClick={() => update({ viewMode: mode })}
+          >
+            {label}
+          </button>
+        ))}
       </div>
+
+      {/* ── Month View ── */}
+      {viewMode === 'month' && (
+        <div className={styles.calGrid}>
+          {WEEKDAYS.map((wd) => <div key={wd} className={styles.calWeekday}>{wd}</div>)}
+          {days.map((d, i) => {
+            const key = mkDateKey(d)
+            const isToday = key === todayKey
+            const isSelected = key === selectedDate
+            const dayEvents = eventsByDate[key] || []
+            const overflow = dayEvents.length - MAX_PREVIEW
+            return (
+              <button
+                key={i}
+                className={[styles.calDay, d.outside && styles.calDayOutside, isToday && styles.calDayToday, isSelected && styles.calDaySelected].filter(Boolean).join(' ')}
+                onClick={() => setSelectedDate(key === selectedDate ? null : key)}
+              >
+                <span className={styles.calDayNum}>{d.day}</span>
+                <div className={styles.calDayEvents}>
+                  {dayEvents.slice(0, MAX_PREVIEW).map((evt, j) => (
+                    <span key={j} className={styles.calEventPill} style={{ borderLeftColor: evt.calendar_color || 'var(--color-accent)' }}>
+                      {evt.title}
+                    </span>
+                  ))}
+                  {overflow > 0 && <span className={styles.calEventMore}>+{overflow}</span>}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ── Week View (horizontal, Apple Calendar style) ── */}
+      {viewMode === 'week' && (
+        <>
+          {/* Day headers + all-day (sticky, outside scroll) */}
+          <div className={styles.calWeekFixed}>
+            {/* Header row */}
+            <div className={styles.calWeekRow}>
+              <div className={styles.calWeekGutter} />
+              {weekDays.map(d => {
+                const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+                const isToday = key === todayKey
+                return (
+                  <div
+                    key={key}
+                    className={`${styles.calWeekColHead} ${isToday ? styles.calWeekColToday : ''} ${key === selectedDate ? styles.calWeekColSelected : ''}`}
+                    onClick={() => setSelectedDate(key === selectedDate ? null : key)}
+                  >
+                    <span className={styles.calWeekDayName}>{WEEKDAYS[d.getDay()]}</span>
+                    <span className={isToday ? styles.calWeekDayNumToday : styles.calWeekDayNumHead}>{d.getDate()}</span>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* All-day row (only if any exist) */}
+            {weekDays.some(d => {
+              const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+              return (eventsByDate[key] || []).some(e => e.all_day)
+            }) && (
+              <div className={styles.calWeekRow}>
+                <div className={styles.calWeekGutter}>
+                  <span className={styles.calWeekTimeLabel}>Dia</span>
+                </div>
+                {weekDays.map(d => {
+                  const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+                  const evts = (eventsByDate[key] || []).filter(e => e.all_day)
+                  return (
+                    <div key={key} className={styles.calWeekCell}>
+                      {evts.map((evt, j) => (
+                        <div key={j} className={styles.calWeekEventBlock} style={{ borderLeftColor: evt.calendar_color || 'var(--color-accent)' }}>
+                          {evt.title}
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Scrollable time grid */}
+          <div className={styles.calWeekScroll}>
+            {HOURS.map(h => (
+              <div key={h} className={styles.calWeekRow}>
+                <div className={styles.calWeekGutter}>
+                  <span className={styles.calWeekTimeLabel}>{String(h).padStart(2, '0')}:00</span>
+                </div>
+                {weekDays.map(d => {
+                  const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+                  const dayEvts = (eventsByDate[key] || []).filter(evt => {
+                    if (evt.all_day) return false
+                    const hour = new Date(evt.start).getHours()
+                    return hour === h
+                  })
+                  return (
+                    <div key={key} className={styles.calWeekCell}>
+                      {dayEvts.map((evt, j) => (
+                        <div key={j} className={styles.calWeekEventBlock} style={{ borderLeftColor: evt.calendar_color || 'var(--color-accent)' }}>
+                          {evt.title}
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* ── Day View ── */}
+      {viewMode === 'day' && (
+        <div className={styles.calDayView}>
+          {dayViewEvents.length === 0 && !isLoading && (
+            <div className={styles.emptyState} style={{ padding: 16 }}>Sem eventos</div>
+          )}
+          {dayViewEvents.map((evt, i) => (
+            <div key={i} className={styles.calDayViewEvent} style={{ borderLeftColor: evt.calendar_color || 'var(--color-accent)' }}>
+              <div className={styles.calDayViewTime}>
+                {evt.all_day ? 'Dia todo' : formatTime(evt.start)}
+                {!evt.all_day && evt.end && <span className={styles.calDayViewEnd}>{formatTime(evt.end)}</span>}
+              </div>
+              <div className={styles.calDayViewBody}>
+                <span className={styles.calEventTitle}>{evt.title}</span>
+                {evt.location && <span className={styles.calEventLocation}>{evt.location}</span>}
+                {evt.calendar && <span className={styles.calEventCalendar}>{calendarLabel(evt.calendar)}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {isLoading && <div className={styles.emptyState} style={{ padding: '8px' }}>Carregando...</div>}
 
-      {selectedDate && (
-        <div className={styles.calDetail}>
-          <div className={styles.calDetailDate}>
-            {new Date(selectedDate + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
+      {/* Draggable divider + detail panel (month/week modes) */}
+      {viewMode !== 'day' && selectedDate && (
+        <>
+          <div
+            className={styles.calResizeHandle}
+            onMouseDown={handleDragStart}
+            title="Arrastar para redimensionar"
+          />
+          <div className={styles.calDetail} style={{ height: detailHeight }}>
+            <div className={styles.calDetailDate}>
+              {new Date(selectedDate + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
+            </div>
+            {selectedEvents.length > 0 ? selectedEvents.map(renderEventDetail) : (
+              <div className={styles.emptyState} style={{ padding: '8px' }}>Sem eventos</div>
+            )}
           </div>
-          {selectedEvents.length > 0 ? (
-            selectedEvents.map((evt, i) => (
-              <div key={i} className={styles.calEvent}>
-                <span className={styles.calEventDot} style={{ background: evt.calendar_color || 'var(--color-accent)' }} />
-                <div className={styles.calEventBody}>
-                  <span className={styles.calEventTitle}>{evt.title}</span>
-                  <span className={styles.calEventTime}>
-                    {evt.all_day ? 'Dia todo' : `${formatTime(evt.start)} — ${formatTime(evt.end)}`}
-                  </span>
-                  {evt.location && (
-                    <span className={styles.calEventLocation}>
-                      {evt.location.length > 40 ? evt.location.slice(0, 40) + '...' : evt.location}
-                    </span>
-                  )}
-                  {evt.calendar && (
-                    <span className={styles.calEventCalendar}>{calendarLabel(evt.calendar)}</span>
-                  )}
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className={styles.emptyState} style={{ padding: '8px' }}>Sem eventos</div>
-          )}
-        </div>
+        </>
       )}
     </div>
   )
@@ -1304,11 +1573,13 @@ function PersonalReminders({ config, onConfigChange }) {
 
 /* ── Tab Bar ────────────────────────────────────────────── */
 
-function TabBar({ tabs, activeTabId, onSwitch, onAdd, onRename, onDelete }) {
+function TabBar({ tabs, activeTabId, onSwitch, onAdd, onRename, onDelete, onReorder }) {
   const [renamingId, setRenamingId] = useState(null)
   const [renameValue, setRenameValue] = useState('')
   const [contextMenu, setContextMenu] = useState(null)
   const contextRef = useRef(null)
+  const [draggedTabId, setDraggedTabId] = useState(null)
+  const [dragOverTabId, setDragOverTabId] = useState(null)
 
   useEffect(() => {
     if (!contextMenu) return
@@ -1337,6 +1608,31 @@ function TabBar({ tabs, activeTabId, onSwitch, onAdd, onRename, onDelete }) {
     setContextMenu({ tabId: tab.id, x: e.clientX, y: e.clientY })
   }
 
+  const handleTabDragStart = (e, tabId) => {
+    setDraggedTabId(tabId)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', tabId)
+  }
+
+  const handleTabDragOver = (e, tabId) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (tabId !== draggedTabId) setDragOverTabId(tabId)
+  }
+
+  const handleTabDrop = (e, dropTabId) => {
+    e.preventDefault()
+    setDragOverTabId(null)
+    if (!draggedTabId || draggedTabId === dropTabId) { setDraggedTabId(null); return }
+    onReorder(draggedTabId, dropTabId)
+    setDraggedTabId(null)
+  }
+
+  const handleTabDragEnd = () => {
+    setDraggedTabId(null)
+    setDragOverTabId(null)
+  }
+
   return (
     <div className={styles.tabBar}>
       {tabs.map((tab) => {
@@ -1359,7 +1655,14 @@ function TabBar({ tabs, activeTabId, onSwitch, onAdd, onRename, onDelete }) {
         return (
           <div
             key={tab.id}
-            className={`${styles.tab} ${tab.id === activeTabId ? styles.tabActive : ''}`}
+            className={`${styles.tab} ${tab.id === activeTabId ? styles.tabActive : ''} ${dragOverTabId === tab.id ? styles.tabDragOver : ''}`}
+            style={{ opacity: draggedTabId === tab.id ? 0.4 : 1 }}
+            draggable
+            onDragStart={(e) => handleTabDragStart(e, tab.id)}
+            onDragOver={(e) => handleTabDragOver(e, tab.id)}
+            onDragLeave={() => setDragOverTabId(null)}
+            onDrop={(e) => handleTabDrop(e, tab.id)}
+            onDragEnd={handleTabDragEnd}
             onClick={() => onSwitch(tab.id)}
             onDoubleClick={() => startRename(tab)}
             onContextMenu={(e) => handleContextMenu(e, tab)}
@@ -1549,6 +1852,18 @@ function PersonalOrganizerInner({ profileId }) {
     })
   }, [activeTabId])
 
+  const reorderTabs = useCallback((draggedId, dropId) => {
+    setTabs(prev => {
+      const draggedIdx = prev.findIndex(t => t.id === draggedId)
+      const dropIdx = prev.findIndex(t => t.id === dropId)
+      if (draggedIdx === -1 || dropIdx === -1) return prev
+      const reordered = [...prev]
+      const [dragged] = reordered.splice(draggedIdx, 1)
+      reordered.splice(dropIdx, 0, dragged)
+      return reordered
+    })
+  }, [])
+
   // ── Add / Remove widgets (scoped to active tab) ──
 
   const addWidget = useCallback((type) => {
@@ -1664,8 +1979,20 @@ function PersonalOrganizerInner({ profileId }) {
             onConfigChange={(cfg) => updateWidgetConfig(widget.id, cfg)}
           />
         )
-      case 'calendar':      return <PersonalCalendar />
-      case 'events':        return <UpcomingEvents />
+      case 'calendar':
+        return (
+          <PersonalCalendar
+            config={widgetConfigs[widget.id]}
+            onConfigChange={(cfg) => updateWidgetConfig(widget.id, cfg)}
+          />
+        )
+      case 'events':
+        return (
+          <UpcomingEvents
+            config={widgetConfigs[widget.id]}
+            onConfigChange={(cfg) => updateWidgetConfig(widget.id, cfg)}
+          />
+        )
       case 'notes':         return <NotesList activeProject={activeProject} projects={projects} />
       case 'text-block':
         return (
@@ -1674,7 +2001,13 @@ function PersonalOrganizerInner({ profileId }) {
             onConfigChange={(cfg) => updateWidgetConfig(widget.id, cfg)}
           />
         )
-      case 'clock':         return <ClockWidget />
+      case 'clock':
+        return (
+          <ClockWidget
+            config={widgetConfigs[widget.id]}
+            onConfigChange={(cfg) => updateWidgetConfig(widget.id, cfg)}
+          />
+        )
       case 'greeting':      return <GreetingWidget />
       case 'fin-saldo':     return <FinSaldo />
       case 'fin-sobra':     return <FinSobra />
@@ -1691,6 +2024,12 @@ function PersonalOrganizerInner({ profileId }) {
           <DriveWidget
             config={widgetConfigs[widget.id]}
             onConfigChange={(cfg) => updateWidgetConfig(widget.id, cfg)}
+          />
+        )
+      case 'custom':
+        return (
+          <CustomWidget
+            config={{ ...widgetConfigs[widget.id], widgetId: widget.id }}
           />
         )
       default:              return <div className={styles.emptyState}>Widget desconhecido</div>
@@ -1715,6 +2054,7 @@ function PersonalOrganizerInner({ profileId }) {
           onAdd={addTab}
           onRename={renameTab}
           onDelete={deleteTab}
+          onReorder={reorderTabs}
         />
         {saveStatus && (
           <span className={`${styles.saveIndicator} ${saveStatus === 'saved' ? styles.saveIndicatorDone : ''}`}>

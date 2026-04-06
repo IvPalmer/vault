@@ -11,7 +11,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useProfile } from '../../context/ProfileContext'
 import styles from './ChatWidget.module.css'
 
-const SIDECAR_URL = `http://${window.location.hostname}:5178`
+const SIDECAR_URL = ''  // routed through Vite proxy at /sidecar
 const MAX_HISTORY = 50
 
 function storageKey(profileId) {
@@ -66,9 +66,13 @@ export default function ChatWidget() {
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [attachment, setAttachment] = useState(null) // { name, data (base64), type }
+  const [listening, setListening] = useState(false)
+  const [voiceMode, setVoiceMode] = useState(false) // auto-speak responses
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
   const fileInputRef = useRef(null)
+  const recognitionRef = useRef(null)
+  const lastSpokenRef = useRef('')
 
   // Reload history on profile switch
   useEffect(() => {
@@ -115,6 +119,103 @@ export default function ChatWidget() {
 
   const removeAttachment = useCallback(() => setAttachment(null), [])
 
+  // ── Voice: Speech-to-Text ──
+  const startListening = useCallback(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) return
+
+    if (recognitionRef.current) {
+      recognitionRef.current.stop()
+      recognitionRef.current = null
+      setListening(false)
+      return
+    }
+
+    const recognition = new SpeechRecognition()
+    recognition.lang = 'pt-BR'
+    recognition.continuous = false
+    recognition.interimResults = true
+
+    let finalTranscript = ''
+
+    recognition.onresult = (event) => {
+      let interim = ''
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript
+        } else {
+          interim += event.results[i][0].transcript
+        }
+      }
+      setInput(finalTranscript + interim)
+    }
+
+    recognition.onend = () => {
+      setListening(false)
+      recognitionRef.current = null
+      // Auto-send in voice mode if we got text
+      if (voiceMode && finalTranscript.trim()) {
+        // Small delay to let state settle
+        setTimeout(() => {
+          const btn = document.querySelector('[data-voice-send]')
+          if (btn) btn.click()
+        }, 100)
+      }
+    }
+
+    recognition.onerror = () => {
+      setListening(false)
+      recognitionRef.current = null
+    }
+
+    recognitionRef.current = recognition
+    setListening(true)
+    recognition.start()
+  }, [voiceMode])
+
+  // ── Voice: Text-to-Speech ──
+  const speak = useCallback((text) => {
+    if (!text || !voiceMode) return
+    // Strip markdown
+    const clean = text
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/`[^`]+`/g, '')
+      .replace(/\*\*(.+?)\*\*/g, '$1')
+      .replace(/\*(.+?)\*/g, '$1')
+      .replace(/<[^>]+>/g, '')
+      .replace(/\n/g, '. ')
+      .trim()
+    if (!clean || clean === lastSpokenRef.current) return
+    lastSpokenRef.current = clean
+
+    window.speechSynthesis.cancel()
+    const utter = new SpeechSynthesisUtterance(clean)
+    utter.lang = 'pt-BR'
+    utter.rate = 1.05
+    // Try to find a Portuguese voice
+    const voices = window.speechSynthesis.getVoices()
+    const ptVoice = voices.find(v => v.lang.startsWith('pt')) || voices.find(v => v.lang.startsWith('pt-BR'))
+    if (ptVoice) utter.voice = ptVoice
+    window.speechSynthesis.speak(utter)
+  }, [voiceMode])
+
+  // Auto-speak new assistant messages when voice mode is on
+  useEffect(() => {
+    if (!voiceMode || streaming) return
+    const last = messages[messages.length - 1]
+    if (last?.role === 'assistant' && last.content) {
+      speak(last.content)
+    }
+  }, [messages, streaming, voiceMode, speak])
+
+  // Stop speech when voice mode is toggled off
+  useEffect(() => {
+    if (!voiceMode) {
+      window.speechSynthesis?.cancel()
+      lastSpokenRef.current = ''
+    }
+  }, [voiceMode])
+
   const sendingRef = useRef(false)
 
   const sendMessage = useCallback(async () => {
@@ -145,7 +246,7 @@ export default function ChatWidget() {
     setAttachment(null)
 
     try {
-      const resp = await fetch(`${SIDECAR_URL}/chat`, {
+      const resp = await fetch(`${SIDECAR_URL}/sidecar/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -157,8 +258,6 @@ export default function ChatWidget() {
       const decoder = new TextDecoder()
       let buffer = ''
       let finished = false
-      let contentReceived = false
-
       while (!finished) {
         const { done, value } = await reader.read()
         if (done) break
@@ -189,13 +288,12 @@ export default function ChatWidget() {
               finished = true
               break
             }
-            if (data.content && !contentReceived) {
-              contentReceived = true
+            if (data.content) {
               setMessages((prev) => {
                 const updated = [...prev]
                 const last = updated[updated.length - 1]
                 if (last?.role === 'assistant') {
-                  last.content = data.content  // SET, not append (single response)
+                  last.content = data.content  // Replace with latest (incremental streaming)
                 }
                 return [...updated]
               })
@@ -226,7 +324,7 @@ export default function ChatWidget() {
   const clearHistory = useCallback(() => {
     setMessages([])
     // Also clear sidecar session
-    fetch(`${SIDECAR_URL}/clear?profile_id=${profileId}`, { method: 'POST' }).catch(() => {})
+    fetch(`${SIDECAR_URL}/sidecar/clear?profile_id=${profileId}`, { method: 'POST' }).catch(() => {})
   }, [profileId])
 
   if (!open) {
@@ -258,6 +356,16 @@ export default function ChatWidget() {
         <div className={styles.panelHeader}>
           <span className={styles.panelTitle}>Assistente</span>
           <div className={styles.headerActions}>
+            <button
+              className={`${styles.clearBtn} ${voiceMode ? styles.voiceActive : ''}`}
+              onClick={() => setVoiceMode(!voiceMode)}
+              title={voiceMode ? 'Desativar modo voz' : 'Ativar modo voz'}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill={voiceMode ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                {voiceMode && <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />}
+              </svg>
+            </button>
             <button
               className={styles.clearBtn}
               onClick={clearHistory}
@@ -293,7 +401,7 @@ export default function ChatWidget() {
               <div
                 className={`${styles.msgBubble} ${
                   msg.role === 'user' ? styles.msgUser : styles.msgAssistant
-                }`}
+                } ${msg.role === 'assistant' && msg.content && /confirma\??/i.test(msg.content) ? styles.confirmMessage : ''}`}
               >
                 {msg.attachment && (
                   <div className={styles.attachmentTag}>
@@ -337,6 +445,19 @@ export default function ChatWidget() {
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
+            <button
+              className={`${styles.attachBtn} ${listening ? styles.micActive : ''}`}
+              onClick={startListening}
+              disabled={streaming}
+              title={listening ? 'Parar' : 'Falar'}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill={listening ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+            </button>
             <input
               ref={inputRef}
               className={styles.input}
@@ -350,6 +471,7 @@ export default function ChatWidget() {
               className={styles.sendBtn}
               onClick={sendMessage}
               disabled={streaming || !input.trim()}
+              data-voice-send
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="22" y1="2" x2="11" y2="13" />

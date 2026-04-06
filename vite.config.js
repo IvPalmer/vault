@@ -23,6 +23,12 @@ export default defineConfig({
       },
     }),
     proxy: {
+      // Chat sidecar → host-side Claude agent
+      '/sidecar': {
+        target: 'http://127.0.0.1:5178',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/sidecar/, ''),
+      },
       // Apple Reminders → host-side sidecar (needs macOS EventKit/osascript)
       '/api/home/reminders': {
         target: 'http://127.0.0.1:5177',

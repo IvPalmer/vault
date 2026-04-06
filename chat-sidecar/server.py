@@ -32,11 +32,13 @@ from claude_agent_sdk import (
 from claude_agent_sdk._errors import MessageParseError
 from claude_agent_sdk._internal.message_parser import parse_message
 
+from vault_tools import create_vault_mcp_server, set_profile
+
 app = FastAPI(title="Vault Chat Sidecar")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5175"],
+    allow_origins=["http://localhost:5175", "https://localhost:5175", "https://raphaels-mac-studio.tail5d4d09.ts.net:5175"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -47,6 +49,9 @@ _sessions: dict[str, str] = {}
 # Conversation memory per profile (last N exchanges for context window)
 _memory: dict[str, list[dict]] = {}
 MAX_MEMORY = 20  # keep last 20 exchanges per profile
+
+# Vault MCP tools server (in-process, no separate process needed)
+_vault_mcp = create_vault_mcp_server()
 
 VAULT_API = "http://localhost:8001"
 
@@ -75,176 +80,57 @@ class ChatRequest(BaseModel):
 
 
 async def _fetch_context(profile_id: str) -> str:
-    """Fetch comprehensive context from Vault API."""
+    """Fetch lightweight context from Vault API (parallel).
+
+    Since Claude now has MCP tools to fetch detailed data on demand,
+    this context is kept minimal — just enough for awareness.
+    """
     now = datetime.now()
-    month_str = now.strftime("%Y-%m")
     today_str = now.strftime("%Y-%m-%d")
     headers = {"X-Profile-ID": profile_id}
+
+    async def _get(path: str, params: dict | None = None) -> dict | list | None:
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.get(f"{VAULT_API}/api{path}", headers=headers, params=params or {})
+                if resp.status_code == 200:
+                    return resp.json()
+        except Exception:
+            pass
+        return None
+
+    # Fetch all in parallel
+    tasks_p, projects_p, accounts_p = await asyncio.gather(
+        _get("/pessoal/tasks/"),
+        _get("/pessoal/projects/"),
+        _get("/google/accounts/"),
+    )
+
     parts: list[str] = []
 
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        # Tasks
-        try:
-            resp = await client.get(f"{VAULT_API}/api/pessoal/tasks/", headers=headers)
-            if resp.status_code == 200:
-                tasks = resp.json()
-                if isinstance(tasks, dict):
-                    tasks = tasks.get("results", tasks.get("data", []))
-                active = [t for t in tasks if t.get("status") != "done"]
-                overdue = [t for t in active if t.get("due_date") and t["due_date"] < today_str]
-                due_today = [t for t in active if t.get("due_date") == today_str]
-                doing = [t for t in active if t.get("status") == "doing"]
-                upcoming = [t for t in active if t.get("due_date") and t["due_date"] > today_str][:5]
+    # Tasks — just counts
+    if tasks_p:
+        tasks = tasks_p.get("results", tasks_p) if isinstance(tasks_p, dict) else tasks_p
+        active = [t for t in tasks if t.get("status") != "done"]
+        overdue = [t for t in active if t.get("due_date") and t["due_date"] < today_str]
+        due_today = [t for t in active if t.get("due_date") == today_str]
+        parts.append(f"Tarefas: {len(active)} ativas, {len(due_today)} hoje, {len(overdue)} atrasadas")
 
-                if overdue:
-                    lines = [f"  - {t['title']} (vencida {t['due_date']})" for t in overdue[:5]]
-                    parts.append("TAREFAS ATRASADAS:\n" + "\n".join(lines))
-                if due_today:
-                    lines = [f"  - {t['title']}" for t in due_today]
-                    parts.append("TAREFAS PARA HOJE:\n" + "\n".join(lines))
-                if doing:
-                    lines = [f"  - {t['title']}" for t in doing[:5]]
-                    parts.append("EM ANDAMENTO:\n" + "\n".join(lines))
-                if upcoming:
-                    lines = [f"  - {t['title']} ({t['due_date']})" for t in upcoming]
-                    parts.append("PROXIMAS:\n" + "\n".join(lines))
-                if not overdue and not due_today and not doing:
-                    parts.append("Nenhuma tarefa pendente para hoje.")
-                parts.append(f"Total tarefas ativas: {len(active)}")
-        except Exception:
-            pass
+    # Projects — just names
+    if projects_p:
+        projects = projects_p.get("results", projects_p) if isinstance(projects_p, dict) else projects_p
+        active_p = [p["name"] for p in projects if p.get("status") == "active"]
+        if active_p:
+            parts.append(f"Projetos: {', '.join(active_p)}")
 
-        # Notes (recent)
-        try:
-            resp = await client.get(f"{VAULT_API}/api/pessoal/notes/", headers=headers)
-            if resp.status_code == 200:
-                notes = resp.json()
-                if isinstance(notes, dict):
-                    notes = notes.get("results", notes.get("data", []))
-                if notes:
-                    recent = sorted(notes, key=lambda n: n.get("updated_at", ""), reverse=True)[:5]
-                    lines = []
-                    for n in recent:
-                        title = n.get("title") or "(sem titulo)"
-                        content = (n.get("content") or "")[:100]
-                        lines.append(f"  - {title}: {content}")
-                    parts.append("NOTAS RECENTES:\n" + "\n".join(lines))
-        except Exception:
-            pass
+    # Google accounts — just list emails
+    if accounts_p:
+        accts = accounts_p if isinstance(accounts_p, list) else accounts_p.get("accounts", [])
+        emails = [a.get("email", a) if isinstance(a, dict) else str(a) for a in accts]
+        if emails:
+            parts.append(f"Contas Google: {', '.join(emails)}")
 
-        # Projects
-        try:
-            resp = await client.get(f"{VAULT_API}/api/pessoal/projects/", headers=headers)
-            if resp.status_code == 200:
-                projects = resp.json()
-                if isinstance(projects, dict):
-                    projects = projects.get("results", projects.get("data", []))
-                active_projects = [p for p in projects if p.get("status") == "active"]
-                if active_projects:
-                    lines = [f"  - {p['name']} ({p.get('task_count', 0)} tarefas)" for p in active_projects]
-                    parts.append("PROJETOS ATIVOS:\n" + "\n".join(lines))
-        except Exception:
-            pass
-
-        # Metricas (financial summary)
-        try:
-            resp = await client.get(
-                f"{VAULT_API}/api/analytics/metricas/",
-                headers=headers,
-                params={"month_str": month_str},
-            )
-            if resp.status_code == 200:
-                m = resp.json()
-                lines = []
-                for key, label in [
-                    ("saldo_projetado", "Saldo projetado"),
-                    ("orcamento_variavel", "Orcamento variavel"),
-                    ("variable_spending", "Gastos variaveis"),
-                    ("fatura_total", "Fatura CC"),
-                    ("income_total", "Renda"),
-                ]:
-                    val = m.get(key)
-                    if val is not None:
-                        lines.append(f"  {label}: R$ {val:,.2f}")
-                if lines:
-                    parts.append(f"FINANCEIRO ({month_str}):\n" + "\n".join(lines))
-        except Exception:
-            pass
-
-        # Google accounts and Gmail (unread emails)
-        google_accounts: list[str] = []
-        try:
-            resp = await client.get(f"{VAULT_API}/api/google/accounts/", headers=headers)
-            if resp.status_code == 200:
-                accounts = resp.json()
-                if isinstance(accounts, list):
-                    google_accounts = [a.get("email", a) if isinstance(a, dict) else str(a) for a in accounts]
-                elif isinstance(accounts, dict):
-                    google_accounts = [a.get("email", a) if isinstance(a, dict) else str(a)
-                                       for a in accounts.get("results", accounts.get("data", accounts.get("accounts", [])))]
-                if google_accounts:
-                    parts.append("CONTAS GOOGLE CONECTADAS: " + ", ".join(google_accounts))
-        except Exception:
-            pass
-
-        for acct_email in google_accounts[:2]:
-            try:
-                resp = await client.get(
-                    f"{VAULT_API}/api/google/gmail/messages/",
-                    headers=headers,
-                    params={"q": "is:unread", "limit": 5, "account_email": acct_email},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    messages = data if isinstance(data, list) else data.get("messages", data.get("results", data.get("data", [])))
-                    if messages:
-                        lines = []
-                        for msg in messages[:5]:
-                            sender = msg.get("from", msg.get("sender", "?"))
-                            subject = msg.get("subject", "(sem assunto)")
-                            lines.append(f"  - {sender}: {subject}")
-                        parts.append(f"EMAILS NAO LIDOS ({acct_email}):\n" + "\n".join(lines))
-                    else:
-                        parts.append(f"EMAILS NAO LIDOS ({acct_email}): nenhum")
-            except Exception:
-                pass
-
-        # Calendar events (next 14 days)
-        try:
-            time_min = now.strftime("%Y-%m-%dT00:00:00Z")
-            from datetime import timedelta
-            time_max = (now + timedelta(days=14)).strftime("%Y-%m-%dT23:59:59Z")
-            resp = await client.get(
-                f"{VAULT_API}/api/calendar/events/",
-                headers=headers,
-                params={"context": "personal", "time_min": time_min, "time_max": time_max},
-            )
-            if resp.status_code == 200:
-                cal_data = resp.json()
-                events = cal_data.get("events", [])
-                if events:
-                    lines = []
-                    for e in events[:12]:
-                        title = e.get("title") or e.get("summary") or "?"
-                        start_raw = e.get("start", "")
-                        # start can be a string (date or datetime) or dict
-                        if isinstance(start_raw, dict):
-                            start_str = start_raw.get("dateTime", start_raw.get("date", "?"))
-                        else:
-                            start_str = str(start_raw)
-                        # Format datetime nicely
-                        if "T" in start_str:
-                            start_str = start_str[:16].replace("T", " ")
-                        all_day = e.get("all_day", False)
-                        loc = e.get("location", "")
-                        loc_str = f" @ {loc.split(chr(10))[0]}" if loc else ""
-                        day_str = " (dia todo)" if all_day else ""
-                        lines.append(f"  - {title} ({start_str}{day_str}{loc_str})")
-                    parts.append("CALENDARIO/PROXIMOS EVENTOS:\n" + "\n".join(lines))
-        except Exception:
-            pass
-
-    return "\n\n".join(parts) if parts else "Nenhum dado disponivel no momento."
+    return "\n".join(parts) if parts else ""
 
 
 def _build_system_prompt(profile_id: str, profile_name: str, context: str) -> str:
@@ -270,25 +156,83 @@ def _build_system_prompt(profile_id: str, profile_name: str, context: str) -> st
             mem_lines.append(f"  {role}: {content}")
         memory_section = "\n\nRECENT CONVERSATION:\n" + "\n".join(mem_lines)
 
-    return f"""You are a personal assistant embedded inside Vault, a personal finance and daily organizer app.
+    return f"""Voce e a assistente pessoal de {profile_name} no Vault, um app de organizacao pessoal e financas.
 
-WHO YOU'RE TALKING TO:
+QUEM VOCE ESTA FALANDO:
 {who}
 
-PERSONALITY:
+PERSONALIDADE:
 {personality}
-Be concise but warm. Use markdown formatting (bold, lists) when helpful.
-When asked about tasks, finances, or schedule, use the context below to give accurate answers.
-If asked to do something (create task, draft document, etc.), help directly.
-If you don't have enough information, say so honestly.
+Seja concisa, direta e calorosa. Use markdown quando ajudar (negrito, listas).
+Responda SEMPRE em portugues brasileiro.
 
-GOOGLE INTEGRATION:
-You can help with reading and summarizing emails from any connected Google account.
-You can search files in Google Drive, read Google Docs, and read/edit Google Sheets.
-When asked about emails, mention which accounts are available (shown in context below).
-When asked to send an email, draft it and confirm which account to send from.
+VOCE E UMA ASSISTENTE PESSOAL COMPLETA — nao apenas um chatbot.
+Voce pode pesquisar na internet, ler paginas web, consultar e modificar dados do Vault,
+criar widgets personalizados, editar planilhas, enviar emails, e muito mais.
+USE AS FERRAMENTAS para buscar informacoes antes de responder — nunca invente dados.
 
-CURRENT DATE: {datetime.now().strftime('%A, %d de %B de %Y')}
+PESQUISA E WEB:
+- WebSearch: pesquisar qualquer coisa na internet (receitas, noticias, precos, tutoriais, etc.)
+- WebFetch: ler o conteudo de uma pagina web (artigos, documentacao, etc.)
+
+ORGANIZACAO PESSOAL:
+- Tarefas: list_tasks, create_task, update_task, delete_task
+- Notas: list_notes, create_note, delete_note
+- Projetos: list_projects, create_project
+- Lembretes Apple: get_reminder_lists, get_reminders, add_reminder, complete_reminder
+- Calendario: get_calendar_events, create_calendar_event
+
+GOOGLE (email, drive, docs, sheets):
+- search_emails, read_email, send_email, draft_email, trash_email
+- search_drive, read_document, read_spreadsheet, update_spreadsheet
+- Pode ler um doc, cruzar com dados do Vault, e escrever resultado em uma planilha
+
+FINANCAS (dados reais do banco):
+- get_finances: resumo do mes (saldo, renda, gastos, fatura CC, poupanca)
+- get_transactions: buscar transacoes por mes, categoria, descricao, conta
+- get_spending_trends: tendencias de gasto por categoria ao longo de meses
+- get_projection: projecao financeira futura (saldo, renda, gastos por mes)
+- get_recurring: despesas fixas, investimentos, cartao — esperado vs real
+- get_categories, get_accounts: listar categorias e contas
+- categorize_transaction: recategorizar uma transacao
+
+DASHBOARD (configurar a pagina da usuaria):
+- get_dashboard, add_widget, remove_widget, create_tab, set_dashboard
+- Widgets built-in: kpi-hoje, kpi-atrasadas, kpi-ativas, kpi-projetos,
+  capture, projects, tasks, reminders, calendar, events, notes, text-block,
+  clock, greeting, email-inbox, drive-files, fin-saldo, fin-sobra, fin-fatura
+
+WIDGETS PERSONALIZADOS (seu superpoder!):
+- create_custom_widget: cria qualquer widget com HTML/CSS/JS completo
+- O widget roda em iframe com acesso a API do Vault (vaultGet, vaultPost)
+- Pode persistir estado local (saveState/loadState)
+- Exemplos do que voce pode criar:
+  * Lista de compras interativa com checkboxes que salvam estado
+  * Board de Pinterest com imagens de uma URL
+  * Tracker de habitos com calendario visual
+  * Countdown para um evento
+  * Painel do clima buscando API externa
+  * Checklist de limpeza semanal com progresso
+  * Galeria de fotos, player de musica, feed RSS
+  * Qualquer coisa que a usuaria imaginar!
+- Grade de 12 colunas. A usuaria precisa recarregar apos mudancas no dashboard.
+
+CAPACIDADES EXTRAS:
+- Bash: executar comandos no terminal (curl, python, jq, etc.) para processar dados
+- Read/Grep/Glob: ler e buscar em arquivos locais
+- Pode combinar ferramentas: pesquisar na web + criar widget, ler planilha + analisar + responder
+
+REGRAS IMPORTANTES:
+1. ACOES DESTRUTIVAS (send_email, delete_task, delete_note, trash_email):
+   SEMPRE pergunte "Confirma?" e espere a usuaria responder "sim" antes de executar.
+2. NUNCA execute rm, git push, docker, ou qualquer comando destrutivo no Bash.
+   Bash e para LEITURA e processamento de dados apenas (curl, python, jq, cat, etc.)
+3. NUNCA modifique codigo fonte do app (arquivos .py, .jsx, .css, .js).
+4. Use as ferramentas para buscar dados atualizados — o contexto abaixo pode estar desatualizado.
+5. Para emails: a usuaria tem multiplas contas Google. Pergunte de qual conta
+   enviar/buscar quando nao estiver claro pelo contexto.
+
+DATA ATUAL: {datetime.now().strftime('%A, %d de %B de %Y')}
 
 {context}{memory_section}"""
 
@@ -326,11 +270,75 @@ async def _stream_chat(req: ChatRequest):
             except Exception:
                 pass
 
+    # Set active profile for MCP tools
+    set_profile(req.profile_id)
+
+    _ALLOWED_TOOLS = [
+        "mcp__vault-tools__list_tasks",
+        "mcp__vault-tools__list_projects",
+        "mcp__vault-tools__list_notes",
+        "mcp__vault-tools__get_calendar_events",
+        "mcp__vault-tools__get_reminders",
+        "mcp__vault-tools__get_reminder_lists",
+        "mcp__vault-tools__search_emails",
+        "mcp__vault-tools__read_email",
+        "mcp__vault-tools__search_drive",
+        "mcp__vault-tools__read_document",
+        "mcp__vault-tools__read_spreadsheet",
+        "mcp__vault-tools__update_spreadsheet",
+        "mcp__vault-tools__get_finances",
+        "mcp__vault-tools__create_task",
+        "mcp__vault-tools__update_task",
+        "mcp__vault-tools__delete_task",
+        "mcp__vault-tools__create_note",
+        "mcp__vault-tools__delete_note",
+        "mcp__vault-tools__create_project",
+        "mcp__vault-tools__send_email",
+        "mcp__vault-tools__draft_email",
+        "mcp__vault-tools__trash_email",
+        "mcp__vault-tools__create_calendar_event",
+        "mcp__vault-tools__add_reminder",
+        "mcp__vault-tools__complete_reminder",
+        "mcp__vault-tools__categorize_transaction",
+        "mcp__vault-tools__get_transactions",
+        "mcp__vault-tools__get_spending_trends",
+        "mcp__vault-tools__get_projection",
+        "mcp__vault-tools__get_recurring",
+        "mcp__vault-tools__get_categories",
+        "mcp__vault-tools__get_accounts",
+        "mcp__vault-tools__get_dashboard",
+        "mcp__vault-tools__add_widget",
+        "mcp__vault-tools__remove_widget",
+        "mcp__vault-tools__create_tab",
+        "mcp__vault-tools__create_custom_widget",
+        "mcp__vault-tools__set_dashboard",
+    ]
+
     options = ClaudeAgentOptions(
-        max_turns=10,
+        max_turns=12,
+        model="claude-sonnet-4-6",
         cwd="/Users/palmer/Work/Dev/Vault",
         system_prompt=system_prompt,
-        include_partial_messages=False,
+        include_partial_messages=True,
+        mcp_servers={"vault-tools": {"type": "sdk", "name": "vault-tools", "instance": _vault_mcp}},
+        permission_mode="bypassPermissions",
+        allowed_tools=[
+            *_ALLOWED_TOOLS,
+            # Claude built-in tools
+            "WebSearch",
+            "WebFetch",
+            "Bash",
+            "Read",
+            "Grep",
+            "Glob",
+        ],
+        disallowed_tools=[
+            # Block only destructive/code-editing tools
+            "Edit",       # don't modify source code
+            "Write",      # don't create files on disk
+            "NotebookEdit",
+            "Agent",      # don't spawn sub-agents
+        ],
     )
 
     # Resume existing session if available
@@ -339,15 +347,13 @@ async def _stream_chat(req: ChatRequest):
         options.resume = existing_session
 
     full_response = ""
-    response_sent = False
+    last_sent_len = 0
 
     try:
         client = ClaudeSDKClient(options)
         await client.connect()
         await client.query(prompt)
 
-        # Collect all messages, extract text from the last AssistantMessage only
-        last_assistant_text = ""
         session_id = None
 
         async for raw_data in client._query.receive_messages():
@@ -363,17 +369,20 @@ async def _stream_chat(req: ChatRequest):
                     for block in content_blocks:
                         if hasattr(block, "text") and block.text:
                             text += block.text
-                    if text:
-                        last_assistant_text = text
+                    if text and len(text) > last_sent_len:
+                        # Stream incremental text
+                        full_response = text
+                        yield f"data: {json.dumps({'content': text}, ensure_ascii=False)}\n\n"
+                        last_sent_len = len(text)
 
             elif isinstance(message, ResultMessage):
                 session_id = getattr(message, "session_id", None)
+                # Send final text if we haven't yet
+                result_text = getattr(message, "text", None)
+                if result_text and result_text != full_response:
+                    full_response = result_text
+                    yield f"data: {json.dumps({'content': result_text}, ensure_ascii=False)}\n\n"
                 break
-
-        # Send the final response once
-        if last_assistant_text:
-            full_response = last_assistant_text
-            yield f"data: {json.dumps({'content': last_assistant_text}, ensure_ascii=False)}\n\n"
 
         if session_id:
             _sessions[req.profile_id] = session_id
