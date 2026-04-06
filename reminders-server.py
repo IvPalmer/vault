@@ -24,6 +24,7 @@ from urllib.parse import urlparse, parse_qs
 PORT = 5177
 SSL_PORT = 5179
 HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reminders-helper')
+CAL_HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'calendar-helper')
 
 # Only show these lists on the Home screen (the shared R&R lists)
 HOME_LISTS = ['R&R Tarefas', 'R&R Casa', 'R&R Compras']
@@ -166,11 +167,14 @@ class SidecarHandler(BaseHTTPRequestHandler):
     # CALENDAR (via osascript / Apple Calendar)
     # ═══════════════════════════════════════════════════════
 
-    def _run_osascript(self, script, timeout=15):
-        """Run an AppleScript and return stdout."""
+    def _run_osascript(self, script, timeout=15, lang='AppleScript'):
+        """Run an AppleScript or JXA and return stdout."""
+        args = ['osascript']
+        if lang == 'JavaScript':
+            args += ['-l', 'JavaScript']
+        args += ['-e', script]
         result = subprocess.run(
-            ['osascript', '-e', script],
-            capture_output=True, text=True, timeout=timeout,
+            args, capture_output=True, text=True, timeout=timeout,
         )
         return result.stdout.strip(), result.stderr.strip(), result.returncode
 
@@ -178,16 +182,24 @@ class SidecarHandler(BaseHTTPRequestHandler):
         """GET /api/home/calendar/status/ — always authenticated (local Apple Calendar)."""
         self._json_response({'authenticated': True, 'source': 'apple_calendar'})
 
+    def _run_cal_helper(self, *args, timeout=10):
+        """Run the compiled Swift calendar helper and return parsed JSON."""
+        result = subprocess.run(
+            [CAL_HELPER, *args],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if result.returncode != 0:
+            try:
+                return json.loads(result.stdout)
+            except Exception:
+                return {'error': result.stderr.strip() or 'Calendar helper failed'}
+        return json.loads(result.stdout)
+
     def _get_calendars(self):
         """GET /api/home/calendar/calendars/ — list all calendars."""
-        script = 'tell application "Calendar" to get name of every calendar'
         try:
-            stdout, stderr, rc = self._run_osascript(script)
-            if rc != 0:
-                self._json_response({'error': stderr or 'Failed to list calendars'}, 500)
-                return
-            names = [n.strip() for n in stdout.split(',') if n.strip()]
-            self._json_response({'calendars': names})
+            data = self._run_cal_helper('calendars')
+            self._json_response(data)
         except subprocess.TimeoutExpired:
             self._json_response({'error': 'Calendar request timed out'}, 504)
         except Exception as e:
@@ -204,105 +216,12 @@ class SidecarHandler(BaseHTTPRequestHandler):
             self._json_response({'error': 'time_min and time_max required (YYYY-MM-DD)'}, 400)
             return
 
-        # Build AppleScript to fetch events in date range
-        # AppleScript date format: "YYYY-MM-DD" needs to be converted
-        cal_clause = ''
-        if cal_filter:
-            cal_names = [n.strip() for n in cal_filter.split(',')]
-            conditions = ' or '.join(
-                f'name of its calendar is "{n}"' for n in cal_names
-            )
-            cal_clause = f'whose ({conditions})'
-
-        script = f'''
-set startDate to current date
-set year of startDate to {time_min[:4]}
-set month of startDate to {int(time_min[5:7])}
-set day of startDate to {int(time_min[8:10])}
-set hours of startDate to 0
-set minutes of startDate to 0
-set seconds of startDate to 0
-
-set endDate to current date
-set year of endDate to {time_max[:4]}
-set month of endDate to {int(time_max[5:7])}
-set day of endDate to {int(time_max[8:10])}
-set hours of endDate to 23
-set minutes of endDate to 59
-set seconds of endDate to 59
-
-tell application "Calendar"
-    set eventList to {{}}
-    set allEvents to (every event of every calendar whose start date >= startDate and start date <= endDate)
-    repeat with calEvents in allEvents
-        repeat with evt in calEvents
-            set evtStart to start date of evt
-            set evtEnd to end date of evt
-            set evtTitle to summary of evt
-            set evtAllDay to allday event of evt
-            set evtLoc to ""
-            try
-                set evtLoc to location of evt
-            end try
-            set evtCal to name of calendar of evt
-            -- Format: title|||start|||end|||allday|||location|||calendar
-            set y1 to year of evtStart as text
-            set m1 to text -2 thru -1 of ("0" & ((month of evtStart as number) as text))
-            set d1 to text -2 thru -1 of ("0" & (day of evtStart as text))
-            set h1 to text -2 thru -1 of ("0" & (hours of evtStart as text))
-            set n1 to text -2 thru -1 of ("0" & (minutes of evtStart as text))
-            set y2 to year of evtEnd as text
-            set m2 to text -2 thru -1 of ("0" & ((month of evtEnd as number) as text))
-            set d2 to text -2 thru -1 of ("0" & (day of evtEnd as text))
-            set h2 to text -2 thru -1 of ("0" & (hours of evtEnd as text))
-            set n2 to text -2 thru -1 of ("0" & (minutes of evtEnd as text))
-            set startStr to y1 & "-" & m1 & "-" & d1 & "T" & h1 & ":" & n1
-            set endStr to y2 & "-" & m2 & "-" & d2 & "T" & h2 & ":" & n2
-            set evtLine to evtTitle & "|||" & startStr & "|||" & endStr & "|||" & (evtAllDay as text) & "|||" & evtLoc & "|||" & evtCal
-            set end of eventList to evtLine
-        end repeat
-    end repeat
-    set AppleScript's text item delimiters to linefeed
-    return eventList as text
-end tell
-'''
         try:
-            stdout, stderr, rc = self._run_osascript(script, timeout=30)
-            if rc != 0:
-                self._json_response({'error': stderr or 'Failed to fetch events'}, 500)
-                return
-
-            events = []
-            cal_names_filter = None
+            args = ['events', time_min[:10], time_max[:10]]
             if cal_filter:
-                cal_names_filter = set(n.strip() for n in cal_filter.split(','))
-
-            for line in stdout.split('\n'):
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split('|||')
-                if len(parts) < 6:
-                    continue
-                title, start, end, all_day, location, calendar = (
-                    parts[0], parts[1], parts[2], parts[3], parts[4], parts[5],
-                )
-                # Filter by calendar if specified
-                if cal_names_filter and calendar not in cal_names_filter:
-                    continue
-
-                is_all_day = all_day.lower() == 'true'
-                evt = {
-                    'title': title,
-                    'start': start[:10] if is_all_day else start,
-                    'end': end[:10] if is_all_day else end,
-                    'all_day': is_all_day,
-                    'location': location if location != 'missing value' else '',
-                    'calendar': calendar,
-                }
-                events.append(evt)
-
-            self._json_response({'events': events, 'count': len(events)})
+                args.append(cal_filter)
+            data = self._run_cal_helper(*args, timeout=10)
+            self._json_response(data)
         except subprocess.TimeoutExpired:
             self._json_response({'error': 'Calendar request timed out'}, 504)
         except Exception as e:

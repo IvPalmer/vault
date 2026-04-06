@@ -35,6 +35,7 @@ from .views import (
     CalendarAccountsView, CalendarConnectView, CalendarOAuthCallbackView,
     CalendarDisconnectView, CalendarAvailableView, CalendarSelectionsView,
     CalendarEventsView, CalendarAddEventView,
+    ICSFeedView, ICSFeedDetailView,
     SalaryProjectionView, SalarySyncView, SalaryConfigView,
     PluggySyncView,
     ProjectViewSet, PersonalTaskViewSet, PersonalNoteViewSet,
@@ -147,6 +148,8 @@ urlpatterns = [
     path('calendar/selections/', CalendarSelectionsView.as_view(), name='calendar-selections'),
     path('calendar/events/', CalendarEventsView.as_view(), name='calendar-events'),
     path('calendar/add-event/', CalendarAddEventView.as_view(), name='calendar-add-event'),
+    path('calendar/ics-feeds/', ICSFeedView.as_view(), name='ics-feeds'),
+    path('calendar/ics-feeds/<uuid:feed_id>/', ICSFeedDetailView.as_view(), name='ics-feed-detail'),
     # Dashboard state
     path('dashboard-state/', DashboardStateView.as_view(), name='dashboard-state'),
     # Google Suite (OAuth + Gmail + Drive)

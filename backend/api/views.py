@@ -2696,6 +2696,50 @@ class CalendarEventsView(APIView):
                 evt['calendar_color'] = sel.color or ''
                 all_events.append(evt)
 
+        # ── ICS feeds ──
+        from .models import ICSFeed
+        from . import ics_parser
+
+        if context == 'home':
+            ics_feeds = ICSFeed.objects.filter(show_in_home=True, is_active=True)
+        else:
+            ics_feeds = ICSFeed.objects.filter(
+                profile=request.profile, show_in_personal=True, is_active=True,
+            )
+
+        for feed in ics_feeds:
+            try:
+                ics_events = ics_parser.fetch_and_parse(
+                    feed.url, time_min, time_max, feed.name, feed.color,
+                )
+                all_events.extend(ics_events)
+            except Exception as e:
+                logger.warning(f'Failed to parse ICS feed {feed.name}: {e}')
+
+        # ── Apple Calendar (host sidecar) ──
+        import requests as http_requests
+        try:
+            sidecar_url = os.environ.get('REMINDERS_SIDECAR_URL', 'http://host.docker.internal:5177')
+            resp = http_requests.get(
+                f'{sidecar_url}/api/home/calendar/events/',
+                params={'time_min': time_min, 'time_max': time_max},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                apple_data = resp.json()
+                for evt in apple_data.get('events', []):
+                    # Skip calendars already covered by Google Calendar selections
+                    # (avoid duplicates for calendars synced to both)
+                    cal_name = evt.get('calendar', '')
+                    if cal_name in seen:
+                        continue
+                    # Add color based on calendar name
+                    if not evt.get('calendar_color'):
+                        evt['calendar_color'] = '#34a853'  # default green for Apple
+                    all_events.append(evt)
+        except Exception as e:
+            logger.debug(f'Apple Calendar sidecar unavailable: {e}')
+
         all_events.sort(key=lambda e: e.get('start', ''))
 
         return Response({'events': all_events, 'count': len(all_events)})
@@ -2888,3 +2932,50 @@ class PersonalNoteViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(profile=self.request.profile)
+
+
+# ── ICS Feed Management ────────────────────────────────────
+
+class ICSFeedView(APIView):
+    """GET/POST /api/calendar/ics-feeds/ — list or create ICS subscriptions."""
+
+    def get(self, request):
+        from .models import ICSFeed
+        feeds = ICSFeed.objects.filter(profile=request.profile)
+        return Response([
+            {
+                'id': str(f.id), 'name': f.name, 'url': f.url,
+                'color': f.color, 'show_in_home': f.show_in_home,
+                'show_in_personal': f.show_in_personal, 'is_active': f.is_active,
+            }
+            for f in feeds
+        ])
+
+    def post(self, request):
+        from .models import ICSFeed
+        name = request.data.get('name', '').strip()
+        url = request.data.get('url', '').strip()
+        color = request.data.get('color', '#4285f4').strip()
+
+        if not name or not url:
+            return Response({'error': 'name and url are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        feed = ICSFeed.objects.create(
+            profile=request.profile, name=name, url=url, color=color,
+            show_in_home=request.data.get('show_in_home', False),
+            show_in_personal=request.data.get('show_in_personal', True),
+        )
+        return Response({'id': str(feed.id), 'name': feed.name, 'url': feed.url, 'color': feed.color})
+
+
+class ICSFeedDetailView(APIView):
+    """DELETE /api/calendar/ics-feeds/<uuid:feed_id>/"""
+
+    def delete(self, request, feed_id):
+        from .models import ICSFeed
+        try:
+            feed = ICSFeed.objects.get(id=feed_id, profile=request.profile)
+            feed.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except ICSFeed.DoesNotExist:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)

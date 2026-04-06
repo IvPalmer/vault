@@ -623,6 +623,25 @@ class CalendarSelection(models.Model):
         return f"{self.calendar_name} ({self.account.email})"
 
 
+class ICSFeed(models.Model):
+    """External calendar subscribed via ICS/iCal URL (read-only, no OAuth needed)."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='ics_feeds')
+    name = models.CharField(max_length=200, help_text='Display name (e.g. Work Calendar)')
+    url = models.URLField(max_length=500, help_text='ICS feed URL')
+    color = models.CharField(max_length=7, default='#4285f4', help_text='Hex color for events')
+    show_in_home = models.BooleanField(default=False)
+    show_in_personal = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.name} ({self.profile.name})"
+
+
 class Project(models.Model):
     """Personal project for grouping tasks and notes."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
