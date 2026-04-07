@@ -335,11 +335,13 @@ function ProjectsBar({ projects, activeProject, onSelectProject }) {
 
 /* ── Task List — Full Featured ──────────────────────────── */
 
-function TaskList({ activeProject }) {
+function TaskList({ activeProject, config, onConfigChange }) {
   const queryClient = useQueryClient()
   const [filter, setFilter] = useState('active') // 'active' | 'doing' | 'done'
-  const [groupBy, setGroupBy] = useState('all') // 'all' | 'project'
   const [expandedId, setExpandedId] = useState(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const viewMode = config?.viewMode ?? 'list'
+  const update = (patch) => onConfigChange?.({ ...config, ...patch })
   const [editFields, setEditFields] = useState({})
   const [newTitle, setNewTitle] = useState('')
   const [newProject, setNewProject] = useState('')
@@ -356,11 +358,12 @@ function TaskList({ activeProject }) {
 
   const projects = projectsData?.results || projectsData || []
 
+  const effectiveProject = config?.projectFilter || activeProject || ''
   const allTasks = useMemo(() => {
     let list = data?.results || data || []
-    if (activeProject) list = list.filter((t) => t.project === activeProject)
+    if (effectiveProject) list = list.filter((t) => t.project === effectiveProject)
     return list
-  }, [data, activeProject])
+  }, [data, effectiveProject])
 
   const tasks = useMemo(() => {
     if (filter === 'active') return allTasks.filter((t) => t.status === 'todo' || t.status === 'doing')
@@ -369,23 +372,6 @@ function TaskList({ activeProject }) {
     return allTasks
   }, [allTasks, filter])
 
-  const groupedTasks = useMemo(() => {
-    if (groupBy !== 'project') return null
-    const groups = {}
-    const noProject = []
-    tasks.forEach((t) => {
-      if (t.project_name) {
-        if (!groups[t.project_name]) groups[t.project_name] = { tasks: [], color: null }
-        groups[t.project_name].tasks.push(t)
-        // find color from projects
-        const proj = projects.find((p) => p.id === t.project)
-        if (proj) groups[t.project_name].color = proj.color
-      } else {
-        noProject.push(t)
-      }
-    })
-    return { groups, noProject }
-  }, [tasks, groupBy, projects])
 
   const cycleMutation = useMutation({
     mutationFn: ({ id, status }) => {
@@ -518,7 +504,7 @@ function TaskList({ activeProject }) {
                   {due.text}
                 </span>
               )}
-              {task.project_name && groupBy !== 'project' && (
+              {task.project_name && !effectiveProject && (
                 <span className={styles.taskProject}>{task.project_name}</span>
               )}
               {task.notes && (
@@ -629,103 +615,177 @@ function TaskList({ activeProject }) {
 
   const renderTaskList = (taskArr) => taskArr.map(renderTask)
 
+  const KANBAN_COLS = [
+    { key: 'todo',  label: 'A FAZER',  tasks: allTasks.filter((t) => t.status === 'todo') },
+    { key: 'doing', label: 'FAZENDO',  tasks: allTasks.filter((t) => t.status === 'doing') },
+    { key: 'done',  label: 'FEITO',    tasks: allTasks.filter((t) => t.status === 'done') },
+  ]
+
   return (
     <div className={styles.widget}>
+      {/* Settings Panel */}
+      <WidgetSettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)}>
+        <SettingsField label="Projeto padrao">
+          <select
+            style={ss.select}
+            value={config?.projectFilter ?? ''}
+            onChange={(e) => update({ projectFilter: e.target.value })}
+          >
+            <option value="">Todos os projetos</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </SettingsField>
+        <SettingsField label="Visualizacao padrao">
+          <select
+            style={ss.select}
+            value={config?.viewMode ?? 'list'}
+            onChange={(e) => update({ viewMode: e.target.value })}
+          >
+            <option value="list">Lista</option>
+            <option value="kanban">Kanban</option>
+          </select>
+        </SettingsField>
+      </WidgetSettingsPanel>
+
       <div className={styles.widgetHeader}>
         <h3 className={styles.widgetTitle}>TAREFAS</h3>
         <div className={styles.widgetHeaderRight}>
+          {/* Project filter select */}
+          {projects.length > 0 && (
+            <select
+              className={styles.taskProjectFilter}
+              value={config?.projectFilter ?? ''}
+              onChange={(e) => update({ projectFilter: e.target.value })}
+              title="Filtrar por projeto"
+            >
+              <option value="">Todos</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          )}
+          {/* Kanban toggle */}
           <button
-            className={`${styles.groupToggle} ${groupBy === 'project' ? styles.groupToggleActive : ''}`}
-            onClick={() => setGroupBy(groupBy === 'all' ? 'project' : 'all')}
-            title={groupBy === 'all' ? 'Agrupar por projeto' : 'Visualizacao plana'}
+            className={`${styles.groupToggle} ${viewMode === 'kanban' ? styles.groupToggleActive : ''}`}
+            onClick={() => update({ viewMode: viewMode === 'list' ? 'kanban' : 'list' })}
+            title={viewMode === 'list' ? 'Modo kanban' : 'Modo lista'}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
             </svg>
           </button>
+          <SettingsGearButton onClick={() => setSettingsOpen(true)} />
           {activeCount > 0 && <span className={styles.badge}>{activeCount}</span>}
         </div>
       </div>
 
-      <div className={styles.filterTabs}>
-        <button
-          className={`${styles.filterTab} ${filter === 'active' ? styles.filterTabActive : ''}`}
-          onClick={() => setFilter('active')}
-        >
-          Ativas {activeCount > 0 && `(${activeCount})`}
-        </button>
-        <button
-          className={`${styles.filterTab} ${filter === 'doing' ? styles.filterTabActive : ''}`}
-          onClick={() => setFilter('doing')}
-        >
-          Fazendo {doingCount > 0 && `(${doingCount})`}
-        </button>
-        <button
-          className={`${styles.filterTab} ${filter === 'done' ? styles.filterTabActive : ''}`}
-          onClick={() => setFilter('done')}
-        >
-          Feitas {doneCount > 0 && `(${doneCount})`}
-        </button>
-      </div>
+      {/* ── List Mode ── */}
+      {viewMode === 'list' && (
+        <>
+          <div className={styles.filterTabs}>
+            <button
+              className={`${styles.filterTab} ${filter === 'active' ? styles.filterTabActive : ''}`}
+              onClick={() => setFilter('active')}
+            >
+              Ativas {activeCount > 0 && `(${activeCount})`}
+            </button>
+            <button
+              className={`${styles.filterTab} ${filter === 'doing' ? styles.filterTabActive : ''}`}
+              onClick={() => setFilter('doing')}
+            >
+              Fazendo {doingCount > 0 && `(${doingCount})`}
+            </button>
+            <button
+              className={`${styles.filterTab} ${filter === 'done' ? styles.filterTabActive : ''}`}
+              onClick={() => setFilter('done')}
+            >
+              Feitas {doneCount > 0 && `(${doneCount})`}
+            </button>
+          </div>
 
-      <form className={styles.taskAddForm} onSubmit={handleAddTask}>
-        <input
-          className={styles.taskAddInput}
-          placeholder="Nova tarefa..."
-          value={newTitle}
-          onChange={(e) => setNewTitle(e.target.value)}
-        />
-        {projects.length > 0 && !activeProject && (
-          <select
-            className={styles.taskAddProject}
-            value={newProject}
-            onChange={(e) => setNewProject(e.target.value)}
-          >
-            <option value="">Projeto</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-        )}
-        <button type="submit" className={styles.taskAddBtn} disabled={!newTitle.trim()}>+</button>
-      </form>
+          <form className={styles.taskAddForm} onSubmit={handleAddTask}>
+            <input
+              className={styles.taskAddInput}
+              placeholder="Nova tarefa..."
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+            />
+            {projects.length > 0 && !effectiveProject && (
+              <select
+                className={styles.taskAddProject}
+                value={newProject}
+                onChange={(e) => setNewProject(e.target.value)}
+              >
+                <option value="">Projeto</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            )}
+            <button type="submit" className={styles.taskAddBtn} disabled={!newTitle.trim()}>+</button>
+          </form>
 
-      <div className={styles.taskList}>
-        {isLoading && <div className={styles.emptyState}>Carregando...</div>}
-
-        {!isLoading && groupBy === 'all' && renderTaskList(tasks)}
-
-        {!isLoading && groupBy === 'project' && groupedTasks && (
-          <>
-            {Object.entries(groupedTasks.groups).map(([name, group]) => (
-              <div key={name}>
-                <div className={styles.taskGroupHeader}>
-                  <span className={styles.projectDot} style={{ background: group.color || '#888' }} />
-                  <span className={styles.taskGroupName}>{name}</span>
-                  <span className={styles.taskGroupCount}>{group.tasks.length}</span>
-                </div>
-                {renderTaskList(group.tasks)}
-              </div>
-            ))}
-            {groupedTasks.noProject.length > 0 && (
-              <div>
-                <div className={styles.taskGroupHeader}>
-                  <span className={styles.projectDot} style={{ background: 'var(--color-text-secondary)' }} />
-                  <span className={styles.taskGroupName}>Sem projeto</span>
-                  <span className={styles.taskGroupCount}>{groupedTasks.noProject.length}</span>
-                </div>
-                {renderTaskList(groupedTasks.noProject)}
+          <div className={styles.taskList}>
+            {isLoading && <div className={styles.emptyState}>Carregando...</div>}
+            {!isLoading && renderTaskList(tasks)}
+            {tasks.length === 0 && !isLoading && (
+              <div className={styles.emptyState}>
+                {filter === 'done' ? 'Nenhuma tarefa concluida' : filter === 'doing' ? 'Nenhuma tarefa em andamento' : 'Nenhuma tarefa pendente'}
               </div>
             )}
-          </>
-        )}
-
-        {tasks.length === 0 && !isLoading && (
-          <div className={styles.emptyState}>
-            {filter === 'done' ? 'Nenhuma tarefa concluida' : filter === 'doing' ? 'Nenhuma tarefa em andamento' : 'Nenhuma tarefa pendente'}
           </div>
-        )}
-      </div>
+        </>
+      )}
+
+      {/* ── Kanban Mode ── */}
+      {viewMode === 'kanban' && (
+        <div className={styles.kanbanBoard}>
+          {KANBAN_COLS.map((col) => (
+            <div key={col.key} className={styles.kanbanCol}>
+              <div className={styles.kanbanColHeader}>
+                <span className={styles.kanbanColLabel}>{col.label}</span>
+                {col.tasks.length > 0 && <span className={styles.badge}>{col.tasks.length}</span>}
+              </div>
+              <div className={styles.kanbanColBody}>
+                {isLoading && <div className={styles.emptyState}>Carregando...</div>}
+                {!isLoading && col.tasks.length === 0 && (
+                  <div className={styles.emptyState} style={{ padding: '12px 6px', fontSize: '0.75rem' }}>Vazio</div>
+                )}
+                {col.tasks.map((task) => {
+                  const due = formatDueDate(task.due_date)
+                  const proj = !effectiveProject && task.project_name ? task.project_name : null
+                  const isExpanded = expandedId === task.id
+                  return (
+                    <div key={task.id} className={styles.kanbanCard} onClick={() => expandTask(task)}>
+                      <div className={styles.kanbanCardTitle}>{task.title}</div>
+                      <div className={styles.kanbanCardMeta}>
+                        {task.priority > 0 && (
+                          <span style={{ color: PRIORITY_COLORS[task.priority], fontWeight: 700, fontSize: '0.68rem' }}>
+                            {PRIORITY_LABELS[task.priority]}
+                          </span>
+                        )}
+                        {due && (
+                          <span className={`${styles.taskDue} ${due.overdue ? styles.taskOverdue : ''}`} style={{ fontSize: '0.68rem' }}>
+                            {due.text}
+                          </span>
+                        )}
+                        {proj && <span className={styles.taskProject} style={{ fontSize: '0.68rem' }}>{proj}</span>}
+                      </div>
+                      {isExpanded && (
+                        <div onClick={(e) => e.stopPropagation()}>
+                          {renderTask(task)}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -1772,13 +1832,13 @@ function WidgetCatalog({ onAdd, activeWidgetTypes }) {
 
 export default function PersonalOrganizer() {
   const { currentProfile } = useProfile()
-  const profileId = currentProfile?.id || 'default'
+  const profileId = currentProfile?.id
+
+  if (!profileId) return null // wait for profile to load
 
   // Key forces full remount on profile switch — clean grid lifecycle
   return <PersonalOrganizerInner key={profileId} profileId={profileId} />
 }
-
-const PALMER_ID = 'a29184ea-9d4d-4c65-8300-386ed5b07fca'
 
 function PersonalOrganizerInner({ profileId }) {
   const queryClient = useQueryClient()
@@ -1795,13 +1855,6 @@ function PersonalOrganizerInner({ profileId }) {
       setActiveTabId(dashState.tabs?.[0]?.id || 'default')
     }
   }, [dashState, activeTabId])
-
-  // Auto-enable reminders for Palmer
-  useEffect(() => {
-    if (dashState && profileId === PALMER_ID && !widgetConfigs.reminders) {
-      updateDashState({ configs: { ...widgetConfigs, reminders: { enabled: true } } })
-    }
-  }, [dashState, profileId])
 
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0]
   const widgets = activeTab?.widgets || []
@@ -1971,7 +2024,7 @@ function PersonalOrganizerInner({ profileId }) {
             onSelectProject={setActiveProject}
           />
         )
-      case 'tasks':         return <TaskList activeProject={activeProject} />
+      case 'tasks':         return <TaskList activeProject={activeProject} config={widgetConfigs[widget.id]} onConfigChange={(cfg) => updateWidgetConfig(widget.id, cfg)} />
       case 'reminders':
         return (
           <PersonalReminders

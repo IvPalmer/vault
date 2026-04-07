@@ -25,15 +25,6 @@ function getGreeting() {
   return 'Boa noite'
 }
 
-function getVisitorName() {
-  // Use localStorage preference if set (persists across hostname changes)
-  const saved = localStorage.getItem('vaultUserName')
-  if (saved) return saved
-  const host = window.location.hostname
-  if (host === 'localhost' || host === '127.0.0.1') return 'Palmer'
-  return 'Rafaella'
-}
-
 function formatDate() {
   return new Date().toLocaleDateString('pt-BR', {
     weekday: 'long',
