@@ -3082,8 +3082,10 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
                 m_match = dm
         return m_match
 
-    # Step 1: Check which target months have real CC statement data
-    months_with_real_data = set()
+    # Step 1: Check which target months have real CC statement data.
+    # Track purchase_ids already present in real data so Step 2 can
+    # complement (not skip) months that have partial real data.
+    real_purchase_ids_per_month = {}  # month -> set of purchase_ids
     for check_month in target_months:
         inst_txns = _get_txns_for_month(check_month)
         if not inst_txns:
@@ -3115,7 +3117,12 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
         real_total = deduped_total + non_parseable_total
         if real_total > 0:
             schedule[check_month] = real_total
-            months_with_real_data.add(check_month)
+        # Track which purchase_ids already have real data in this month
+        real_ids = set()
+        for (base_desc, acct, amt_group, total_inst) in purchase_groups:
+            real_ids.add((base_desc, acct, amt_group, total_inst))
+        if real_ids:
+            real_purchase_ids_per_month[check_month] = real_ids
         # Per-card breakdown from real data
         card_totals = {}
         for (base_desc, acct, amt_group, total_inst), (_, amt) in purchase_groups.items():
@@ -3128,11 +3135,22 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
         if card_totals:
             schedule_by_card[check_month] = card_totals
 
-    # Step 2: Project for months WITHOUT real data from older statements.
+    # Step 2: Project from source months into future target months.
+    # Sources include both lookback months AND target months with real data
+    # (e.g., current month installments should project into future months).
     seen_per_month = {}
 
-    for lookback in range(1, 13):
-        source_month = lookback_months[lookback - 1]
+    # Build source list: (source_month, source_type, source_param)
+    # - lookback months: source_param = lookback distance (1..12)
+    # - target months with real data: source_param = target index
+    source_entries = []
+    for i, tm in enumerate(target_months):
+        if real_purchase_ids_per_month.get(tm):
+            source_entries.append((tm, 'target', i))
+    for i in range(1, 13):
+        source_entries.append((lookback_months[i - 1], 'lookback', i))
+
+    for source_month, source_type, source_param in source_entries:
         inst_txns = _get_txns_for_month(source_month)
         if not inst_txns:
             continue
@@ -3159,24 +3177,31 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
             )
 
         for (base_desc, acct, amt_group, total_inst), (current, amt) in purchase_groups.items():
-            # If all positions appear on the same bill (e.g., Itaú shows 01/03,
+            # If all positions appear on the same bill (e.g., Itau shows 01/03,
             # 02/03, 03/03 together), the full purchase was charged on that bill.
-            # Don't project future installments — there are none.
+            # Don't project future installments -- there are none.
             max_pos = purchase_max_pos.get(
                 (base_desc, acct, amt_group, total_inst), current
             )
             if max_pos >= total_inst:
                 continue
 
-            # Exclude date from cross-month dedup — same purchase has different
-            # posting dates on different bills but should only count once.
             purchase_id = (base_desc, acct, amt_group, total_inst)
 
             for target_offset in range(num_future_months + 1):
                 check_month = target_months[target_offset]
-                if check_month in months_with_real_data:
+                # For target-sourced entries, only project into LATER months
+                if source_type == 'target' and target_offset <= source_param:
                     continue
-                delta = lookback + target_offset
+                # Skip if this purchase already exists in real data for this month
+                real_ids = real_purchase_ids_per_month.get(check_month, set())
+                if purchase_id in real_ids:
+                    continue
+                # Compute position: how many months from source to target
+                if source_type == 'lookback':
+                    delta = source_param + target_offset
+                else:
+                    delta = target_offset - source_param
                 position = current + delta
                 if position <= total_inst:
                     if check_month not in seen_per_month:
