@@ -32,6 +32,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk._errors import MessageParseError
 from claude_agent_sdk._internal.message_parser import parse_message
 
+from sandbox import needs_sandbox, ensure_worktree, validate, merge_back, discard
 from vault_tools import create_vault_mcp_server, set_profile
 
 app = FastAPI(title="Vault Chat Sidecar")
@@ -273,6 +274,22 @@ async def _stream_chat(req: ChatRequest):
     # Set active profile for MCP tools
     set_profile(req.profile_id)
 
+    # ── Sandbox decision ──
+    use_sandbox = needs_sandbox(req.message)
+    worktree_path = None
+    agent_cwd = "/Users/palmer/Work/Dev/Vault"
+
+    if use_sandbox:
+        yield f"data: {json.dumps({'sandbox_status': 'preparing', 'message': 'Preparando ambiente isolado...'})}\n\n"
+        try:
+            worktree_path = await ensure_worktree()
+            agent_cwd = str(worktree_path)
+            yield f"data: {json.dumps({'sandbox_status': 'ready', 'message': 'Sandbox pronto. Editando em ambiente isolado.'})}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'sandbox_status': 'error', 'message': f'Falha ao criar sandbox: {exc}'})}\n\n"
+            use_sandbox = False
+            worktree_path = None
+
     _ALLOWED_TOOLS = [
         "mcp__vault-tools__list_tasks",
         "mcp__vault-tools__list_projects",
@@ -314,37 +331,45 @@ async def _stream_chat(req: ChatRequest):
         "mcp__vault-tools__set_dashboard",
     ]
 
+    # Build tool lists based on sandbox mode
+    allowed = [
+        *_ALLOWED_TOOLS,
+        "WebSearch",
+        "WebFetch",
+        "Bash",
+        "Read",
+        "Grep",
+        "Glob",
+    ]
+    disallowed = [
+        "NotebookEdit",
+        "Agent",
+    ]
+
+    if use_sandbox:
+        # In sandbox mode, allow Edit/Write for code changes
+        allowed.extend(["Edit", "Write"])
+    else:
+        # Normal mode: block code-editing tools
+        disallowed.extend(["Edit", "Write"])
+
     options = ClaudeAgentOptions(
         max_turns=12,
         model="claude-sonnet-4-6",
-        cwd="/Users/palmer/Work/Dev/Vault",
+        cwd=agent_cwd,
         system_prompt=system_prompt,
         include_partial_messages=True,
         mcp_servers={"vault-tools": {"type": "sdk", "name": "vault-tools", "instance": _vault_mcp}},
         permission_mode="bypassPermissions",
-        allowed_tools=[
-            *_ALLOWED_TOOLS,
-            # Claude built-in tools
-            "WebSearch",
-            "WebFetch",
-            "Bash",
-            "Read",
-            "Grep",
-            "Glob",
-        ],
-        disallowed_tools=[
-            # Block only destructive/code-editing tools
-            "Edit",       # don't modify source code
-            "Write",      # don't create files on disk
-            "NotebookEdit",
-            "Agent",      # don't spawn sub-agents
-        ],
+        allowed_tools=allowed,
+        disallowed_tools=disallowed,
     )
 
-    # Resume existing session if available
-    existing_session = _sessions.get(req.profile_id)
-    if existing_session:
-        options.resume = existing_session
+    # Resume existing session if available (not in sandbox — those are one-shot)
+    if not use_sandbox:
+        existing_session = _sessions.get(req.profile_id)
+        if existing_session:
+            options.resume = existing_session
 
     full_response = ""
     last_sent_len = 0
@@ -384,7 +409,7 @@ async def _stream_chat(req: ChatRequest):
                     yield f"data: {json.dumps({'content': result_text}, ensure_ascii=False)}\n\n"
                 break
 
-        if session_id:
+        if session_id and not use_sandbox:
             _sessions[req.profile_id] = session_id
 
         await client.disconnect()
@@ -393,6 +418,26 @@ async def _stream_chat(req: ChatRequest):
         error_msg = str(exc)
         full_response = f"Erro: {error_msg}"
         yield f"data: {json.dumps({'error': error_msg}, ensure_ascii=False)}\n\n"
+
+    # ── Sandbox: validate and merge ──
+    if use_sandbox and worktree_path:
+        yield f"data: {json.dumps({'sandbox_status': 'validating', 'message': 'Validando build...'})}\n\n"
+
+        ok, build_output = await validate(worktree_path)
+        if ok:
+            merged = await merge_back(worktree_path)
+            if merged:
+                file_list = ", ".join(merged[:5])
+                if len(merged) > 5:
+                    file_list += f" (+{len(merged) - 5})"
+                yield f"data: {json.dumps({'sandbox_status': 'merged', 'message': f'Build OK! Arquivos atualizados: {file_list}'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'sandbox_status': 'no_changes', 'message': 'Nenhum arquivo modificado.'})}\n\n"
+        else:
+            await discard(worktree_path)
+            error_lines = build_output.strip().split("\n")[-5:]
+            error_summary = "\n".join(error_lines)
+            yield f"data: {json.dumps({'sandbox_status': 'failed', 'message': 'Build falhou — alteracoes descartadas.', 'error': error_summary})}\n\n"
 
     # Record assistant response in memory
     if full_response:
