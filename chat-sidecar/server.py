@@ -349,9 +349,24 @@ async def _stream_chat(req: ChatRequest):
     if use_sandbox:
         # In sandbox mode, allow Edit/Write for code changes
         allowed.extend(["Edit", "Write"])
+        system_prompt += """
+
+MODO SANDBOX ATIVO:
+Voce esta trabalhando em um ambiente isolado (worktree).
+Pode usar Edit, Write e Bash livremente para modificar arquivos.
+Suas alteracoes serao validadas (vite build) antes de serem aplicadas.
+Se o build falhar, tudo sera descartado automaticamente."""
     else:
         # Normal mode: block code-editing tools
         disallowed.extend(["Edit", "Write"])
+        system_prompt += """
+
+RESTRICAO BASH ESTRITA:
+Bash e SOMENTE para leitura e processamento de dados. PROIBIDO:
+- cat > arquivo, echo > arquivo, tee, sed -i, awk (escrita)
+- Qualquer comando que CRIE ou MODIFIQUE arquivos no disco
+- mv, cp, rm de arquivos do projeto
+Se a tarefa requer editar codigo, diga ao usuario para pedir pelo Claude Code (terminal)."""
 
     options = ClaudeAgentOptions(
         max_turns=12,
