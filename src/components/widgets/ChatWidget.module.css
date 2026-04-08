@@ -338,6 +338,16 @@
   cursor: not-allowed;
 }
 
+/* Sandbox status messages */
+.sandboxStatus {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #888);
+  padding: 4px 12px;
+  margin: 4px 0;
+  opacity: 0.8;
+}
+
 /* Confirmation messages from agent */
 .confirmMessage {
   border-left: 3px solid var(--color-accent) !important;

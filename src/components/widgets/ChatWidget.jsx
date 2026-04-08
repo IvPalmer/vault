@@ -288,6 +288,24 @@ export default function ChatWidget() {
               finished = true
               break
             }
+            if (data.sandbox_status) {
+              const statusIcons = {
+                preparing: '\u23F3',
+                ready: '\uD83D\uDD12',
+                validating: '\uD83D\uDD0D',
+                merged: '\u2705',
+                failed: '\u274C',
+                no_changes: '\u2139\uFE0F',
+                error: '\u26A0\uFE0F',
+              }
+              const icon = statusIcons[data.sandbox_status] || '\uD83D\uDCE6'
+              setMessages((prev) => [
+                ...prev.filter(m => !(m.role === 'assistant' && m.content === '')),
+                { role: 'system', content: `${icon} ${data.message}`, ts: Date.now() },
+                { role: 'assistant', content: '', ts: Date.now() },
+              ])
+              continue
+            }
             if (data.content) {
               setMessages((prev) => {
                 const updated = [...prev]
@@ -392,6 +410,11 @@ export default function ChatWidget() {
             </div>
           )}
           {messages.map((msg, i) => (
+            msg.role === 'system' ? (
+              <div key={i} className={styles.sandboxStatus}>
+                {msg.content}
+              </div>
+            ) : (
             <div
               key={i}
               className={`${styles.msgRow} ${
@@ -414,6 +437,7 @@ export default function ChatWidget() {
                 {msg.role === 'assistant' ? renderContent(msg.content) : msg.content}
               </div>
             </div>
+            )
           ))}
           {streaming && messages[messages.length - 1]?.content === '' && (
             <div className={styles.typing}>
