@@ -64,6 +64,7 @@ from .models import (
     BankTemplate, SetupTemplate, FamilyNote, SalaryConfig,
     GoogleAccount, CalendarSelection,
     Project, PersonalTask, PersonalNote,
+    HealthExam, VitalReading, Pregnancy, PrenatalConsultation,
 )
 from .serializers import (
     AccountSerializer, CategorySerializer, SubcategorySerializer,
@@ -76,6 +77,8 @@ from .serializers import (
     FamilyNoteSerializer,
     GoogleAccountSerializer, CalendarSelectionSerializer,
     ProjectSerializer, PersonalTaskSerializer, PersonalNoteSerializer,
+    HealthExamSerializer, VitalReadingSerializer,
+    PregnancySerializer, PrenatalConsultationSerializer,
 )
 from .services import (
     get_metricas,
@@ -2979,3 +2982,70 @@ class ICSFeedDetailView(APIView):
             return Response(status=status.HTTP_204_NO_CONTENT)
         except ICSFeed.DoesNotExist:
             return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+# ── Saúde / Health ────────────────────────────────────────────
+
+class HealthExamViewSet(viewsets.ModelViewSet):
+    """Health exams scoped per profile.
+    Filters: ?tipo=hemograma&pregnancy_id=<uuid>&since=YYYY-MM-DD"""
+    serializer_class = HealthExamSerializer
+
+    def get_queryset(self):
+        qs = HealthExam.objects.filter(profile=self.request.profile)
+        tipo = self.request.query_params.get('tipo')
+        if tipo:
+            qs = qs.filter(tipo=tipo)
+        preg = self.request.query_params.get('pregnancy_id')
+        if preg:
+            qs = qs.filter(pregnancy_id=preg)
+        since = self.request.query_params.get('since')
+        if since:
+            qs = qs.filter(data__gte=since)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)
+
+
+class VitalReadingViewSet(viewsets.ModelViewSet):
+    serializer_class = VitalReadingSerializer
+
+    def get_queryset(self):
+        qs = VitalReading.objects.filter(profile=self.request.profile)
+        tipo = self.request.query_params.get('tipo')
+        if tipo:
+            qs = qs.filter(tipo=tipo)
+        preg = self.request.query_params.get('pregnancy_id')
+        if preg:
+            qs = qs.filter(pregnancy_id=preg)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(profile=self.request.profile)
+
+
+class PregnancyViewSet(viewsets.ModelViewSet):
+    """Pregnancies are shared between titular and gestante.
+    Returns pregnancies where the current profile is EITHER titular OR gestante."""
+    serializer_class = PregnancySerializer
+
+    def get_queryset(self):
+        from django.db.models import Q
+        return Pregnancy.objects.filter(
+            Q(titular=self.request.profile) | Q(gestante=self.request.profile)
+        ).select_related('titular', 'gestante').prefetch_related('consultations')
+
+
+class PrenatalConsultationViewSet(viewsets.ModelViewSet):
+    serializer_class = PrenatalConsultationSerializer
+
+    def get_queryset(self):
+        from django.db.models import Q
+        qs = PrenatalConsultation.objects.filter(
+            Q(pregnancy__titular=self.request.profile) | Q(pregnancy__gestante=self.request.profile)
+        ).select_related('pregnancy')
+        preg = self.request.query_params.get('pregnancy_id')
+        if preg:
+            qs = qs.filter(pregnancy_id=preg)
+        return qs

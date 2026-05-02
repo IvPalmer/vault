@@ -5,6 +5,7 @@ from .models import (
     RecurringMapping, BudgetConfig, BalanceOverride, BankTemplate,
     SetupTemplate, FamilyNote, GoogleAccount, CalendarSelection,
     Project, PersonalTask, PersonalNote, DashboardState,
+    HealthExam, VitalReading, Pregnancy, PrenatalConsultation,
 )
 
 
@@ -187,3 +188,71 @@ class DashboardStateSerializer(serializers.ModelSerializer):
         model = DashboardState
         fields = ['state', 'updated_at']
         read_only_fields = ['updated_at']
+
+
+# ── Saúde ─────────────────────────────────────────────────────
+
+class HealthExamSerializer(serializers.ModelSerializer):
+    profile_name = serializers.CharField(source='profile.name', read_only=True)
+    tipo_label = serializers.CharField(source='get_tipo_display', read_only=True)
+
+    class Meta:
+        model = HealthExam
+        fields = [
+            'id', 'profile', 'profile_name', 'tipo', 'tipo_label', 'nome', 'data',
+            'valores', 'arquivo_path', 'laboratorio', 'medico', 'notes',
+            'pregnancy', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['profile', 'created_at', 'updated_at']
+
+
+class VitalReadingSerializer(serializers.ModelSerializer):
+    tipo_label = serializers.CharField(source='get_tipo_display', read_only=True)
+
+    class Meta:
+        model = VitalReading
+        fields = ['id', 'profile', 'tipo', 'tipo_label', 'data', 'valor', 'notes', 'pregnancy', 'created_at']
+        read_only_fields = ['profile', 'created_at']
+
+
+class PrenatalConsultationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PrenatalConsultation
+        fields = [
+            'id', 'pregnancy', 'data', 'ig_semanas', 'obstetra',
+            'pa_sis', 'pa_dia', 'peso_kg', 'fcf_bpm', 'altura_uterina_cm',
+            'queixas', 'conduta', 'proxima_consulta', 'created_at',
+        ]
+        read_only_fields = ['created_at']
+
+
+class PregnancySerializer(serializers.ModelSerializer):
+    titular_name = serializers.CharField(source='titular.name', read_only=True)
+    gestante_name = serializers.CharField(source='gestante.name', read_only=True)
+    consultations = PrenatalConsultationSerializer(many=True, read_only=True)
+    ig_atual_semanas = serializers.SerializerMethodField()
+    dias_ate_dpp = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Pregnancy
+        fields = [
+            'id', 'titular', 'titular_name', 'gestante', 'gestante_name',
+            'confirmada_em', 'dum', 'dpp', 'status', 'notes',
+            'consultations', 'ig_atual_semanas', 'dias_ate_dpp',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+    def get_ig_atual_semanas(self, obj):
+        if not obj.dum:
+            return None
+        from datetime import date
+        delta = date.today() - obj.dum
+        weeks, days = divmod(delta.days, 7)
+        return f'{weeks}+{days}'
+
+    def get_dias_ate_dpp(self, obj):
+        if not obj.dpp:
+            return None
+        from datetime import date
+        return (obj.dpp - date.today()).days

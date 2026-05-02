@@ -720,3 +720,148 @@ class DashboardState(models.Model):
 
     def __str__(self):
         return f'DashboardState({self.profile.name})'
+
+
+# ── Saúde / Health ────────────────────────────────────────────
+
+EXAM_TYPE_CHOICES = (
+    ('hemograma', 'Hemograma'),
+    ('bioquimica', 'Bioquímica'),
+    ('hormonal', 'Hormonal'),
+    ('sorologia', 'Sorologia'),
+    ('urina', 'Urina'),
+    ('genetico', 'Genético'),
+    ('imagem_rx', 'Raio-X'),
+    ('imagem_us', 'Ultrassom'),
+    ('imagem_ct', 'Tomografia'),
+    ('imagem_rm', 'Ressonância'),
+    ('densitometria', 'Densitometria'),
+    ('cardio', 'Cardiológico'),
+    ('outro', 'Outro'),
+)
+
+VITAL_TYPE_CHOICES = (
+    ('peso', 'Peso (kg)'),
+    ('altura', 'Altura (cm)'),
+    ('pa_sis', 'PA Sistólica (mmHg)'),
+    ('pa_dia', 'PA Diastólica (mmHg)'),
+    ('fc', 'Frequência Cardíaca (bpm)'),
+    ('temp', 'Temperatura (°C)'),
+    ('glicemia', 'Glicemia (mg/dL)'),
+    ('imc', 'IMC'),
+    ('cintura', 'Circunferência Abdominal (cm)'),
+    ('fcf', 'FCF Fetal (bpm)'),
+    ('au', 'Altura Uterina (cm)'),
+)
+
+
+class HealthExam(models.Model):
+    """A single exam or procedure record for a profile.
+    Raw files (PDF, DICOM, images) live on disk, referenced by file_path."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='health_exams')
+    tipo = models.CharField(max_length=30, choices=EXAM_TYPE_CHOICES)
+    nome = models.CharField(max_length=200, help_text='ex: "Hemograma Completo 2024", "USG Morfológica 2tri"')
+    data = models.DateField()
+    valores = models.JSONField(
+        default=dict, blank=True,
+        help_text='Normalized fields. Hemograma: {hb, ht, leuco, plaq...}. USG: {ig, peso_fetal, biometria...}',
+    )
+    arquivo_path = models.CharField(
+        max_length=500, blank=True,
+        help_text='Local path on Mac (relative to ~/Documents) — file://... when opened from desktop',
+    )
+    laboratorio = models.CharField(max_length=200, blank=True)
+    medico = models.CharField(max_length=200, blank=True)
+    notes = models.TextField(blank=True)
+    pregnancy = models.ForeignKey(
+        'Pregnancy', on_delete=models.SET_NULL, null=True, blank=True, related_name='exams',
+        help_text='Optional link to a pregnancy if this exam is part of pre-natal care',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-data', '-created_at']
+
+    def __str__(self):
+        return f'{self.profile.name} | {self.nome} ({self.data})'
+
+
+class VitalReading(models.Model):
+    """A single vital sign measurement at a point in time."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='vital_readings')
+    tipo = models.CharField(max_length=20, choices=VITAL_TYPE_CHOICES)
+    data = models.DateField()
+    valor = models.DecimalField(max_digits=8, decimal_places=2)
+    notes = models.CharField(max_length=300, blank=True)
+    pregnancy = models.ForeignKey(
+        'Pregnancy', on_delete=models.SET_NULL, null=True, blank=True, related_name='vitals',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-data']
+
+    def __str__(self):
+        return f'{self.profile.name} | {self.tipo}={self.valor} ({self.data})'
+
+
+class Pregnancy(models.Model):
+    """A pregnancy record — shared between titular and gestante profiles."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    titular = models.ForeignKey(
+        Profile, on_delete=models.CASCADE, related_name='pregnancies_as_titular',
+        help_text='The non-gestational parent (e.g. Palmer)',
+    )
+    gestante = models.ForeignKey(
+        Profile, on_delete=models.CASCADE, related_name='pregnancies_as_gestante',
+        help_text='The pregnant parent (e.g. Rafa)',
+    )
+    confirmada_em = models.DateField(help_text='Date the pregnancy was confirmed')
+    dum = models.DateField(null=True, blank=True, help_text='Data da última menstruação')
+    dpp = models.DateField(null=True, blank=True, help_text='Data provável do parto (Naegele or USG-corrected)')
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ('ativa', 'Ativa'),
+            ('finalizada', 'Finalizada (parto)'),
+            ('perda', 'Perda gestacional'),
+        ],
+        default='ativa',
+    )
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-confirmada_em']
+        verbose_name_plural = 'Pregnancies'
+
+    def __str__(self):
+        return f'Gestação {self.gestante.name} (conf. {self.confirmada_em})'
+
+
+class PrenatalConsultation(models.Model):
+    """A pre-natal consultation visit — vitals + clinical notes per appointment."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    pregnancy = models.ForeignKey(Pregnancy, on_delete=models.CASCADE, related_name='consultations')
+    data = models.DateField()
+    ig_semanas = models.CharField(max_length=10, blank=True, help_text='Idade gestacional, ex: "8+3"')
+    obstetra = models.CharField(max_length=200, blank=True)
+    pa_sis = models.IntegerField(null=True, blank=True)
+    pa_dia = models.IntegerField(null=True, blank=True)
+    peso_kg = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    fcf_bpm = models.IntegerField(null=True, blank=True)
+    altura_uterina_cm = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True)
+    queixas = models.TextField(blank=True)
+    conduta = models.TextField(blank=True)
+    proxima_consulta = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-data']
+
+    def __str__(self):
+        return f'Consulta {self.data} ({self.ig_semanas})'

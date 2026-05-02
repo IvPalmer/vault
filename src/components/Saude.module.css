@@ -1,0 +1,370 @@
+.saudePage {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 32px 80px;
+  color: var(--text-primary, #2a2724);
+}
+
+.headerBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.04);
+  padding: 4px;
+  border-radius: 10px;
+}
+
+.tab,
+.tabActive {
+  padding: 8px 18px;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--text-secondary, #6b6660);
+  transition: all 0.15s ease;
+}
+
+.tab:hover {
+  color: var(--text-primary, #2a2724);
+}
+
+.tabActive {
+  background: #fff;
+  color: var(--text-primary, #2a2724);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.tabContent {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-left: 4px;
+}
+
+.sectionTitle {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #6b6660);
+  margin: 0;
+}
+
+.sectionCount {
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-secondary, #6b6660);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.empty {
+  padding: 32px;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px dashed rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  color: var(--text-secondary, #6b6660);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ── Exam list ───────────────────────────────────── */
+
+.yearGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.yearTitle {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary, #6b6660);
+  margin: 0 0 4px 4px;
+}
+
+.examList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.examRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  transition: border-color 0.15s ease;
+}
+
+.examRow:hover {
+  border-color: rgba(0, 0, 0, 0.18);
+}
+
+.examMain {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.examTopLine {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.examTipo {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  background: var(--accent-bg, #f4ede4);
+  color: var(--accent, #c47e3a);
+  border-radius: 10px;
+}
+
+.examData {
+  font-size: 12px;
+  color: var(--text-secondary, #6b6660);
+}
+
+.examNome {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary, #2a2724);
+}
+
+.examMeta {
+  font-size: 12px;
+  color: var(--text-secondary, #6b6660);
+}
+
+.examValores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary, #6b6660);
+}
+
+.examValor strong {
+  color: var(--text-primary, #2a2724);
+  font-weight: 500;
+}
+
+.examNotes {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 4px;
+}
+
+.examFile {
+  font-size: 18px;
+  text-decoration: none;
+  padding: 8px;
+  border-radius: 8px;
+  transition: background 0.15s ease;
+  align-self: center;
+}
+
+.examFile:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* ── Vitals ──────────────────────────────────────── */
+
+.vitalsList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vitalRow {
+  display: grid;
+  grid-template-columns: 100px 1fr auto;
+  gap: 16px;
+  padding: 10px 16px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.vitalDate {
+  color: var(--text-secondary, #6b6660);
+  font-size: 12px;
+}
+
+.vitalTipo {
+  color: var(--text-primary, #2a2724);
+}
+
+.vitalValor {
+  font-weight: 600;
+  color: var(--accent, #c47e3a);
+}
+
+/* ── Pregnancy cards ─────────────────────────────── */
+
+.pregnancyList {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pregnancyCard {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.pregnancyHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.pregnancyTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary, #2a2724);
+}
+
+.pregnancyMeta {
+  font-size: 12px;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 2px;
+}
+
+.pregnancyStatus {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: rgba(196, 126, 58, 0.15);
+  color: var(--accent, #c47e3a);
+}
+
+.pregnancyStatus[data-status="finalizada"] {
+  background: rgba(70, 140, 90, 0.15);
+  color: #468c5a;
+}
+
+.pregnancyStatus[data-status="perda"] {
+  background: rgba(140, 70, 70, 0.15);
+  color: #8c4646;
+}
+
+.pregnancyTimeline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.timelineBar {
+  height: 6px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.timelineFill {
+  height: 100%;
+  background: var(--accent, #c47e3a);
+  transition: width 0.3s ease;
+}
+
+.timelineLabels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary, #6b6660);
+}
+
+.lastConsult {
+  background: rgba(0, 0, 0, 0.025);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.lastConsultTitle {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #6b6660);
+  margin-bottom: 6px;
+}
+
+.lastConsultBody {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 13px;
+}
+
+.tipBox {
+  background: rgba(196, 126, 58, 0.08);
+  border-left: 3px solid var(--accent, #c47e3a);
+  padding: 14px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary, #2a2724);
+}
+
+.tipBox code {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}

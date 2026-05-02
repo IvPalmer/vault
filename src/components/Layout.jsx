@@ -60,7 +60,8 @@ function Layout({ children }) {
   const isPessoal = pathname.endsWith('/pessoal')
   const isSettings = pathname.endsWith('/settings') || pathname.endsWith('/categories')
   const isAnalytics = pathname.endsWith('/analytics')
-  const showMonthPicker = !isHome && !isPessoal && !isSettings && !isAnalytics
+  const isSaude = pathname.endsWith('/saude')
+  const showMonthPicker = !isHome && !isPessoal && !isSettings && !isAnalytics && !isSaude
 
   return (
     <div className={styles.layout}>
@@ -71,6 +72,7 @@ function Layout({ children }) {
             <NavLink to="/home" className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}>Home</NavLink>
             <NavLink to={`/${profileSlug}/pessoal`} className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}>Pessoal</NavLink>
             <NavLink to={`/${profileSlug}/overview`} className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}>Financeiro</NavLink>
+            <NavLink to={`/${profileSlug}/saude`} className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}>Saúde</NavLink>
             <NavLink to={`/${profileSlug}/analytics`} className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}>Analytics</NavLink>
             <NavLink to={`/${profileSlug}/settings`} className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}>Config</NavLink>
           </nav>
@@ -78,7 +80,7 @@ function Layout({ children }) {
         </div>
         {showMonthPicker && <MonthPicker />}
       </header>
-      <main className={(isHome || isPessoal || isAnalytics) ? styles.mainWide : styles.main}>
+      <main className={(isHome || isPessoal || isAnalytics || isSaude) ? styles.mainWide : styles.main}>
         {children}
       </main>
     </div>

@@ -6,6 +6,7 @@ import MonthlyOverview from './components/MonthlyOverview'
 import Analytics from './components/Analytics'
 import Settings from './components/Settings'
 import PersonalOrganizer from './components/PersonalOrganizer'
+import Saude from './components/Saude'
 import CategoryManager from './components/CategoryManager'
 import SetupWizard from './components/SetupWizard'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -54,10 +55,12 @@ function App() {
               <Route path="/home" element={<ErrorBoundary fallbackMessage="Erro ao carregar Home"><Home /></ErrorBoundary>} />
               <Route path="/:profileSlug/pessoal" element={<ErrorBoundary fallbackMessage="Erro ao carregar Pessoal"><PersonalOrganizer /></ErrorBoundary>} />
               <Route path="/:profileSlug/overview" element={<ErrorBoundary fallbackMessage="Erro ao carregar Visão Mensal"><MonthlyOverview /></ErrorBoundary>} />
+              <Route path="/:profileSlug/saude" element={<ErrorBoundary fallbackMessage="Erro ao carregar Saúde"><Saude /></ErrorBoundary>} />
               <Route path="/:profileSlug/analytics" element={<ErrorBoundary fallbackMessage="Erro ao carregar Analytics"><Analytics /></ErrorBoundary>} />
               <Route path="/:profileSlug/settings" element={<ErrorBoundary fallbackMessage="Erro ao carregar Configurações"><Settings onOpenWizard={handleOpenWizardFromSettings} /></ErrorBoundary>} />
               <Route path="/:profileSlug/categories" element={<ErrorBoundary fallbackMessage="Erro ao carregar Categorias"><CategoryManager /></ErrorBoundary>} />
               <Route path="/overview" element={profileSlug ? <Navigate to={`/${profileSlug}/overview`} replace /> : null} />
+              <Route path="/saude" element={profileSlug ? <Navigate to={`/${profileSlug}/saude`} replace /> : null} />
               <Route path="/analytics" element={profileSlug ? <Navigate to={`/${profileSlug}/analytics`} replace /> : null} />
               <Route path="/settings" element={profileSlug ? <Navigate to={`/${profileSlug}/settings`} replace /> : null} />
               <Route path="/" element={<Navigate to="/home" replace />} />
