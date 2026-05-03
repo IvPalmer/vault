@@ -91,7 +91,7 @@ export default function PregnancyTimeline({ pregnancy, completedIds = new Set() 
                   <div className={styles.checkpointTooltip}>
                     <div className={styles.tooltipTitle}>{cp.label}</div>
                     <div className={styles.tooltipMeta}>
-                      {meta.label} · semana {Array.isArray(cp.week) ? `${cp.week[0]}-${cp.week[1]}` : cp.week}
+                      {meta.label} · semana {Array.isArray(cp.week) ? (cp.week[1] != null ? `${cp.week[0]}-${cp.week[1]}` : `${cp.week[0]}+`) : cp.week}
                       {' · '}
                       <span data-status={status} className={styles.tooltipStatus}>
                         {status === 'completed' ? 'feito' : status === 'overdue' ? 'atrasado' : status === 'current' ? 'agora' : 'futuro'}

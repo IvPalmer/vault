@@ -47,7 +47,7 @@ export default function PregnancyCheckpoints({ pregnancy, completedIds = new Set
                   <div className={styles.checkpointBody}>
                     <div className={styles.checkpointLabel}>{cp.label}</div>
                     <div className={styles.checkpointMeta}>
-                      sem {Array.isArray(cp.week) ? `${cp.week[0]}-${cp.week[1]}` : cp.week}
+                      sem {Array.isArray(cp.week) ? (cp.week[1] != null ? `${cp.week[0]}-${cp.week[1]}` : `${cp.week[0]}+`) : cp.week}
                       {cp.critical && <span className={styles.criticalTag}>essencial</span>}
                     </div>
                   </div>

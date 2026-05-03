@@ -98,7 +98,7 @@ export default function NextActionWidget({ pregnancy, completedIds = new Set() }
       </div>
       <div className={styles.nextActionTitle}>{cp.label}</div>
       <div className={styles.nextActionDesc}>
-        {cp.notes || `Janela: semanas ${Array.isArray(cp.week) ? `${cp.week[0]}–${cp.week[1]}` : cp.week}.`}
+        {cp.notes || `Janela: semana${Array.isArray(cp.week) && cp.week[1] != null ? `s ${cp.week[0]}–${cp.week[1]}` : Array.isArray(cp.week) ? ` ${cp.week[0]}+` : ` ${cp.week}`}.`}
       </div>
     </div>
   )

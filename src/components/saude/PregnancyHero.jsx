@@ -90,10 +90,10 @@ export default function PregnancyHero({ pregnancy }) {
           </>
         )}
 
-        {/* Trimester labels */}
-        <text x={CENTER - 65} y={SIZE - 10} fontSize="9" fill="rgba(0,0,0,0.5)" textAnchor="middle">T1</text>
-        <text x={CENTER} y={18} fontSize="9" fill="rgba(0,0,0,0.5)" textAnchor="middle">T2</text>
-        <text x={CENTER + 65} y={SIZE - 10} fontSize="9" fill="rgba(0,0,0,0.5)" textAnchor="middle">T3</text>
+        {/* Trimester labels — positioned outside the arc to avoid overlap with center IG */}
+        <text x={CENTER - 80} y={SIZE - 4} fontSize="9" fontWeight="600" fill="rgba(91,139,196,0.7)" textAnchor="middle" letterSpacing="0.06em">T1</text>
+        <text x={CENTER + 80} y={SIZE - 4} fontSize="9" fontWeight="600" fill="rgba(196,126,58,0.8)" textAnchor="middle" letterSpacing="0.06em">T3</text>
+        <text x={CENTER} y={SIZE - 4} fontSize="9" fontWeight="600" fill="rgba(122,95,166,0.7)" textAnchor="middle" letterSpacing="0.06em">T2</text>
       </svg>
 
       {/* Center content (absolutely positioned) */}
