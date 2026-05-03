@@ -2,7 +2,7 @@
 # Setup the sandbox worktree for the chat sidecar
 set -e
 
-MAIN_REPO="/Users/palmer/Work/Dev/Vault"
+MAIN_REPO="/Users/palmer/Work/Dev/vault"
 SANDBOX_DIR="/Users/palmer/Work/Dev/.vault-sandbox"
 
 echo "Setting up sandbox worktree..."

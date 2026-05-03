@@ -59,3 +59,4 @@ postgres_data/
 
 # TLS certs
 certs/
+chat-sidecar/memory/

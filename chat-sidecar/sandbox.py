@@ -14,7 +14,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-MAIN_REPO = Path("/Users/palmer/Work/Dev/Vault")
+MAIN_REPO = Path("/Users/palmer/Work/Dev/vault")
 WORKTREE_DIR = MAIN_REPO.parent / ".vault-sandbox"
 WORKTREE_BRANCH = "sandbox/sidecar"
 
@@ -106,23 +106,57 @@ async def discard(worktree: Path):
 # Edit-intent detection
 # ---------------------------------------------------------------------------
 
-# Keywords that suggest the user wants code/UI changes
-_CODE_EDIT_SIGNALS = [
-    # Portuguese
-    "edita", "editar", "modifica", "modificar", "muda", "mudar", "altera", "alterar",
-    "adiciona", "adicionar", "remove", "remover", "corrige", "corrigir", "arruma", "arrumar",
-    "cria um", "cria uma", "criar um", "criar uma", "implementa", "implementar",
-    "componente", "widget", "css", "estilo", "layout", "tela", "pagina",
-    "calendario", "timeline", "botao", "botão", "menu", "sidebar", "header",
-    "frontend", "react", "jsx", "html",
-    # English
-    "edit", "modify", "change", "add", "remove", "fix", "create a", "implement",
-    "component", "style", "screen", "page", "button",
-]
+_CLASSIFY_PROMPT = "Y or N only. This app has a personal assistant. Does the user want to CHANGE HOW THE APP WORKS or LOOKS (Y) or just USE the app normally (N)? Adding features, fixing visual bugs, changing layout = Y. Creating tasks, reading emails, checking calendar = N. Message: "
 
 
-def needs_sandbox(message: str) -> bool:
-    """Heuristic: does this message likely require source code edits?"""
+async def needs_sandbox(message: str) -> bool:
+    """Classify if a message requires source code edits.
+
+    Uses Claude haiku for smart classification + keyword boost for edge cases.
+    If either says yes → sandbox.
+    """
+    # Run model classification and keyword check in parallel
+    model_result = await _model_classify(message)
+    keyword_result = _keyword_boost(message)
+
+    return model_result or keyword_result
+
+
+async def _model_classify(message: str) -> bool:
+    """Ask Claude haiku to classify the message."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "claude", "-p", "--model", "claude-haiku-4-5-20251001",
+            _CLASSIFY_PROMPT + message,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=8.0)
+        answer = stdout.decode().strip().upper()
+        return answer.startswith("Y")
+    except Exception:
+        return False
+
+
+def _keyword_boost(message: str) -> bool:
+    """Catch edge cases the model misses — UI feature requests and visual changes."""
     lower = message.lower()
-    matches = sum(1 for kw in _CODE_EDIT_SIGNALS if kw in lower)
-    return matches >= 2
+
+    # UI element + action verb = likely a code change request
+    ui_terms = ["timeline", "linha", "botao", "botão", "barra", "grid", "tabela",
+                "grafico", "gráfico", "cor ", "fonte", "icone", "ícone", "animacao",
+                "animação", "scroll", "hover", "click", "dark mode", "tema"]
+    action_terms = ["adiciona", "adicionar", "coloca", "colocar", "mostra", "mostrar",
+                    "cria um", "cria uma", "quero que", "faz um", "faz uma",
+                    "implementa", "põe", "poe", "bota"]
+
+    has_ui = any(term in lower for term in ui_terms)
+    has_action = any(term in lower for term in action_terms)
+
+    if has_ui and has_action:
+        return True
+
+    # Strong standalone signals — always sandbox
+    strong = ["bug", "quebr", "errad", "ajust", "consert", "arrum", "corrig",
+              "css", "jsx", "componente", "frontend", "layout"]
+    return any(kw in lower for kw in strong)

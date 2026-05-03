@@ -33,6 +33,17 @@ services:
       - vault_secrets:/app/secrets
     entrypoint: ["sh", "/app/entrypoint.sh"]
 
+  chat-sidecar:
+    build: ./chat-sidecar
+    restart: always
+    depends_on:
+      - backend
+    environment:
+      VAULT_API: http://backend:8000
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - vault_chat_memory:/app/memory
+
   web:
     build:
       context: .
@@ -40,6 +51,7 @@ services:
     restart: always
     depends_on:
       - backend
+      - chat-sidecar
 
   cron:
     build: ./backend
@@ -72,3 +84,4 @@ volumes:
   vault_postgres_data:
   vault_static:
   vault_secrets:
+  vault_chat_memory:

@@ -13,6 +13,7 @@ from tool_helpers import (
     reminders_get, reminders_post,
     get_client, VAULT_API,
 )
+from memory_store import save_fact, delete_fact, recall, save_conversation_summary
 
 # The profile_id is set per-session before tools are called
 _current_profile_id: str | None = None
@@ -481,6 +482,130 @@ Write clean, self-contained HTML. Include <style> for custom styles and <script>
                     "required": ["state"],
                 },
             ),
+            # ── Saúde (health) ──
+            Tool(
+                name="get_health_exams",
+                description="List health exams for the current profile (hemograma, USG, TOTG, urina, sangue, imagem, etc). Returns id, tipo, nome, data, valores (JSON normalized fields like {hb, ht, leuco, plaq} or {ig, peso_fetal}), laboratorio, medico, notes, pregnancy link. Use to look up exam history, lab results, ultrasound findings, blood work.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "tipo": {"type": "string", "description": "Filter by exam type (e.g. 'hemograma', 'usg', 'totg', 'urina', 'sangue', 'imagem')"},
+                        "limit": {"type": "integer", "description": "Max results (default 20, newest first)"},
+                        "since": {"type": "string", "description": "Only exams on or after this date YYYY-MM-DD"},
+                    },
+                },
+            ),
+            Tool(
+                name="get_health_exam",
+                description="Get full detail of a single health exam including all valores (lab values, biometric measures, etc).",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "exam_id": {"type": "string", "description": "Exam UUID (required)"},
+                    },
+                    "required": ["exam_id"],
+                },
+            ),
+            Tool(
+                name="get_vitals",
+                description="List vital sign readings (PA sistólica/diastólica, peso, glicemia, FC, etc). Returns tipo, valor, data, notes.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "tipo": {"type": "string", "description": "Filter by vital type (e.g. 'pa_sis', 'pa_dia', 'peso', 'glicemia', 'fc')"},
+                        "limit": {"type": "integer", "description": "Max results (default 30, newest first)"},
+                    },
+                },
+            ),
+            Tool(
+                name="get_pregnancies",
+                description="List pregnancies linked to this profile (as gestante or titular). Returns confirmada_em, dum, dpp, status, plano de saude, carencia obstetrica.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string", "enum": ["ativa", "finalizada", "perda"], "description": "Filter by status"},
+                    },
+                },
+            ),
+            Tool(
+                name="get_prenatal_consultations",
+                description="List pre-natal consultations for a pregnancy. Returns data, ig_semanas, obstetra, PA, peso, FCF, altura uterina, queixas, conduta, proxima_consulta.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "pregnancy_id": {"type": "string", "description": "Pregnancy UUID (required)"},
+                        "limit": {"type": "integer", "description": "Max results (default 20, newest first)"},
+                    },
+                    "required": ["pregnancy_id"],
+                },
+            ),
+            Tool(
+                name="add_health_exam",
+                description="Create a new health exam record. valores is a free-form JSON dict normalized per exam type (e.g. {hb: 13.2, ht: 39, leuco: 7800} for hemograma).",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "tipo": {"type": "string", "description": "Exam type (required, e.g. 'hemograma', 'usg')"},
+                        "nome": {"type": "string", "description": "Exam name (required)"},
+                        "data": {"type": "string", "description": "Date YYYY-MM-DD (required)"},
+                        "valores": {"type": "object", "description": "Normalized values dict"},
+                        "laboratorio": {"type": "string"},
+                        "medico": {"type": "string"},
+                        "notes": {"type": "string"},
+                        "pregnancy": {"type": "string", "description": "Pregnancy UUID if pre-natal exam"},
+                        "checkpoint_id": {"type": "string", "description": "Pre-natal checkpoint stable id"},
+                    },
+                    "required": ["tipo", "nome", "data"],
+                },
+            ),
+            Tool(
+                name="add_vital_reading",
+                description="Add a single vital sign reading (PA, peso, glicemia, FC, etc).",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "tipo": {"type": "string", "description": "Vital type (required)"},
+                        "valor": {"type": "number", "description": "Numeric value (required)"},
+                        "data": {"type": "string", "description": "Date YYYY-MM-DD (required)"},
+                        "notes": {"type": "string"},
+                        "pregnancy": {"type": "string", "description": "Pregnancy UUID if linked"},
+                    },
+                    "required": ["tipo", "valor", "data"],
+                },
+            ),
+            Tool(
+                name="save_memory",
+                description="Save an important fact, preference, or decision to persistent memory. Use this proactively when you learn something worth remembering about the user (preferences, habits, names, important dates, decisions, context that will be useful in future conversations). Categories: pessoal, financeiro, trabalho, preferencias, geral.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "fact": {"type": "string", "description": "The fact/preference/decision to remember"},
+                        "category": {"type": "string", "description": "Category: pessoal, financeiro, trabalho, preferencias, geral", "default": "geral"},
+                    },
+                    "required": ["fact"],
+                },
+            ),
+            Tool(
+                name="recall_memory",
+                description="Search persistent memory for previously saved facts and conversation summaries. Use when the user references something from a past conversation, or when you need context about their preferences/decisions.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Keyword to search for. Leave empty to get all memories.", "default": ""},
+                    },
+                },
+            ),
+            Tool(
+                name="delete_memory",
+                description="Delete a fact from persistent memory by its index number (shown in recall_memory results).",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "fact_index": {"type": "integer", "description": "Index of the fact to delete (0-based)"},
+                    },
+                    "required": ["fact_index"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -850,5 +975,72 @@ async def _execute_tool(name: str, args: dict) -> dict | list | None:
         from tool_helpers import vault_put
         await vault_put("/dashboard-state/", pid, {"state": args["state"]})
         return {"ok": True}
+
+
+    # ── Saúde ──
+    if name == "get_health_exams":
+        params = {}
+        if args.get("tipo"):
+            params["tipo"] = args["tipo"]
+        if args.get("since"):
+            params["since"] = args["since"]
+        if args.get("limit"):
+            params["limit"] = str(args["limit"])
+        data = await vault_get("/saude/exams/", pid, params)
+        results = data.get("results", data) if isinstance(data, dict) else data
+        limit = args.get("limit", 20)
+        return results[:limit] if isinstance(results, list) else results
+
+    if name == "get_health_exam":
+        return await vault_get(f"/saude/exams/{args['exam_id']}/", pid)
+
+    if name == "get_vitals":
+        params = {}
+        if args.get("tipo"):
+            params["tipo"] = args["tipo"]
+        data = await vault_get("/saude/vitals/", pid, params)
+        results = data.get("results", data) if isinstance(data, dict) else data
+        limit = args.get("limit", 30)
+        return results[:limit] if isinstance(results, list) else results
+
+    if name == "get_pregnancies":
+        params = {}
+        if args.get("status"):
+            params["status"] = args["status"]
+        data = await vault_get("/saude/pregnancies/", pid, params)
+        return data.get("results", data) if isinstance(data, dict) else data
+
+    if name == "get_prenatal_consultations":
+        params = {"pregnancy": args["pregnancy_id"]}
+        data = await vault_get("/saude/consultations/", pid, params)
+        results = data.get("results", data) if isinstance(data, dict) else data
+        limit = args.get("limit", 20)
+        return results[:limit] if isinstance(results, list) else results
+
+    if name == "add_health_exam":
+        data = {"tipo": args["tipo"], "nome": args["nome"], "data": args["data"]}
+        for key in ("valores", "laboratorio", "medico", "notes", "pregnancy", "checkpoint_id"):
+            if args.get(key) is not None:
+                data[key] = args[key]
+        return await vault_post("/saude/exams/", pid, data)
+
+    if name == "add_vital_reading":
+        data = {"tipo": args["tipo"], "valor": args["valor"], "data": args["data"]}
+        for key in ("notes", "pregnancy"):
+            if args.get(key) is not None:
+                data[key] = args[key]
+        return await vault_post("/saude/vitals/", pid, data)
+
+    # ── Memory ──
+    if name == "save_memory":
+        result = save_fact(pid, args["fact"], args.get("category", "geral"))
+        return {"status": result}
+
+    if name == "recall_memory":
+        return recall(pid, args.get("query", ""))
+
+    if name == "delete_memory":
+        result = delete_fact(pid, args["fact_index"])
+        return {"status": result}
 
     return {"error": f"Unknown tool: {name}"}

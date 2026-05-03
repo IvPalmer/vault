@@ -33,6 +33,7 @@ from claude_agent_sdk._errors import MessageParseError
 from claude_agent_sdk._internal.message_parser import parse_message
 
 from sandbox import needs_sandbox, ensure_worktree, validate, merge_back, discard
+from memory_store import get_context_for_prompt, save_conversation_summary
 from vault_tools import create_vault_mcp_server, set_profile
 
 app = FastAPI(title="Vault Chat Sidecar")
@@ -49,12 +50,12 @@ _sessions: dict[str, str] = {}
 
 # Conversation memory per profile (last N exchanges for context window)
 _memory: dict[str, list[dict]] = {}
-MAX_MEMORY = 20  # keep last 20 exchanges per profile
+MAX_MEMORY = 50  # keep last 50 exchanges per profile
 
 # Vault MCP tools server (in-process, no separate process needed)
 _vault_mcp = create_vault_mcp_server()
 
-VAULT_API = "http://localhost:8001"
+VAULT_API = os.environ.get("VAULT_API", "http://localhost:8001")
 
 # Profile metadata for personalized responses
 PROFILE_META = {
@@ -101,10 +102,12 @@ async def _fetch_context(profile_id: str) -> str:
         return None
 
     # Fetch all in parallel
-    tasks_p, projects_p, accounts_p = await asyncio.gather(
+    tasks_p, projects_p, accounts_p, exams_p, pregnancies_p = await asyncio.gather(
         _get("/pessoal/tasks/"),
         _get("/pessoal/projects/"),
         _get("/google/accounts/"),
+        _get("/saude/exams/"),
+        _get("/saude/pregnancies/"),
     )
 
     parts: list[str] = []
@@ -131,6 +134,32 @@ async def _fetch_context(profile_id: str) -> str:
         if emails:
             parts.append(f"Contas Google: {', '.join(emails)}")
 
+    # Saúde — exam counts, recent exam list, pregnancy summary
+    if exams_p:
+        exams = exams_p.get("results", exams_p) if isinstance(exams_p, dict) else exams_p
+        if exams:
+            recent = exams[:5]
+            recent_lines = [f"  - {e.get('data', '?')}: {e.get('nome', e.get('tipo', '?'))}" for e in recent]
+            parts.append(f"Saude: {len(exams)} exames registrados. Recentes:\n" + "\n".join(recent_lines))
+
+    if pregnancies_p:
+        pregs = pregnancies_p.get("results", pregnancies_p) if isinstance(pregnancies_p, dict) else pregnancies_p
+        ativas = [p for p in pregs if p.get("status") == "ativa"]
+        for p in ativas:
+            dpp = p.get("dpp")
+            dum = p.get("dum")
+            ig_str = ""
+            if dum:
+                try:
+                    dum_dt = datetime.strptime(dum, "%Y-%m-%d")
+                    days = (now - dum_dt).days
+                    if 0 <= days <= 320:
+                        weeks, rem = divmod(days, 7)
+                        ig_str = f", IG atual: {weeks}+{rem}"
+                except Exception:
+                    pass
+            parts.append(f"Gestacao ativa (DUM {dum}, DPP {dpp}{ig_str})")
+
     return "\n".join(parts) if parts else ""
 
 
@@ -149,11 +178,11 @@ def _build_system_prompt(profile_id: str, profile_name: str, context: str) -> st
     memory = _memory.get(profile_id, [])
     memory_section = ""
     if memory:
-        recent = memory[-6:]  # last 3 exchanges
+        recent = memory[-10:]  # last 5 exchanges
         mem_lines = []
         for m in recent:
             role = "User" if m["role"] == "user" else "Assistant"
-            content = m["content"][:200]
+            content = m["content"][:500]
             mem_lines.append(f"  {role}: {content}")
         memory_section = "\n\nRECENT CONVERSATION:\n" + "\n".join(mem_lines)
 
@@ -187,6 +216,17 @@ GOOGLE (email, drive, docs, sheets):
 - search_emails, read_email, send_email, draft_email, trash_email
 - search_drive, read_document, read_spreadsheet, update_spreadsheet
 - Pode ler um doc, cruzar com dados do Vault, e escrever resultado em uma planilha
+
+SAUDE (exames, sinais vitais, gestacao):
+- get_health_exams: lista todos os exames (hemograma, USG, TOTG, urina, sangue, imagem)
+  Filtra por tipo, data, limit. Use SEMPRE para responder perguntas sobre exames.
+- get_health_exam: detalhe completo de um exame (todos os valores)
+- get_vitals: leituras de PA, peso, glicemia, FC ao longo do tempo
+- get_pregnancies: gestacoes (ativa/finalizada/perda) com DUM, DPP, plano, carencia
+- get_prenatal_consultations: consultas pre-natais com PA, peso, FCF, IG, conduta
+- add_health_exam: criar novo registro de exame com valores normalizados
+- add_vital_reading: registrar PA, peso, glicemia, etc
+- Cruze dados: ex: comparar hemograma atual vs anterior, evolucao de peso na gestacao
 
 FINANCAS (dados reais do banco):
 - get_finances: resumo do mes (saldo, renda, gastos, fatura CC, poupanca)
@@ -223,6 +263,15 @@ CAPACIDADES EXTRAS:
 - Read/Grep/Glob: ler e buscar em arquivos locais
 - Pode combinar ferramentas: pesquisar na web + criar widget, ler planilha + analisar + responder
 
+MEMORIA PERSISTENTE:
+- Voce tem memoria persistente entre conversas via save_memory/recall_memory
+- SALVE PROATIVAMENTE informacoes importantes: preferencias, decisoes, nomes de pessoas,
+  datas importantes, contexto de projetos, habitos, qualquer coisa util para o futuro
+- No inicio de cada conversa, suas memorias salvas aparecem no contexto automaticamente
+- Use recall_memory para buscar algo especifico de conversas passadas
+- Exemplos do que salvar: "Palmer prefere ver gastos por categoria", "Rafa tem reuniao
+  toda terca as 10h", "Decidiram trocar de plano de saude em junho"
+
 REGRAS IMPORTANTES:
 1. ACOES DESTRUTIVAS (send_email, delete_task, delete_note, trash_email):
    SEMPRE pergunte "Confirma?" e espere a usuaria responder "sim" antes de executar.
@@ -244,7 +293,7 @@ def _record_memory(profile_id: str, role: str, content: str):
         _memory[profile_id] = []
     _memory[profile_id].append({
         "role": role,
-        "content": content[:500],  # truncate for memory efficiency
+        "content": content[:2000],  # truncate for memory efficiency
         "ts": datetime.now().isoformat(),
     })
     # Trim to MAX_MEMORY
@@ -255,6 +304,9 @@ def _record_memory(profile_id: str, role: str, content: str):
 async def _stream_chat(req: ChatRequest):
     """Generator that yields SSE events from Claude."""
     context = await _fetch_context(req.profile_id)
+    persistent_memory = get_context_for_prompt(req.profile_id)
+    if persistent_memory:
+        context = context + "\n\n" + persistent_memory if context else persistent_memory
     system_prompt = _build_system_prompt(req.profile_id, req.profile_name, context)
 
     # Record user message in memory
@@ -262,22 +314,33 @@ async def _stream_chat(req: ChatRequest):
 
     # Build the prompt with attachment info if present
     prompt = req.message
-    if req.attachment_name:
-        prompt += f"\n\n[Arquivo anexado: {req.attachment_name} ({req.attachment_type or 'unknown'})]"
-        if req.attachment_data and req.attachment_type and req.attachment_type.startswith("text/"):
+    if req.attachment_name and req.attachment_data:
+        att_type = req.attachment_type or "unknown"
+        if att_type.startswith("text/"):
+            # Text files: inline the content
             try:
                 decoded = base64.b64decode(req.attachment_data).decode("utf-8", errors="replace")
-                prompt += f"\n\nConteudo do arquivo:\n```\n{decoded[:5000]}\n```"
+                prompt += f"\n\n[Arquivo anexado: {req.attachment_name}]\n```\n{decoded[:5000]}\n```"
             except Exception:
-                pass
+                prompt += f"\n\n[Arquivo anexado: {req.attachment_name} ({att_type}) — falha ao decodificar]"
+        else:
+            # Binary files (images, PDFs, etc.): save to temp and let agent Read it
+            try:
+                import tempfile
+                suffix = Path(req.attachment_name).suffix or ".bin"
+                tmp = Path(tempfile.mkdtemp(prefix="vault-attach-")) / f"attachment{suffix}"
+                tmp.write_bytes(base64.b64decode(req.attachment_data))
+                prompt += f"\n\n[Arquivo anexado: {req.attachment_name} ({att_type})]\nSalvo em: {tmp}\nUse a ferramenta Read para visualizar o arquivo."
+            except Exception:
+                prompt += f"\n\n[Arquivo anexado: {req.attachment_name} ({att_type}) — falha ao salvar]"
 
     # Set active profile for MCP tools
     set_profile(req.profile_id)
 
     # ── Sandbox decision ──
-    use_sandbox = needs_sandbox(req.message)
+    use_sandbox = await needs_sandbox(req.message)
     worktree_path = None
-    agent_cwd = "/Users/palmer/Work/Dev/Vault"
+    agent_cwd = "/Users/palmer/Work/Dev/vault"
 
     if use_sandbox:
         yield f"data: {json.dumps({'sandbox_status': 'preparing', 'message': 'Preparando ambiente isolado...'})}\n\n"
@@ -329,6 +392,9 @@ async def _stream_chat(req: ChatRequest):
         "mcp__vault-tools__create_tab",
         "mcp__vault-tools__create_custom_widget",
         "mcp__vault-tools__set_dashboard",
+        "mcp__vault-tools__save_memory",
+        "mcp__vault-tools__recall_memory",
+        "mcp__vault-tools__delete_memory",
     ]
 
     # Build tool lists based on sandbox mode
@@ -343,22 +409,83 @@ async def _stream_chat(req: ChatRequest):
     ]
     disallowed = [
         "NotebookEdit",
-        "Agent",
     ]
 
     if use_sandbox:
-        # In sandbox mode, allow Edit/Write for code changes
-        allowed.extend(["Edit", "Write"])
+        # In sandbox mode, allow Edit/Write/Agent for code changes
+        allowed.extend(["Edit", "Write", "Agent"])
         system_prompt += """
 
 MODO SANDBOX ATIVO:
-Voce esta trabalhando em um ambiente isolado (worktree).
-Pode usar Edit, Write e Bash livremente para modificar arquivos.
-Suas alteracoes serao validadas (vite build) antes de serem aplicadas.
-Se o build falhar, tudo sera descartado automaticamente."""
+Voce esta trabalhando em um ambiente isolado (worktree git).
+Pode usar Edit, Write, Bash e Agent livremente para modificar arquivos.
+Suas alteracoes serao validadas (vite build) antes de serem aplicadas ao app.
+Se o build falhar, voce tera chance de corrigir (ate 3 tentativas).
+
+ARQUITETURA DO VAULT (frontend):
+
+Diretorio: src/components/
+Tech: React + Vite, CSS Modules (.module.css), GridStack dashboard
+
+COMPONENTES PRINCIPAIS:
+- PersonalOrganizer.jsx (2358 linhas) — MEGA COMPONENTE, contem:
+  * KpiCard (linha ~104) — cards de contagem (tarefas hoje, atrasadas, etc.)
+  * QuickCapture (~115) — barra de captura rapida de tarefas/notas
+  * ProjectsBar (~241) — barra de projetos com filtro
+  * TaskList (~338) — lista de tarefas com kanban, drag-drop, prioridades
+  * NotesList (~795) — lista de notas com editor
+  * UpcomingEvents (~943) — lista de proximos eventos
+  * PersonalCalendar (~1098) — calendario completo (month/week/day views)
+    - Week view: grade horaria 6h-23h com eventos posicionados
+    - Day view: grade horaria single-column
+    - Month view: grid de dias com eventos
+    - Usa HOURS, WEEKDAYS, buildCalendarDays(), getWeekDays()
+  * PersonalReminders (~1519) — lembretes Apple com listas
+  * TabBar (~1699) — abas do dashboard
+  * WidgetCatalog (~1849) — catalogo de widgets pra adicionar
+  * PersonalOrganizer (~1896) — componente principal com auth
+  * PersonalOrganizerInner (~1906) — grid de widgets, layout persistente
+  * DashboardGrid (~2197) — grid GridStack
+- PersonalOrganizer.module.css — TODOS os estilos do modulo Pessoal
+
+WIDGETS (src/components/widgets/):
+- ChatWidget.jsx (510 linhas) — chat com sidecar, SSE streaming
+- EmailWidget.jsx (259) — inbox Gmail
+- DriveWidget.jsx (237) — arquivos Google Drive
+- FinanceWidgets.jsx — KPIs financeiros (saldo, sobra, fatura)
+- ClockWidget.jsx — relogio digital
+- GreetingWidget.jsx — saudacao com hora do dia
+- TextBlock.jsx — bloco de texto editavel
+- CustomWidget.jsx (186) — iframe pra widgets custom (HTML/CSS/JS)
+- WidgetRegistry.js — metadata de todos os widgets (tamanhos, categorias)
+- WidgetSettingsPanel.jsx — painel de config compartilhado
+
+MODULO FINANCEIRO (src/components/):
+- Home.jsx (791) — pagina principal financeira
+- MetricasSection.jsx (1043) — metricas do mes
+- CardsSection.jsx (379) — faturas de cartao
+- CartaoSection.jsx (159) — secao cartao no controle
+- CheckingSection.jsx (179) — conta corrente
+- InvestmentSection.jsx (320) — investimentos
+- RecurringSection.jsx (524) — despesas fixas
+- ProjectionSection.jsx (301) — projecao futura
+- OrcamentoSection.jsx (171) — orcamento mensal
+- Analytics.jsx (183) — graficos/charts
+- Settings.jsx (1810) — configuracoes
+- VaultTable.jsx (195) — tabela reutilizavel
+
+PADROES IMPORTANTES:
+- CSS Modules: import styles from './Component.module.css'
+- API: useQuery do react-query, fetch com X-Profile-ID header
+- Estado do dashboard: useDashboardState hook, salva no backend
+- Widgets recebem { config, onConfigChange } como props
+- Novos widgets: criar arquivo + registrar em WidgetRegistry.js + PersonalOrganizer.jsx
+- Template literals: usar backticks normais ` NAO escapar com backslash
+- Componentes no PersonalOrganizer.jsx sao funcoes internas (nao exportadas)
+- Variaveis devem ser definidas no MESMO componente onde sao usadas"""
     else:
-        # Normal mode: block code-editing tools
-        disallowed.extend(["Edit", "Write"])
+        # Normal mode: block code-editing tools and sub-agents
+        disallowed.extend(["Edit", "Write", "Agent"])
         system_prompt += """
 
 RESTRICAO BASH ESTRITA:
@@ -369,8 +496,8 @@ Bash e SOMENTE para leitura e processamento de dados. PROIBIDO:
 Se a tarefa requer editar codigo, diga ao usuario para pedir pelo Claude Code (terminal)."""
 
     options = ClaudeAgentOptions(
-        max_turns=12,
-        model="claude-sonnet-4-6",
+        max_turns=100 if use_sandbox else 50,
+        model="claude-opus-4-6",
         cwd=agent_cwd,
         system_prompt=system_prompt,
         include_partial_messages=True,
@@ -434,29 +561,76 @@ Se a tarefa requer editar codigo, diga ao usuario para pedir pelo Claude Code (t
         full_response = f"Erro: {error_msg}"
         yield f"data: {json.dumps({'error': error_msg}, ensure_ascii=False)}\n\n"
 
-    # ── Sandbox: validate and merge ──
+    # ── Sandbox: validate and merge (with retry) ──
     if use_sandbox and worktree_path:
-        yield f"data: {json.dumps({'sandbox_status': 'validating', 'message': 'Validando build...'})}\n\n"
+        MAX_BUILD_RETRIES = 3
+        build_ok = False
 
-        ok, build_output = await validate(worktree_path)
-        if ok:
-            merged = await merge_back(worktree_path)
-            if merged:
-                file_list = ", ".join(merged[:5])
-                if len(merged) > 5:
-                    file_list += f" (+{len(merged) - 5})"
-                yield f"data: {json.dumps({'sandbox_status': 'merged', 'message': f'Build OK! Arquivos atualizados: {file_list}'})}\n\n"
+        for attempt in range(1, MAX_BUILD_RETRIES + 1):
+            yield f"data: {json.dumps({'sandbox_status': 'validating', 'message': f'Validando build... (tentativa {attempt}/{MAX_BUILD_RETRIES})'})}\n\n"
+
+            ok, build_output = await validate(worktree_path)
+            if ok:
+                build_ok = True
+                merged = await merge_back(worktree_path)
+                if merged:
+                    file_list = ", ".join(merged[:5])
+                    if len(merged) > 5:
+                        file_list += f" (+{len(merged) - 5})"
+                    yield f"data: {json.dumps({'sandbox_status': 'merged', 'message': f'Build OK! Arquivos atualizados: {file_list}'})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'sandbox_status': 'no_changes', 'message': 'Nenhum arquivo modificado.'})}\n\n"
+                break
             else:
-                yield f"data: {json.dumps({'sandbox_status': 'no_changes', 'message': 'Nenhum arquivo modificado.'})}\n\n"
-        else:
-            await discard(worktree_path)
-            error_lines = build_output.strip().split("\n")[-5:]
-            error_summary = "\n".join(error_lines)
-            yield f"data: {json.dumps({'sandbox_status': 'failed', 'message': 'Build falhou — alteracoes descartadas.', 'error': error_summary})}\n\n"
+                error_lines = build_output.strip().split("\n")[-8:]
+                error_summary = "\n".join(error_lines)
+
+                if attempt < MAX_BUILD_RETRIES:
+                    # Ask the agent to fix the build error
+                    yield f"data: {json.dumps({'sandbox_status': 'fixing', 'message': f'Build falhou. Corrigindo... ({attempt}/{MAX_BUILD_RETRIES})'})}\n\n"
+                    fix_prompt = f"O vite build falhou com o seguinte erro:\n\n```\n{error_summary}\n```\n\nCorrija o erro nos arquivos que voce editou. Use Edit ou Write para consertar."
+                    try:
+                        fix_options = ClaudeAgentOptions(
+                            max_turns=20,
+                            model="claude-opus-4-6",
+                            cwd=str(worktree_path),
+                            system_prompt="Voce e um assistente de desenvolvimento. Corrija o erro de build. Seja preciso e direto.",
+                            mcp_servers={"vault-tools": {"type": "sdk", "name": "vault-tools", "instance": _vault_mcp}},
+                            permission_mode="bypassPermissions",
+                            allowed_tools=["Edit", "Write", "Read", "Grep", "Glob", "Bash"],
+                            disallowed_tools=["NotebookEdit"],
+                        )
+                        fix_client = ClaudeSDKClient(fix_options)
+                        await fix_client.connect()
+                        await fix_client.query(fix_prompt)
+                        async for raw_data in fix_client._query.receive_messages():
+                            try:
+                                msg = parse_message(raw_data)
+                            except Exception:
+                                continue
+                            if isinstance(msg, ResultMessage):
+                                break
+                        await fix_client.disconnect()
+                    except Exception:
+                        pass  # If fix agent fails, next iteration will catch it
+                else:
+                    # Final attempt failed — discard
+                    await discard(worktree_path)
+                    yield f"data: {json.dumps({'sandbox_status': 'failed', 'message': 'Build falhou apos 3 tentativas — alteracoes descartadas.', 'error': error_summary})}\n\n"
 
     # Record assistant response in memory
     if full_response:
         _record_memory(req.profile_id, "assistant", full_response)
+
+    # Auto-summarize conversation for persistent memory
+    if full_response and len(full_response) > 50:
+        try:
+            user_msg = req.message[:200]
+            bot_msg = full_response[:300]
+            summary = f"User: {user_msg} | Bot: {bot_msg}"
+            save_conversation_summary(req.profile_id, summary)
+        except Exception:
+            pass
 
     yield f"data: {json.dumps({'done': True})}\n\n"
 
