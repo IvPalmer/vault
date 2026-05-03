@@ -200,7 +200,7 @@ export const PALMER_CLINICAL_REPORT = {
     {
       id: 'estrutural',
       titulo: 'Estrutural',
-      icone: '🦴',
+      icone: '',
       cor: '#7a5fa6',
       achados: [
         'CAM-type FAI (Femoroacetabular Impingement) bilateral',
@@ -213,7 +213,7 @@ export const PALMER_CLINICAL_REPORT = {
     {
       id: 'tecido_mole',
       titulo: 'Tecido mole',
-      icone: '💪',
+      icone: '',
       cor: '#c47e3a',
       achados: [
         'Atrofia de glúteo mínimo esquerdo',
@@ -225,7 +225,7 @@ export const PALMER_CLINICAL_REPORT = {
     {
       id: 'inflamatorio',
       titulo: 'Inflamatório',
-      icone: '🔥',
+      icone: '',
       cor: '#b43c3c',
       achados: [
         'PCR ultrassensível 3.24 mg/dL (ref <0.5) — 23× basal de 2019',
@@ -237,7 +237,7 @@ export const PALMER_CLINICAL_REPORT = {
     {
       id: 'neuropatico',
       titulo: 'Neuropático',
-      icone: '⚡',
+      icone: '',
       cor: '#5b8bc4',
       achados: [
         'Avaliação especializada em curso',
@@ -248,7 +248,7 @@ export const PALMER_CLINICAL_REPORT = {
     {
       id: 'sensibilizacao_central',
       titulo: 'Sensibilização central',
-      icone: '🧠',
+      icone: '',
       cor: '#5fa67a',
       achados: [
         'Comorbidades em investigação',

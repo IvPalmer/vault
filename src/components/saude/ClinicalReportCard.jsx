@@ -3,10 +3,9 @@
  * Shows the clinical reasoning for the chronic hip pain investigation.
  */
 import styles from './saude-widgets.module.css'
-import { PALMER_CLINICAL_REPORT, PALMER_OBSERVATIONS } from './palmerHealthData'
 
-export default function ClinicalReportCard() {
-  const report = PALMER_CLINICAL_REPORT
+export default function ClinicalReportCard({ report, observations }) {
+  if (!report) return null
   const dataFmt = report.data.split('-').reverse().join('/')
 
   return (
@@ -17,7 +16,6 @@ export default function ClinicalReportCard() {
         {report.camadas.map(camada => (
           <div key={camada.id} className={styles.layerCard} style={{ '--layer-color': camada.cor }}>
             <div className={styles.layerHeader}>
-              <span className={styles.layerIcon}>{camada.icone}</span>
               <span className={styles.layerTitle}>{camada.titulo}</span>
             </div>
             <ul className={styles.layerFindings}>
@@ -27,10 +25,11 @@ export default function ClinicalReportCard() {
         ))}
       </div>
 
+      {observations && observations.length > 0 && (
       <div className={styles.observationsBlock}>
         <h3 className={styles.observationsTitle}>Pontos de observação</h3>
         <div className={styles.observationsGrid}>
-          {PALMER_OBSERVATIONS.map((o, i) => (
+          {observations.map((o, i) => (
             <div key={i} className={styles.observationCard} data-priority={o.prioridade}>
               <div className={styles.observationHeader}>
                 <span className={styles.observationTitle}>{o.titulo}</span>
@@ -43,6 +42,7 @@ export default function ClinicalReportCard() {
           ))}
         </div>
       </div>
+      )}
     </div>
   )
 }

@@ -89,7 +89,6 @@ export default function FetalDevelopmentCard({ pregnancy }) {
     <div className={styles.fetalCard}>
       <div className={styles.fetalHeader}>
         <div className={styles.widgetLabel}>Desenvolvimento · {formatWeeks(decimalWeeks)}</div>
-        <div className={styles.fetalCompareEmoji}>{data.emoji}</div>
       </div>
 
       <div className={styles.fetalIllustrationWrap}>

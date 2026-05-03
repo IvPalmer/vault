@@ -62,7 +62,7 @@ export default function NextActionWidget({ pregnancy, completedIds = new Set() }
     return (
       <div className={styles.nextAction} data-urgency="ok">
         <div className={styles.nextActionLabel}>Próximo passo</div>
-        <div className={styles.nextActionTitle}>Tudo em dia ✅</div>
+        <div className={styles.nextActionTitle}>Tudo em dia</div>
         <div className={styles.nextActionDesc}>Nenhum checkpoint imediato pendente.</div>
       </div>
     )
@@ -93,7 +93,7 @@ export default function NextActionWidget({ pregnancy, completedIds = new Set() }
   return (
     <div className={styles.nextAction} data-urgency={urgency}>
       <div className={styles.nextActionLabel}>
-        <span className={styles.nextActionKind} style={{ background: meta.color }}>{meta.icon} {meta.label}</span>
+        <span className={styles.nextActionKind} style={{ background: meta.color }}>{meta.label}</span>
         <span className={styles.nextActionCountdown}>{countdown}</span>
       </div>
       <div className={styles.nextActionTitle}>{cp.label}</div>

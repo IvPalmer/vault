@@ -3,7 +3,6 @@
  * Each marker shown as a card with value, unit, ref range, status color.
  */
 import styles from './saude-widgets.module.css'
-import { PALMER_LAB_PANEL } from './palmerHealthData'
 
 const STATUS_COLORS = {
   normal:           { bg: 'rgba(70, 140, 90, 0.08)', border: 'rgba(70, 140, 90, 0.3)', dot: '#468c5a', label: 'normal' },
@@ -55,8 +54,8 @@ function MarkerCard({ marker }) {
   )
 }
 
-export default function LabPanelDashboard() {
-  const panel = PALMER_LAB_PANEL
+export default function LabPanelDashboard({ panel }) {
+  if (!panel) return null
   const dataFmt = panel.data_coleta.split('-').reverse().join('/')
 
   return (

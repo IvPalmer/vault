@@ -42,7 +42,7 @@ export default function PregnancyCheckpoints({ pregnancy, completedIds = new Set
               return (
                 <div key={cp.id} className={styles.checkpointRow} data-status={status}>
                   <div className={styles.checkpointIcon} style={{ background: meta.color }}>
-                    {status === 'completed' ? '✓' : meta.icon}
+                    {meta.short}
                   </div>
                   <div className={styles.checkpointBody}>
                     <div className={styles.checkpointLabel}>{cp.label}</div>

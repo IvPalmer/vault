@@ -35,6 +35,8 @@ import FetalDevelopmentCard from './saude/FetalDevelopmentCard'
 import LabPanelDashboard from './saude/LabPanelDashboard'
 import HipImagingCard from './saude/HipImagingCard'
 import ClinicalReportCard from './saude/ClinicalReportCard'
+import { PALMER_LAB_PANEL, PALMER_CLINICAL_REPORT, PALMER_OBSERVATIONS } from './saude/palmerHealthData'
+import { RAFA_LAB_PANEL, RAFA_PREGNANCY_REPORT, RAFA_OBSERVATIONS } from './saude/rafaHealthData'
 
 const EXAM_TYPE_LABELS = {
   hemograma: 'Hemograma', bioquimica: 'Bioquímica', hormonal: 'Hormonal',
@@ -89,7 +91,7 @@ function ExamRow({ exam }) {
           rel="noreferrer"
           title="Abrir arquivo local"
         >
-          📄
+          PDF
         </a>
       )}
     </div>
@@ -124,6 +126,7 @@ function PersonalView({ profileId, profileName }) {
   }, [exams])
 
   const isPalmer = profileName?.toLowerCase().includes('palmer')
+  const isRafa = profileName?.toLowerCase().includes('rafa')
 
   return (
     <div className={styles.tabContent}>
@@ -153,9 +156,15 @@ function PersonalView({ profileId, profileName }) {
 
       {isPalmer && (
         <>
-          <ClinicalReportCard />
+          <ClinicalReportCard report={PALMER_CLINICAL_REPORT} observations={PALMER_OBSERVATIONS} />
           <HipImagingCard />
-          <LabPanelDashboard />
+          <LabPanelDashboard panel={PALMER_LAB_PANEL} />
+        </>
+      )}
+      {isRafa && (
+        <>
+          <ClinicalReportCard report={RAFA_PREGNANCY_REPORT} observations={RAFA_OBSERVATIONS} />
+          <LabPanelDashboard panel={RAFA_LAB_PANEL} />
         </>
       )}
 

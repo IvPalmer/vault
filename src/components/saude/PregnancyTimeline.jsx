@@ -86,7 +86,7 @@ export default function PregnancyTimeline({ pregnancy, completedIds = new Set() 
                 onMouseEnter={() => setHovered(cp.id)}
                 onMouseLeave={() => setHovered(null)}
               >
-                <div className={styles.checkpointDot}>{status === 'completed' ? '✓' : meta.icon}</div>
+                <div className={styles.checkpointDot}>{meta.short}</div>
                 {hovered === cp.id && (
                   <div className={styles.checkpointTooltip}>
                     <div className={styles.tooltipTitle}>{cp.label}</div>

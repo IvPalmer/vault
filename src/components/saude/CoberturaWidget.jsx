@@ -32,7 +32,7 @@ export default function CoberturaWidget({ pregnancy }) {
   if (status === 'ok') {
     return (
       <div className={styles.coberturaWidget} data-status="ok">
-        <div className={styles.widgetLabel}>Cobertura obstétrica ✅</div>
+        <div className={styles.widgetLabel}>Cobertura obstétrica · ok</div>
         <div className={styles.coberturaTitleSmall}>{plano}</div>
         <div className={styles.coberturaDesc}>
           Carência cumprida em {formatDate(fim_carencia)}. Parto coberto pelo plano.
@@ -52,7 +52,7 @@ export default function CoberturaWidget({ pregnancy }) {
 
   return (
     <div className={styles.coberturaWidget} data-status="risco">
-      <div className={styles.widgetLabel}>⚠️ Risco de cobertura</div>
+      <div className={styles.widgetLabel}>Risco de cobertura</div>
       <div className={styles.coberturaTitleSmall}>{plano}</div>
       <div className={styles.coberturaBarOuter}>
         <div className={styles.coberturaBarInner} style={{ width: `${carenciaPct}%` }} />

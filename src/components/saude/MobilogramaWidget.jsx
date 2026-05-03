@@ -131,7 +131,7 @@ export default function MobilogramaWidget({ pregnancy, profileId }) {
 
           {overTime && (
             <div className={styles.mobiloAlert}>
-              ⚠️ Mais de 2h sem 10 movimentos. <strong>Procure atendimento</strong> (HMIB, urgência obstétrica Amil 4002-2200).
+              Alerta: mais de 2h sem 10 movimentos. <strong>Procure atendimento</strong> (HMIB, urgência obstétrica Amil 4002-2200).
             </div>
           )}
 

@@ -61,11 +61,11 @@ export const CHECKPOINTS = [
 ]
 
 const KIND_META = {
-  consulta:  { label: 'Consulta', color: '#5b8bc4', icon: '🩺' },
-  exame_lab: { label: 'Exame',    color: '#c47e3a', icon: '🧪' },
-  usg:       { label: 'USG',      color: '#7a5fa6', icon: '📷' },
-  vacina:    { label: 'Vacina',   color: '#5fa67a', icon: '💉' },
-  rotina:    { label: 'Rotina',   color: '#8a8a8a', icon: '📅' },
+  consulta:  { label: 'Consulta', color: '#5b8bc4', short: 'CON' },
+  exame_lab: { label: 'Exame',    color: '#c47e3a', short: 'LAB' },
+  usg:       { label: 'USG',      color: '#7a5fa6', short: 'USG' },
+  vacina:    { label: 'Vacina',   color: '#5fa67a', short: 'VAC' },
+  rotina:    { label: 'Rotina',   color: '#8a8a8a', short: 'ROT' },
 }
 
 export function getKindMeta(kind) {
