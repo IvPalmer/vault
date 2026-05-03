@@ -53,6 +53,23 @@ PALMER_EXAMS = [
             'tsh': 'normal',
         },
     },
+    {
+        'tipo': 'bioquimica',
+        'nome': 'Follow-up PCR + VHS',
+        'data': date(2026, 4, 28),
+        'arquivo_path': 'Downloads/Laudo Completo 28_04_2026.pdf',
+        'laboratorio': 'DASA',
+        'medico': 'Dra. Valeria Nogueira Naves',
+        'notes': 'Normalização — PCR 3.24 → 0.25 mg/dL (13× redução), VHS 17 → 14 mm/h. Processo inflamatório sistêmico resolvido em ~11 meses.',
+        'valores': {
+            'pcr_mg_dl': 0.25,
+            'pcr_status': 'normal',
+            'vhs_mm_h': 14,
+            'vhs_status': 'normal',
+            'vs_anterior_pcr': '3.24 (mai/2025)',
+            'vs_anterior_vhs': '17 (mai/2025)',
+        },
+    },
 ]
 
 RAFA_EXAMS = [

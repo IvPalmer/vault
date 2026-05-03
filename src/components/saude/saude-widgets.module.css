@@ -957,6 +957,16 @@
   gap: 10px;
 }
 
+.labCategoryHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.08);
+  flex-wrap: wrap;
+}
+
 .labCategoryTitle {
   font-size: 11px;
   font-weight: 600;
@@ -964,8 +974,14 @@
   letter-spacing: 0.08em;
   color: var(--text-secondary, #6b6660);
   margin: 0;
-  padding-bottom: 4px;
-  border-bottom: 1px dashed rgba(0, 0, 0, 0.08);
+}
+
+.labCategoryUpdate {
+  font-size: 10px;
+  color: var(--accent, #c47e3a);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .markerGrid {
@@ -1051,6 +1067,28 @@
   padding-top: 6px;
   border-top: 1px dashed rgba(0, 0, 0, 0.1);
 }
+
+.markerHistory {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(0, 0, 0, 0.1);
+}
+
+.markerHistoryItem {
+  font-size: 10px;
+  color: var(--text-secondary, #6b6660);
+  background: rgba(0, 0, 0, 0.04);
+  padding: 2px 7px;
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.markerHistoryItem[data-status="alto"]   { background: rgba(180, 60, 60, 0.1);  color: #b43c3c; }
+.markerHistoryItem[data-status="baixo"]  { background: rgba(91, 139, 196, 0.1); color: #5b8bc4; }
+.markerHistoryItem[data-status="normal"] { background: rgba(70, 140, 90, 0.08); color: #468c5a; }
 
 /* ── Hip imaging card ───────────────────────────────── */
 .hipCard {

@@ -47,6 +47,15 @@ function MarkerCard({ marker }) {
         <span className={styles.markerStatusLabel}>{status.label}</span>
         {fmtRef(marker) && <span className={styles.markerRef}>ref: {fmtRef(marker)}</span>}
       </div>
+      {marker.history && marker.history.length > 0 && (
+        <div className={styles.markerHistory}>
+          {marker.history.map((h, i) => (
+            <span key={i} className={styles.markerHistoryItem} data-status={h.status}>
+              {h.data.split('-').slice(0, 2).reverse().join('/')}: {fmtValue(h.value)}
+            </span>
+          ))}
+        </div>
+      )}
       {marker.obs && (
         <div className={styles.markerObs}>{marker.obs}</div>
       )}
@@ -69,7 +78,15 @@ export default function LabPanelDashboard({ panel }) {
 
       {panel.categorias.map(cat => (
         <div key={cat.id} className={styles.labCategory}>
-          <h3 className={styles.labCategoryTitle}>{cat.nome}</h3>
+          <div className={styles.labCategoryHeader}>
+            <h3 className={styles.labCategoryTitle}>{cat.nome}</h3>
+            {cat.data_atualizacao && (
+              <span className={styles.labCategoryUpdate}>
+                atualizado {cat.data_atualizacao.split('-').reverse().join('/')}
+                {cat.lab_atualizacao && ` · ${cat.lab_atualizacao}`}
+              </span>
+            )}
+          </div>
           <div className={styles.markerGrid}>
             {cat.markers.map(m => <MarkerCard key={m.key} marker={m} />)}
           </div>

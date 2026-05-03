@@ -104,10 +104,20 @@ export const PALMER_LAB_PANEL = {
     {
       id: 'inflamatorio',
       nome: 'Marcadores inflamatórios',
+      data_atualizacao: '2026-04-28',
+      lab_atualizacao: 'DASA',
       markers: [
-        { key: 'pcr', label: 'PCR ultrassensível', value: 3.24, unit: 'mg/dL', ref_max: 0.5, status: 'alto',
-          obs: 'Aumento de 23× vs basal de 2019 (0.14). Investigação inflamatória/quadril.' },
-        { key: 'vhs', label: 'VHS', value: 17, unit: 'mm/h', ref_max: 8, status: 'alto' },
+        { key: 'pcr', label: 'PCR ultrassensível', value: 0.25, unit: 'mg/dL', ref_max: 0.5, status: 'normal',
+          obs: 'Normalizou completamente — caiu 13× desde mai/2025. Resolução do processo inflamatório sistêmico.',
+          history: [
+            { data: '2025-05-28', value: 3.24, status: 'alto' },
+            { data: '2019-12', value: 0.14, status: 'normal' },
+          ] },
+        { key: 'vhs', label: 'VHS', value: 14, unit: 'mm/h', ref_max: 15, status: 'normal',
+          obs: 'Dentro da referência. Caiu de 17 (mai/2025).',
+          history: [
+            { data: '2025-05-28', value: 17, status: 'alto' },
+          ] },
       ],
     },
     {
@@ -226,12 +236,13 @@ export const PALMER_CLINICAL_REPORT = {
       id: 'inflamatorio',
       titulo: 'Inflamatório',
       icone: '',
-      cor: '#b43c3c',
+      cor: '#5fa67a',
       achados: [
-        'PCR ultrassensível 3.24 mg/dL (ref <0.5) — 23× basal de 2019',
-        'VHS 17 mm/h (ref <8)',
-        'Padrão sugestivo de processo inflamatório crônico de baixo grau',
-        'Investigar artrite reativa, espondiloartrite, doença sistêmica',
+        'PCR normalizou em abr/2026 — 3.24 → 0.25 mg/dL (queda de 13×)',
+        'VHS normalizou — 17 → 14 mm/h (dentro da referência)',
+        'Processo inflamatório sistêmico resolvido entre mai/2025 e abr/2026',
+        'Investigação reumatológica sistêmica (HLA-B27, FAN) deixa de ser prioridade',
+        'Foco agora: dor estrutural local (FAI/morfologia CAM) — manejo ortopédico',
       ],
     },
     {
@@ -271,9 +282,9 @@ export const PALMER_OBSERVATIONS = [
     prioridade: 'media',
   },
   {
-    titulo: 'PCR cronicamente elevada',
-    texto: 'Aumento de 23× vs basal 2019. Investigação reumatológica em andamento. HLA-B27, FAN, fator reumatoide indicados se ainda não feitos.',
-    prioridade: 'alta',
+    titulo: 'PCR e VHS normalizaram (abr/2026)',
+    texto: 'PCR caiu de 3.24 → 0.25 mg/dL (13×) e VHS de 17 → 14 mm/h em ~11 meses. Processo inflamatório sistêmico resolvido. Investigação reumatológica sistêmica deixa de ser prioridade — manejo agora foca em FAI/CAM estrutural (ortopedia + fisioterapia).',
+    prioridade: 'baixa',
   },
   {
     titulo: 'G6PD — gravidez Rafa',

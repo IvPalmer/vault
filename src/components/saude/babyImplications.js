@@ -52,15 +52,14 @@ export const BABY_IMPLICATIONS = [
 
   {
     id: 'pcr-paterna',
-    titulo: 'PCR cronicamente elevada — Palmer',
-    origem: 'Palmer · painel laboratorial 2025-05-28',
-    categoria: 'Investigação parental',
-    prioridade: 'media',
-    resumo: 'PCR ultrassensível 3.24 mg/dL (ref <0.5) — 23× o basal de 2019. VHS 17 (ref <8). Investigação reumatológica em curso. Não afeta diretamente o feto, mas se for doença autoimune sistêmica subjacente (espondiloartrite, artrite reativa), pode haver implicações no parto e no neonato.',
+    titulo: 'PCR e VHS Palmer normalizaram (abr/2026)',
+    origem: 'Palmer · follow-up DASA 2026-04-28',
+    categoria: 'Resolvido',
+    prioridade: 'baixa',
+    resumo: 'PCR caiu de 3.24 → 0.25 mg/dL e VHS de 17 → 14 mm/h em ~11 meses. Processo inflamatório sistêmico resolvido entre mai/2025 e abr/2026. Não há mais suspeita ativa de doença autoimune sistêmica que pudesse impactar o neonato. Manejo ortopédico (FAI/CAM) continua mas não é fator de risco gestacional.',
     acoes: [
-      'Concluir investigação (HLA-B27, FAN, fator reumatoide) antes do parto',
-      'Compartilhar resultados com obstetra — ajustar conduta se diagnóstico autoimune',
-      'Revisar medicações pós-diagnóstico para compatibilidade com lactação',
+      'Manter monitoramento periódico de PCR/VHS (semestral)',
+      'Foco em manejo ortopédico (fisioterapia, posturologia) — não afeta gestação',
     ],
   },
 
