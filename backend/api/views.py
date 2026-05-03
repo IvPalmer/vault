@@ -2990,6 +2990,7 @@ class HealthExamViewSet(viewsets.ModelViewSet):
     """Health exams scoped per profile.
     Filters: ?tipo=hemograma&pregnancy_id=<uuid>&since=YYYY-MM-DD"""
     serializer_class = HealthExamSerializer
+    pagination_class = None
 
     def get_queryset(self):
         qs = HealthExam.objects.filter(profile=self.request.profile)
@@ -3010,6 +3011,7 @@ class HealthExamViewSet(viewsets.ModelViewSet):
 
 class VitalReadingViewSet(viewsets.ModelViewSet):
     serializer_class = VitalReadingSerializer
+    pagination_class = None
 
     def get_queryset(self):
         qs = VitalReading.objects.filter(profile=self.request.profile)
@@ -3029,6 +3031,7 @@ class PregnancyViewSet(viewsets.ModelViewSet):
     """Pregnancies are shared between titular and gestante.
     Returns pregnancies where the current profile is EITHER titular OR gestante."""
     serializer_class = PregnancySerializer
+    pagination_class = None
 
     def get_queryset(self):
         from django.db.models import Q
@@ -3039,6 +3042,7 @@ class PregnancyViewSet(viewsets.ModelViewSet):
 
 class PrenatalConsultationViewSet(viewsets.ModelViewSet):
     serializer_class = PrenatalConsultationSerializer
+    pagination_class = None
 
     def get_queryset(self):
         from django.db.models import Q
