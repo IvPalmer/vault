@@ -832,6 +832,9 @@ class Pregnancy(models.Model):
         default='ativa',
     )
     notes = models.TextField(blank=True)
+    plano_nome = models.CharField(max_length=100, blank=True, help_text='Ex: Amil 702 PME')
+    plano_vigencia_inicio = models.DateField(null=True, blank=True, help_text='Início vigência do plano de saúde')
+    carencia_obstetrica_dias = models.IntegerField(default=300, help_text='Dias de carência obstétrica do plano')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

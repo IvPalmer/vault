@@ -232,13 +232,15 @@ class PregnancySerializer(serializers.ModelSerializer):
     consultations = PrenatalConsultationSerializer(many=True, read_only=True)
     ig_atual_semanas = serializers.SerializerMethodField()
     dias_ate_dpp = serializers.SerializerMethodField()
+    cobertura_parto = serializers.SerializerMethodField()
 
     class Meta:
         model = Pregnancy
         fields = [
             'id', 'titular', 'titular_name', 'gestante', 'gestante_name',
             'confirmada_em', 'dum', 'dpp', 'status', 'notes',
-            'consultations', 'ig_atual_semanas', 'dias_ate_dpp',
+            'plano_nome', 'plano_vigencia_inicio', 'carencia_obstetrica_dias',
+            'consultations', 'ig_atual_semanas', 'dias_ate_dpp', 'cobertura_parto',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['created_at', 'updated_at']
@@ -256,3 +258,28 @@ class PregnancySerializer(serializers.ModelSerializer):
             return None
         from datetime import date
         return (obj.dpp - date.today()).days
+
+    def get_cobertura_parto(self, obj):
+        """Returns dict with status of obstetric coverage vs DPP.
+
+        status:
+          - 'ok' — DPP after end of carência → covered
+          - 'risco' — DPP before end of carência → uncovered (returns dias_descoberto)
+          - 'pending' — missing DPP or vigencia data
+        """
+        if not obj.dpp or not obj.plano_vigencia_inicio:
+            return {'status': 'pending', 'plano': obj.plano_nome or None}
+        from datetime import timedelta
+        fim_carencia = obj.plano_vigencia_inicio + timedelta(days=obj.carencia_obstetrica_dias)
+        if obj.dpp >= fim_carencia:
+            return {
+                'status': 'ok',
+                'plano': obj.plano_nome,
+                'fim_carencia': fim_carencia.isoformat(),
+            }
+        return {
+            'status': 'risco',
+            'plano': obj.plano_nome,
+            'fim_carencia': fim_carencia.isoformat(),
+            'dias_descoberto': (fim_carencia - obj.dpp).days,
+        }

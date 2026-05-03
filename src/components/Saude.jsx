@@ -157,6 +157,7 @@ function PregnancyCard({ pregnancy }) {
     ? Math.min(100, Math.max(0, ((280 - (dias ?? 280)) / 280) * 100))
     : 0
   const lastConsult = pregnancy.consultations?.[0]
+  const cobertura = pregnancy.cobertura_parto
 
   return (
     <div className={styles.pregnancyCard}>
@@ -175,6 +176,31 @@ function PregnancyCard({ pregnancy }) {
           {pregnancy.status}
         </div>
       </div>
+
+      {cobertura && cobertura.status === 'risco' && (
+        <div className={styles.coberturaAlert} data-status="risco">
+          <div className={styles.coberturaTitle}>⚠️ Risco de carência obstétrica</div>
+          <div className={styles.coberturaBody}>
+            DPP cai <strong>{cobertura.dias_descoberto} dias</strong> antes do fim da carência
+            ({formatDate(cobertura.fim_carencia)}) do plano <strong>{cobertura.plano}</strong>.
+            Parto pode não ter cobertura. Ver <code>family/pregnancy/alerta_carencia.md</code>.
+          </div>
+        </div>
+      )}
+      {cobertura && cobertura.status === 'pending' && (
+        <div className={styles.coberturaAlert} data-status="pending">
+          <div className={styles.coberturaBody}>
+            Cobertura de parto: aguardando DPP confirmada ou data de vigência do plano.
+          </div>
+        </div>
+      )}
+      {cobertura && cobertura.status === 'ok' && (
+        <div className={styles.coberturaAlert} data-status="ok">
+          <div className={styles.coberturaBody}>
+            ✅ Parto coberto pelo plano <strong>{cobertura.plano}</strong> (carência cumprida em {formatDate(cobertura.fim_carencia)}).
+          </div>
+        </div>
+      )}
 
       {pregnancy.dum && (
         <div className={styles.pregnancyTimeline}>

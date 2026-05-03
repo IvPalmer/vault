@@ -114,8 +114,21 @@ class Command(BaseCommand):
             defaults={
                 'status': 'ativa',
                 'notes': 'Primeira gestação. Detalhes operacionais em health/family/.',
+                'plano_nome': 'Amil 702 PME (PRC 609)',
+                'plano_vigencia_inicio': date(2026, 4, 28),  # confirmar dia exato
+                'carencia_obstetrica_dias': 300,
             },
         )
+        if not created:
+            updated = False
+            if not pregnancy.plano_nome:
+                pregnancy.plano_nome = 'Amil 702 PME (PRC 609)'
+                updated = True
+            if not pregnancy.plano_vigencia_inicio:
+                pregnancy.plano_vigencia_inicio = date(2026, 4, 28)
+                updated = True
+            if updated:
+                pregnancy.save()
         action = 'Created' if created else 'Found existing'
         self.stdout.write(f'{action} pregnancy: {pregnancy}')
 
