@@ -2988,12 +2988,25 @@ class ICSFeedDetailView(APIView):
 
 class HealthExamViewSet(viewsets.ModelViewSet):
     """Health exams scoped per profile.
-    Filters: ?tipo=hemograma&pregnancy_id=<uuid>&since=YYYY-MM-DD"""
+    Filters: ?tipo=hemograma&pregnancy_id=<uuid>&since=YYYY-MM-DD&profile_id=<uuid>
+
+    Personal/family use: profile_id override allowed for cross-profile reads
+    (couple/family dashboards). For commercial use this would need ACL.
+    """
     serializer_class = HealthExamSerializer
     pagination_class = None
 
+    def _scope_profile(self):
+        override = self.request.query_params.get('profile_id')
+        if override:
+            try:
+                return Profile.objects.get(id=override)
+            except Profile.DoesNotExist:
+                return self.request.profile
+        return self.request.profile
+
     def get_queryset(self):
-        qs = HealthExam.objects.filter(profile=self.request.profile)
+        qs = HealthExam.objects.filter(profile=self._scope_profile())
         tipo = self.request.query_params.get('tipo')
         if tipo:
             qs = qs.filter(tipo=tipo)
@@ -3013,8 +3026,17 @@ class VitalReadingViewSet(viewsets.ModelViewSet):
     serializer_class = VitalReadingSerializer
     pagination_class = None
 
+    def _scope_profile(self):
+        override = self.request.query_params.get('profile_id')
+        if override:
+            try:
+                return Profile.objects.get(id=override)
+            except Profile.DoesNotExist:
+                return self.request.profile
+        return self.request.profile
+
     def get_queryset(self):
-        qs = VitalReading.objects.filter(profile=self.request.profile)
+        qs = VitalReading.objects.filter(profile=self._scope_profile())
         tipo = self.request.query_params.get('tipo')
         if tipo:
             qs = qs.filter(tipo=tipo)

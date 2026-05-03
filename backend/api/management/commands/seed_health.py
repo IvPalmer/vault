@@ -117,6 +117,10 @@ class Command(BaseCommand):
                 'plano_nome': 'Amil 702 PME (PRC 609)',
                 'plano_vigencia_inicio': date(2026, 4, 28),  # confirmar dia exato
                 'carencia_obstetrica_dias': 300,
+                # Estimativa provisória — substituir quando USG datação confirmar.
+                # IG estimada ~5 sem em 2026-05-02 → DUM ~28/03/2026, DPP ~02/01/2027
+                'dum': date(2026, 3, 28),
+                'dpp': date(2027, 1, 2),
             },
         )
         if not created:
@@ -126,6 +130,12 @@ class Command(BaseCommand):
                 updated = True
             if not pregnancy.plano_vigencia_inicio:
                 pregnancy.plano_vigencia_inicio = date(2026, 4, 28)
+                updated = True
+            if not pregnancy.dum:
+                pregnancy.dum = date(2026, 3, 28)
+                updated = True
+            if not pregnancy.dpp:
+                pregnancy.dpp = date(2027, 1, 2)
                 updated = True
             if updated:
                 pregnancy.save()

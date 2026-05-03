@@ -1,29 +1,40 @@
 /**
- * Saude.jsx — health module page.
+ * Saude.jsx — advanced multi-widget health dashboard.
  *
- * Tabs:
- *   - Eu: profile-scoped exams + vitals (Palmer sees Palmer's, Rafa sees Rafa's)
- *   - Familia: shared pregnancies + cross-profile family health context
+ * Tabs (always visible regardless of current profile):
+ *   - Eu      → currently logged-in profile's exams + vitals
+ *   - {other} → partner profile's exams + vitals (auto-detected)
+ *   - Família → shared pregnancy + cross-profile family view
+ *
+ * Family layout:
+ *   - Hero: arc gauge + DPP countdown
+ *   - Next action card + Cobertura widget
+ *   - Pregnancy timeline (40-week gantt with checkpoints)
+ *   - Checkpoints list (vertical, by trimester)
+ *
+ * Personal (Eu / outro) layout:
+ *   - Recent exams widget (5 most recent, grouped by year list below)
+ *   - Vitals sparklines
+ *   - Full exam history grouped by year
  */
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useProfile } from '../context/ProfileContext'
 import api from '../api/client'
 import styles from './Saude.module.css'
+import widgetStyles from './saude/saude-widgets.module.css'
+import PregnancyHero from './saude/PregnancyHero'
+import PregnancyTimeline from './saude/PregnancyTimeline'
+import PregnancyCheckpoints from './saude/PregnancyCheckpoints'
+import NextActionWidget from './saude/NextActionWidget'
+import CoberturaWidget from './saude/CoberturaWidget'
+import ExamsRecentWidget from './saude/ExamsRecentWidget'
 
 const EXAM_TYPE_LABELS = {
-  hemograma: 'Hemograma',
-  bioquimica: 'Bioquímica',
-  hormonal: 'Hormonal',
-  sorologia: 'Sorologia',
-  urina: 'Urina',
-  genetico: 'Genético',
-  imagem_rx: 'Raio-X',
-  imagem_us: 'Ultrassom',
-  imagem_ct: 'Tomografia',
-  imagem_rm: 'Ressonância',
-  densitometria: 'Densitometria',
-  cardio: 'Cardiológico',
+  hemograma: 'Hemograma', bioquimica: 'Bioquímica', hormonal: 'Hormonal',
+  sorologia: 'Sorologia', urina: 'Urina', genetico: 'Genético',
+  imagem_rx: 'Raio-X', imagem_us: 'Ultrassom', imagem_ct: 'Tomografia',
+  imagem_rm: 'Ressonância', densitometria: 'Densitometria', cardio: 'Cardio',
   outro: 'Outro',
 }
 
@@ -79,17 +90,20 @@ function ExamRow({ exam }) {
   )
 }
 
-function EuTab() {
-  const { currentProfile } = useProfile()
+/**
+ * PersonalView — shared layout used by both Eu and {other} tabs.
+ * Renders exam list + vitals scoped to the given profile_id.
+ */
+function PersonalView({ profileId, profileName }) {
   const { data: exams = [], isLoading: examsLoading } = useQuery({
-    queryKey: ['health-exams', currentProfile?.id],
-    queryFn: () => api.get('/saude/exams/'),
-    enabled: !!currentProfile,
+    queryKey: ['health-exams', profileId],
+    queryFn: () => api.get(`/saude/exams/${profileId ? `?profile_id=${profileId}` : ''}`),
+    enabled: !!profileId,
   })
   const { data: vitals = [] } = useQuery({
-    queryKey: ['vital-readings', currentProfile?.id],
-    queryFn: () => api.get('/saude/vitals/'),
-    enabled: !!currentProfile,
+    queryKey: ['vital-readings', profileId],
+    queryFn: () => api.get(`/saude/vitals/${profileId ? `?profile_id=${profileId}` : ''}`),
+    enabled: !!profileId,
   })
 
   const examsByYear = useMemo(() => {
@@ -104,168 +118,121 @@ function EuTab() {
 
   return (
     <div className={styles.tabContent}>
+      <div className={styles.gridTwoCol}>
+        <ExamsRecentWidget exams={exams} title={`${profileName} · últimos exames`} limit={5} />
+        <div className={widgetStyles.examsWidget}>
+          <div className={widgetStyles.widgetLabel}>Vitais recentes</div>
+          {vitals.length === 0 ? (
+            <div className={widgetStyles.examsEmpty}>Nenhuma leitura de vitais ainda.</div>
+          ) : (
+            <div className={widgetStyles.examsList}>
+              {vitals.slice(0, 8).map(v => (
+                <div key={v.id} className={widgetStyles.examMini}>
+                  <span className={widgetStyles.examMiniChip} style={{ background: '#5b8bc4' }}>
+                    {v.tipo_label || v.tipo}
+                  </span>
+                  <div className={widgetStyles.examMiniBody}>
+                    <div className={widgetStyles.examMiniName}>{v.valor}</div>
+                  </div>
+                  <span className={widgetStyles.examMiniDate}>{formatDate(v.data)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
       <section className={styles.section}>
         <div className={styles.sectionHeader}>
-          <h2 className={styles.sectionTitle}>Exames</h2>
+          <h2 className={styles.sectionTitle}>Histórico completo · exames</h2>
           <span className={styles.sectionCount}>{exams.length}</span>
         </div>
         {examsLoading ? (
           <div className={styles.empty}>Carregando…</div>
         ) : exams.length === 0 ? (
           <div className={styles.empty}>
-            Nenhum exame cadastrado ainda. Use o admin Django ou um script de import para popular.
+            Nenhum exame cadastrado para {profileName}. Use o admin Django.
           </div>
         ) : (
           examsByYear.map(([year, list]) => (
             <div key={year} className={styles.yearGroup}>
               <h3 className={styles.yearTitle}>{year}</h3>
               <div className={styles.examList}>
-                {list.map((e) => <ExamRow key={e.id} exam={e} />)}
+                {list.map(e => <ExamRow key={e.id} exam={e} />)}
               </div>
             </div>
           ))
         )}
       </section>
-
-      <section className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <h2 className={styles.sectionTitle}>Vitais</h2>
-          <span className={styles.sectionCount}>{vitals.length}</span>
-        </div>
-        {vitals.length === 0 ? (
-          <div className={styles.empty}>Sem leituras de vitais ainda.</div>
-        ) : (
-          <div className={styles.vitalsList}>
-            {vitals.slice(0, 20).map((v) => (
-              <div key={v.id} className={styles.vitalRow}>
-                <span className={styles.vitalDate}>{formatDate(v.data)}</span>
-                <span className={styles.vitalTipo}>{v.tipo_label}</span>
-                <span className={styles.vitalValor}>{v.valor}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
     </div>
   )
 }
 
-function PregnancyCard({ pregnancy }) {
-  const ig = pregnancy.ig_atual_semanas
-  const dias = pregnancy.dias_ate_dpp
-  const progressPct = pregnancy.dum
-    ? Math.min(100, Math.max(0, ((280 - (dias ?? 280)) / 280) * 100))
-    : 0
-  const lastConsult = pregnancy.consultations?.[0]
-  const cobertura = pregnancy.cobertura_parto
-
-  return (
-    <div className={styles.pregnancyCard}>
-      <div className={styles.pregnancyHeader}>
-        <div>
-          <div className={styles.pregnancyTitle}>
-            Gestação · {pregnancy.gestante_name}
-          </div>
-          <div className={styles.pregnancyMeta}>
-            Confirmada em {formatDate(pregnancy.confirmada_em)}
-            {pregnancy.dum && ` · DUM ${formatDate(pregnancy.dum)}`}
-            {pregnancy.dpp && ` · DPP ${formatDate(pregnancy.dpp)}`}
-          </div>
-        </div>
-        <div className={styles.pregnancyStatus} data-status={pregnancy.status}>
-          {pregnancy.status}
-        </div>
-      </div>
-
-      {cobertura && cobertura.status === 'risco' && (
-        <div className={styles.coberturaAlert} data-status="risco">
-          <div className={styles.coberturaTitle}>⚠️ Risco de carência obstétrica</div>
-          <div className={styles.coberturaBody}>
-            DPP cai <strong>{cobertura.dias_descoberto} dias</strong> antes do fim da carência
-            ({formatDate(cobertura.fim_carencia)}) do plano <strong>{cobertura.plano}</strong>.
-            Parto pode não ter cobertura. Ver <code>family/pregnancy/alerta_carencia.md</code>.
-          </div>
-        </div>
-      )}
-      {cobertura && cobertura.status === 'pending' && (
-        <div className={styles.coberturaAlert} data-status="pending">
-          <div className={styles.coberturaBody}>
-            Cobertura de parto: aguardando DPP confirmada ou data de vigência do plano.
-          </div>
-        </div>
-      )}
-      {cobertura && cobertura.status === 'ok' && (
-        <div className={styles.coberturaAlert} data-status="ok">
-          <div className={styles.coberturaBody}>
-            ✅ Parto coberto pelo plano <strong>{cobertura.plano}</strong> (carência cumprida em {formatDate(cobertura.fim_carencia)}).
-          </div>
-        </div>
-      )}
-
-      {pregnancy.dum && (
-        <div className={styles.pregnancyTimeline}>
-          <div className={styles.timelineBar}>
-            <div className={styles.timelineFill} style={{ width: `${progressPct}%` }} />
-          </div>
-          <div className={styles.timelineLabels}>
-            <span>{ig ? `IG ${ig}` : '—'}</span>
-            <span>{dias != null ? `${dias} dias até DPP` : '—'}</span>
-          </div>
-        </div>
-      )}
-
-      {lastConsult && (
-        <div className={styles.lastConsult}>
-          <div className={styles.lastConsultTitle}>Última consulta · {formatDate(lastConsult.data)}</div>
-          <div className={styles.lastConsultBody}>
-            {lastConsult.pa_sis && <span>PA {lastConsult.pa_sis}/{lastConsult.pa_dia}</span>}
-            {lastConsult.peso_kg && <span>Peso {lastConsult.peso_kg}kg</span>}
-            {lastConsult.fcf_bpm && <span>FCF {lastConsult.fcf_bpm}bpm</span>}
-            {lastConsult.altura_uterina_cm && <span>AU {lastConsult.altura_uterina_cm}cm</span>}
-            {lastConsult.ig_semanas && <span>IG {lastConsult.ig_semanas}</span>}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function FamiliaTab() {
-  const { currentProfile } = useProfile()
+/**
+ * FamiliaView — pregnancy-centric dashboard with checkpoints, cobertura, hero gauge.
+ */
+function FamiliaView() {
   const { data: pregnancies = [], isLoading } = useQuery({
-    queryKey: ['pregnancies', currentProfile?.id],
+    queryKey: ['pregnancies-shared'],
     queryFn: () => api.get('/saude/pregnancies/'),
-    enabled: !!currentProfile,
   })
-  const activePregnancies = pregnancies.filter((p) => p.status === 'ativa')
+  const ativa = pregnancies.find(p => p.status === 'ativa')
+
+  if (isLoading) return <div className={styles.empty}>Carregando…</div>
+  if (!ativa) {
+    return (
+      <div className={styles.empty}>
+        Nenhuma gestação ativa registrada. Use o admin Django para cadastrar.
+      </div>
+    )
+  }
 
   return (
     <div className={styles.tabContent}>
+      <div className={styles.heroRow}>
+        <div className={styles.heroLeft}>
+          <div className={styles.familyTitle}>Gestação · {ativa.gestante_name}</div>
+          <div className={styles.familyMeta}>
+            Confirmada em {formatDate(ativa.confirmada_em)}
+            {ativa.dum && ` · DUM ${formatDate(ativa.dum)}`}
+          </div>
+          <PregnancyHero pregnancy={ativa} />
+        </div>
+        <div className={styles.heroRight}>
+          <NextActionWidget pregnancy={ativa} />
+          <CoberturaWidget pregnancy={ativa} />
+        </div>
+      </div>
+
+      <PregnancyTimeline pregnancy={ativa} />
+
       <section className={styles.section}>
         <div className={styles.sectionHeader}>
-          <h2 className={styles.sectionTitle}>Gestações</h2>
+          <h2 className={styles.sectionTitle}>Checkpoints pré-natais — Ministério da Saúde</h2>
         </div>
-        {isLoading ? (
-          <div className={styles.empty}>Carregando…</div>
-        ) : pregnancies.length === 0 ? (
-          <div className={styles.empty}>
-            Nenhuma gestação registrada. Use o admin Django para cadastrar.
-          </div>
-        ) : (
-          <div className={styles.pregnancyList}>
-            {pregnancies.map((p) => <PregnancyCard key={p.id} pregnancy={p} />)}
-          </div>
-        )}
+        <PregnancyCheckpoints pregnancy={ativa} />
       </section>
 
-      {activePregnancies.length > 0 && (
+      {pregnancies.length > 1 && (
         <section className={styles.section}>
           <div className={styles.sectionHeader}>
-            <h2 className={styles.sectionTitle}>Próximos passos</h2>
+            <h2 className={styles.sectionTitle}>Histórico de gestações</h2>
+            <span className={styles.sectionCount}>{pregnancies.length}</span>
           </div>
-          <div className={styles.tipBox}>
-            Detalhes de pré-natal, marcos, mobilograma e alertas: ver
-            <code> health/family/PLANO_MESTRE.md</code> no Mac.
+          <div className={styles.pregnancyList}>
+            {pregnancies.filter(p => p !== ativa).map(p => (
+              <div key={p.id} className={styles.pregnancyCard}>
+                <div className={styles.pregnancyHeader}>
+                  <div>
+                    <div className={styles.pregnancyTitle}>Gestação · {p.gestante_name}</div>
+                    <div className={styles.pregnancyMeta}>
+                      Confirmada em {formatDate(p.confirmada_em)}
+                    </div>
+                  </div>
+                  <div className={styles.pregnancyStatus} data-status={p.status}>{p.status}</div>
+                </div>
+              </div>
+            ))}
           </div>
         </section>
       )}
@@ -274,20 +241,38 @@ function FamiliaTab() {
 }
 
 export default function Saude() {
+  const { currentProfile, profiles = [] } = useProfile()
   const [tab, setTab] = useState('eu')
-  const { currentProfile } = useProfile()
+
+  // Pick the "other" profile (anyone that isn't the current one).
+  const otherProfile = useMemo(() => {
+    if (!currentProfile) return null
+    return profiles.find(p => p.id !== currentProfile.id) || null
+  }, [currentProfile, profiles])
+
+  if (!currentProfile) {
+    return <div className={styles.saudePage}><div className={styles.empty}>Carregando perfil…</div></div>
+  }
 
   return (
     <div className={styles.saudePage}>
       <div className={styles.headerBar}>
-        <h1 className={styles.title}>Saúde · {currentProfile?.name || ''}</h1>
+        <h1 className={styles.title}>Saúde</h1>
         <div className={styles.tabs}>
           <button
             className={tab === 'eu' ? styles.tabActive : styles.tab}
             onClick={() => setTab('eu')}
           >
-            Eu
+            {currentProfile.name}
           </button>
+          {otherProfile && (
+            <button
+              className={tab === 'other' ? styles.tabActive : styles.tab}
+              onClick={() => setTab('other')}
+            >
+              {otherProfile.name}
+            </button>
+          )}
           <button
             className={tab === 'familia' ? styles.tabActive : styles.tab}
             onClick={() => setTab('familia')}
@@ -296,7 +281,10 @@ export default function Saude() {
           </button>
         </div>
       </div>
-      {tab === 'eu' ? <EuTab /> : <FamiliaTab />}
+
+      {tab === 'eu' && <PersonalView profileId={currentProfile.id} profileName={currentProfile.name} />}
+      {tab === 'other' && otherProfile && <PersonalView profileId={otherProfile.id} profileName={otherProfile.name} />}
+      {tab === 'familia' && <FamiliaView />}
     </div>
   )
 }

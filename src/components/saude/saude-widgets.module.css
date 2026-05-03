@@ -1,0 +1,615 @@
+/* ── Hero (arc gauge) ──────────────────────────────── */
+.hero {
+  position: relative;
+  width: 220px;
+  height: 220px;
+  margin: 0 auto;
+}
+
+.heroSvg { display: block; }
+
+.heroCenter {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.heroIg {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text-primary, #2a2724);
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.heroIgLabel {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 4px;
+  margin-bottom: 14px;
+}
+
+.heroDpp {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent, #c47e3a);
+}
+
+.heroDppLabel {
+  font-size: 10px;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 2px;
+  max-width: 140px;
+  line-height: 1.3;
+}
+
+/* ── Timeline (horizontal gantt) ───────────────────── */
+.timelineWrap {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 18px 22px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.timelineHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.timelineTitle {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #6b6660);
+}
+
+.timelineLegend {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--text-secondary, #6b6660);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legendDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.timelineBody {
+  position: relative;
+  height: 96px;
+  margin-top: 4px;
+}
+
+.trimesterBand {
+  position: absolute;
+  top: 12px;
+  bottom: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 4px;
+  pointer-events: none;
+}
+
+.trimesterLabel {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(0, 0, 0, 0.35);
+  font-weight: 500;
+}
+
+.weekRuler {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 24px;
+}
+
+.weekTick {
+  position: absolute;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.weekTickLine {
+  width: 1px;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.weekTickLabel {
+  font-size: 10px;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 2px;
+}
+
+.currentMarker {
+  position: absolute;
+  top: 0;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 3;
+  pointer-events: none;
+}
+
+.currentMarkerLine {
+  width: 2px;
+  height: 100%;
+  background: var(--accent, #c47e3a);
+  margin: 0 auto;
+}
+
+.currentMarkerLabel {
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent, #c47e3a);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.checkpointTrack {
+  position: absolute;
+  inset: 0;
+}
+
+.checkpointPin {
+  position: absolute;
+  top: 36px;
+  transform: translateX(-50%);
+  cursor: pointer;
+  z-index: 2;
+}
+
+.checkpointDot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--cp-color, #888);
+  color: #fff;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: transform 0.15s ease;
+}
+
+.checkpointPin:hover .checkpointDot {
+  transform: scale(1.25);
+}
+
+.checkpointPin[data-status="completed"] .checkpointDot {
+  background: #468c5a;
+}
+.checkpointPin[data-status="overdue"] .checkpointDot {
+  background: #b43c3c;
+  animation: pulse-overdue 1.5s ease-in-out infinite;
+}
+.checkpointPin[data-status="upcoming"] .checkpointDot {
+  opacity: 0.5;
+}
+
+@keyframes pulse-overdue {
+  0%, 100% { box-shadow: 0 1px 3px rgba(0,0,0,0.15), 0 0 0 0 rgba(180,60,60,0.5); }
+  50% { box-shadow: 0 1px 3px rgba(0,0,0,0.15), 0 0 0 8px rgba(180,60,60,0); }
+}
+
+.checkpointTooltip {
+  position: absolute;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #2a2724;
+  color: #fff;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  width: 240px;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+
+.checkpointTooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #2a2724;
+}
+
+.tooltipTitle {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.tooltipMeta {
+  font-size: 11px;
+  opacity: 0.75;
+  margin-bottom: 4px;
+}
+
+.tooltipStatus[data-status="overdue"] { color: #ff8a8a; font-weight: 600; }
+.tooltipStatus[data-status="current"] { color: #ffd485; font-weight: 600; }
+.tooltipStatus[data-status="completed"] { color: #8ad4a0; font-weight: 600; }
+
+.tooltipNotes {
+  font-size: 11px;
+  opacity: 0.85;
+  margin-top: 4px;
+}
+
+/* ── Checkpoints widget (vertical list) ─────────────── */
+.checkpointsWidget {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.triGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.triHeader {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #6b6660);
+  padding-left: 4px;
+}
+
+.triList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.checkpointRow {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 8px;
+  align-items: center;
+}
+
+.checkpointRow[data-status="overdue"] {
+  border-color: rgba(180, 60, 60, 0.3);
+  background: rgba(180, 60, 60, 0.02);
+}
+.checkpointRow[data-status="completed"] {
+  opacity: 0.6;
+}
+.checkpointRow[data-status="upcoming"] {
+  opacity: 0.85;
+}
+
+.checkpointIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+}
+
+.checkpointBody {
+  min-width: 0;
+}
+
+.checkpointLabel {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary, #2a2724);
+}
+
+.checkpointMeta {
+  font-size: 11px;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.criticalTag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #c47e3a;
+  font-weight: 600;
+}
+
+.checkpointStatus {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 10px;
+}
+
+.checkpointStatus[data-status="completed"] { background: rgba(70, 140, 90, 0.12); color: #468c5a; }
+.checkpointStatus[data-status="current"]   { background: rgba(196, 126, 58, 0.15); color: #c47e3a; }
+.checkpointStatus[data-status="upcoming"]  { background: rgba(0, 0, 0, 0.06); color: #6b6660; }
+.checkpointStatus[data-status="overdue"]   { background: rgba(180, 60, 60, 0.15); color: #b43c3c; }
+
+/* ── Next Action ────────────────────────────────────── */
+.widgetLabel {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #6b6660);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.nextAction {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.nextAction[data-urgency="urgent"] { border-color: rgba(180, 60, 60, 0.4); background: linear-gradient(135deg, rgba(180,60,60,0.06), #fff 60%); }
+.nextAction[data-urgency="now"]    { border-color: rgba(196, 126, 58, 0.4); background: linear-gradient(135deg, rgba(196,126,58,0.06), #fff 60%); }
+.nextAction[data-urgency="soon"]   { border-color: rgba(91, 139, 196, 0.3); }
+.nextAction[data-urgency="ok"]     { border-color: rgba(70, 140, 90, 0.3); background: linear-gradient(135deg, rgba(70,140,90,0.05), #fff 60%); }
+
+.nextActionLabel {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.nextActionKind {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.nextActionCountdown {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary, #6b6660);
+}
+
+.nextAction[data-urgency="urgent"] .nextActionCountdown { color: #b43c3c; }
+.nextAction[data-urgency="now"] .nextActionCountdown { color: #c47e3a; }
+
+.nextActionTitle {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary, #2a2724);
+  letter-spacing: -0.01em;
+}
+
+.nextActionDesc {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary, #6b6660);
+}
+
+.nextActionEmpty {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-secondary, #6b6660);
+  font-size: 13px;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px dashed rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+}
+
+/* ── Cobertura Widget ───────────────────────────────── */
+.coberturaWidget {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.coberturaWidget[data-status="risco"] {
+  border-color: rgba(180, 60, 60, 0.35);
+  background: linear-gradient(135deg, rgba(180,60,60,0.05), #fff 60%);
+}
+.coberturaWidget[data-status="ok"] {
+  border-color: rgba(70, 140, 90, 0.3);
+  background: linear-gradient(135deg, rgba(70,140,90,0.04), #fff 60%);
+}
+
+.coberturaTitleSmall {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary, #2a2724);
+}
+
+.coberturaDesc {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary, #6b6660);
+}
+
+.coberturaBarOuter {
+  position: relative;
+  height: 10px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 5px;
+  overflow: visible;
+  margin-top: 4px;
+}
+
+.coberturaBarInner {
+  height: 100%;
+  background: linear-gradient(90deg, #c47e3a, #b43c3c);
+  border-radius: 5px;
+}
+
+.coberturaDppMarker {
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  width: 2px;
+  background: #2a2724;
+  transform: translateX(-1px);
+}
+
+.coberturaDppLabel {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 700;
+  color: #2a2724;
+  white-space: nowrap;
+  margin-bottom: 2px;
+}
+
+.coberturaTimeline {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 8px;
+}
+
+.coberturaEmpty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-secondary, #6b6660);
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 10px;
+}
+
+/* ── Exams widget ───────────────────────────────────── */
+.examsWidget {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.examsList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.examMini {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.examMini:last-child { border-bottom: none; }
+
+.examMiniChip {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #fff;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.examMiniBody { min-width: 0; }
+
+.examMiniName {
+  font-size: 13px;
+  color: var(--text-primary, #2a2724);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.examMiniValores {
+  font-size: 11px;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 1px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.examMiniDate {
+  font-size: 11px;
+  color: var(--text-secondary, #6b6660);
+  white-space: nowrap;
+}
+
+.examsEmpty {
+  font-size: 12px;
+  color: var(--text-secondary, #6b6660);
+  text-align: center;
+  padding: 12px;
+}
