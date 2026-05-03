@@ -31,6 +31,10 @@ import CoberturaWidget from './saude/CoberturaWidget'
 import ExamsRecentWidget from './saude/ExamsRecentWidget'
 import AddExamForm from './saude/AddExamForm'
 import MobilogramaWidget from './saude/MobilogramaWidget'
+import FetalDevelopmentCard from './saude/FetalDevelopmentCard'
+import LabPanelDashboard from './saude/LabPanelDashboard'
+import HipImagingCard from './saude/HipImagingCard'
+import ClinicalReportCard from './saude/ClinicalReportCard'
 
 const EXAM_TYPE_LABELS = {
   hemograma: 'Hemograma', bioquimica: 'Bioquímica', hormonal: 'Hormonal',
@@ -119,6 +123,8 @@ function PersonalView({ profileId, profileName }) {
     return Object.entries(grouped).sort(([a], [b]) => b.localeCompare(a))
   }, [exams])
 
+  const isPalmer = profileName?.toLowerCase().includes('palmer')
+
   return (
     <div className={styles.tabContent}>
       <div className={styles.gridTwoCol}>
@@ -144,6 +150,14 @@ function PersonalView({ profileId, profileName }) {
           )}
         </div>
       </div>
+
+      {isPalmer && (
+        <>
+          <ClinicalReportCard />
+          <HipImagingCard />
+          <LabPanelDashboard />
+        </>
+      )}
 
       <section className={styles.section}>
         <div className={styles.sectionHeader}>
@@ -208,6 +222,7 @@ function FamiliaView() {
           </div>
           <PregnancyHero pregnancy={ativa} />
         </div>
+        <FetalDevelopmentCard pregnancy={ativa} />
         <div className={styles.heroRight}>
           <NextActionWidget pregnancy={ativa} completedIds={completedSet} />
           <CoberturaWidget pregnancy={ativa} />

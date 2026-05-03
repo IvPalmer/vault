@@ -926,6 +926,446 @@
   font-weight: 500;
 }
 
+/* ── Lab panel dashboard ────────────────────────────── */
+.labPanel {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.labHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  padding-bottom: 14px;
+}
+
+.labMeta {
+  font-size: 12px;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 4px;
+}
+
+.labCategory {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.labCategoryTitle {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #6b6660);
+  margin: 0;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.08);
+}
+
+.markerGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.markerCard {
+  border: 1px solid;
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: transform 0.15s ease;
+}
+
+.markerCard:hover { transform: translateY(-1px); }
+
+.markerLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary, #6b6660);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.markerValueRow {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.markerValue {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary, #2a2724);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.markerUnit {
+  font-size: 12px;
+  color: var(--text-secondary, #6b6660);
+  font-weight: 500;
+}
+
+.markerFooter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 10px;
+}
+
+.markerStatusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.markerStatusLabel {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-primary, #2a2724);
+}
+
+.markerRef {
+  color: var(--text-secondary, #6b6660);
+  margin-left: auto;
+}
+
+.markerObs {
+  font-size: 11px;
+  color: var(--text-secondary, #6b6660);
+  font-style: italic;
+  line-height: 1.4;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(0, 0, 0, 0.1);
+}
+
+/* ── Hip imaging card ───────────────────────────────── */
+.hipCard {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.hipFinding {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary, #2a2724);
+  background: rgba(196, 126, 58, 0.06);
+  border-left: 3px solid var(--accent, #c47e3a);
+  padding: 12px 14px;
+  border-radius: 6px;
+}
+
+.hipTable {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hipTableHeader {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 2fr;
+  gap: 12px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #6b6660);
+  padding: 4px 12px;
+}
+
+.hipRow {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 2fr;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.015);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 8px;
+  align-items: center;
+}
+
+.hipCategoryName {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary, #2a2724);
+}
+
+.hipValueCell { text-align: left; }
+
+.hipValue {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.hipDash {
+  color: var(--text-secondary, #6b6660);
+  opacity: 0.4;
+  font-size: 16px;
+}
+
+.hipRef {
+  font-size: 11px;
+  color: var(--text-secondary, #6b6660);
+  font-style: italic;
+}
+
+/* ── Clinical report (5-layer diagnosis) ────────────── */
+.clinicalCard {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.layersGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.layerCard {
+  background: var(--layer-color, #888);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--layer-color, #888) 12%, transparent), transparent 70%);
+  border: 1px solid color-mix(in srgb, var(--layer-color, #888) 30%, transparent);
+  border-left: 4px solid var(--layer-color, #888);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.layerHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.layerIcon { font-size: 18px; }
+
+.layerTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #2a2724);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.layerFindings {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary, #2a2724);
+}
+
+.layerFindings li { margin-bottom: 4px; }
+
+.observationsBlock {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  padding-top: 16px;
+}
+
+.observationsTitle {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #6b6660);
+  margin: 0 0 10px 0;
+}
+
+.observationsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.observationCard {
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.observationCard[data-priority="alta"] {
+  background: rgba(180, 60, 60, 0.05);
+  border-color: rgba(180, 60, 60, 0.25);
+}
+.observationCard[data-priority="media"] {
+  background: rgba(196, 126, 58, 0.05);
+  border-color: rgba(196, 126, 58, 0.25);
+}
+
+.observationHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.observationTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #2a2724);
+}
+
+.observationPriority {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-secondary, #6b6660);
+}
+.observationPriority[data-priority="alta"]  { background: rgba(180, 60, 60, 0.15); color: #b43c3c; }
+.observationPriority[data-priority="media"] { background: rgba(196, 126, 58, 0.15); color: #c47e3a; }
+
+.observationText {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-primary, #2a2724);
+}
+
+/* ── Fetal development card ─────────────────────────── */
+.fetalCard {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fetalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.fetalCompareEmoji { font-size: 28px; }
+
+.fetalIllustrationWrap {
+  background: linear-gradient(135deg, rgba(196,126,58,0.05), rgba(196,126,58,0.12));
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fetalSvg { width: 100%; max-width: 240px; height: auto; }
+
+.fetalCompareTitle {
+  font-size: 13px;
+  text-align: center;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 4px;
+}
+
+.fetalCompareTitle strong {
+  color: var(--accent, #c47e3a);
+  font-weight: 700;
+}
+
+.fetalSizeRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+.fetalSizeBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.fetalSizeNum {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary, #2a2724);
+  font-variant-numeric: tabular-nums;
+}
+
+.fetalSizeNum span {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary, #6b6660);
+  margin-left: 2px;
+}
+
+.fetalSizeLabel {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 2px;
+}
+
+.fetalMilestoneTitle {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 6px;
+}
+
+.fetalMilestoneText {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-primary, #2a2724);
+}
+
+.fetalSymptoms {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary, #2a2724);
+}
+
+.fetalSymptoms li { margin-bottom: 3px; }
+
+.fetalEmpty {
+  font-size: 12px;
+  color: var(--text-secondary, #6b6660);
+  text-align: center;
+  padding: 24px 0;
+}
+
 /* ── Add button (top of tab) ────────────────────────── */
 .addBtn {
   background: var(--accent, #c47e3a);
