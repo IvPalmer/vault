@@ -1366,6 +1366,259 @@
   padding: 24px 0;
 }
 
+/* ── Baby Implications Section ──────────────────────── */
+.implSection {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.implSectionHeader {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  padding-bottom: 14px;
+}
+
+.implSectionTitle {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 6px 0;
+  color: var(--text-primary, #2a2724);
+}
+
+.implSectionDesc {
+  font-size: 12px;
+  color: var(--text-secondary, #6b6660);
+  line-height: 1.5;
+}
+
+.implPrioGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.implPrioHeader {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #6b6660);
+  padding-bottom: 4px;
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.08);
+}
+
+.implList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.implCard {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+
+.implCard[data-priority="alta"] {
+  border-color: rgba(180, 60, 60, 0.3);
+  background: linear-gradient(135deg, rgba(180, 60, 60, 0.03), #fff 60%);
+}
+.implCard[data-priority="media"] {
+  border-color: rgba(196, 126, 58, 0.3);
+}
+
+.implHeader {
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 14px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.implHeader:hover { background: rgba(0, 0, 0, 0.02); }
+
+.implHeaderLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.implCategoria {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #6b6660);
+}
+
+.implTitulo {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary, #2a2724);
+}
+
+.implHeaderRight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.implPrioridade {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text-secondary, #6b6660);
+}
+
+.implPrioridade[data-priority="alta"]  { background: rgba(180, 60, 60, 0.15); color: #b43c3c; }
+.implPrioridade[data-priority="media"] { background: rgba(196, 126, 58, 0.15); color: #c47e3a; }
+
+.implChevron {
+  font-size: 18px;
+  color: var(--text-secondary, #6b6660);
+  width: 18px;
+  text-align: center;
+  font-weight: 400;
+}
+
+.implBody {
+  padding: 0 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  padding-top: 14px;
+}
+
+.implOrigem {
+  font-size: 11px;
+  color: var(--text-secondary, #6b6660);
+  font-style: italic;
+}
+
+.implResumo {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-primary, #2a2724);
+}
+
+.implScenarios {
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.implScenarioTitle {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #6b6660);
+  margin-bottom: 8px;
+}
+
+.implScenariosGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 700px) {
+  .implScenariosGrid { grid-template-columns: 1fr; }
+}
+
+.implScenario {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.implScenarioLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #2a2724);
+  margin-bottom: 4px;
+}
+
+.implScenarioProb {
+  font-size: 10px;
+  color: var(--text-secondary, #6b6660);
+  font-style: italic;
+  margin-bottom: 6px;
+}
+
+.implScenarioOutcome {
+  font-size: 12px;
+  color: var(--text-primary, #2a2724);
+  line-height: 1.5;
+  padding: 2px 0;
+}
+
+.implScenarioOutcome strong { color: var(--accent, #c47e3a); font-weight: 600; }
+
+.implActionTitle {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #6b6660);
+}
+
+.implActions {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary, #2a2724);
+}
+
+.implActions li { margin-bottom: 3px; }
+
+.implEvitar {
+  background: rgba(180, 60, 60, 0.05);
+  border-left: 3px solid #b43c3c;
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+
+.implEvitarTitle {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6b2a2a;
+  margin-bottom: 6px;
+}
+
+.implEvitarList {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary, #2a2724);
+}
+
+.implEvitarList li { margin-bottom: 2px; }
+
 /* ── Add button (top of tab) ────────────────────────── */
 .addBtn {
   background: var(--accent, #c47e3a);

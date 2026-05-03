@@ -32,6 +32,7 @@ import ExamsRecentWidget from './saude/ExamsRecentWidget'
 import AddExamForm from './saude/AddExamForm'
 import MobilogramaWidget from './saude/MobilogramaWidget'
 import FetalDevelopmentCard from './saude/FetalDevelopmentCard'
+import BabyImplicationsSection from './saude/BabyImplicationsSection'
 import LabPanelDashboard from './saude/LabPanelDashboard'
 import HipImagingCard from './saude/HipImagingCard'
 import ClinicalReportCard from './saude/ClinicalReportCard'
@@ -239,6 +240,8 @@ function FamiliaView() {
       </div>
 
       <PregnancyTimeline pregnancy={ativa} completedIds={completedSet} />
+
+      <BabyImplicationsSection />
 
       <div className={styles.gridTwoCol}>
         <MobilogramaWidget pregnancy={ativa} profileId={ativa.gestante} />
