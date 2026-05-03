@@ -11,17 +11,22 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load .env from project root (one level up from backend/)
 load_dotenv(dotenv_path=BASE_DIR.parent / '.env')
 
-# SECRET_KEY: Generate a random key if not set via environment.
-# In production, always set SECRET_KEY in .env or environment variables.
-_default_secret = os.getenv('SECRET_KEY', '')
+# SECRET_KEY: Prefer env var. Otherwise fall back to a persistent file —
+# /app/secrets/.secret_key is volume-mounted in prod (docker-compose.prod.yml)
+# so the key survives container rebuilds. Local dev uses BASE_DIR/.secret_key.
+_default_secret = os.getenv('SECRET_KEY', '').strip()
 if not _default_secret:
     import secrets as _secrets
-    _secret_file = BASE_DIR / '.secret_key'
+    _persistent_dir = Path('/app/secrets') if Path('/app/secrets').exists() else BASE_DIR
+    _secret_file = _persistent_dir / '.secret_key'
     if _secret_file.exists():
         _default_secret = _secret_file.read_text().strip()
-    else:
+    if not _default_secret:
         _default_secret = _secrets.token_urlsafe(50)
-        _secret_file.write_text(_default_secret)
+        try:
+            _secret_file.write_text(_default_secret)
+        except OSError:
+            pass  # Read-only filesystem — fall back to ephemeral key (warns below)
 SECRET_KEY = _default_secret
 
 DEBUG = os.getenv('DEBUG', '1') == '1'

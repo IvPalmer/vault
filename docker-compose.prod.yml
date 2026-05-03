@@ -30,6 +30,7 @@ services:
       PLUGGY_PROFILES: ${PLUGGY_PROFILES:-}
     volumes:
       - vault_static:/app/staticfiles
+      - vault_secrets:/app/secrets
     entrypoint: ["sh", "/app/entrypoint.sh"]
 
   web:
@@ -70,3 +71,4 @@ services:
 volumes:
   vault_postgres_data:
   vault_static:
+  vault_secrets:
