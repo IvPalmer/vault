@@ -212,14 +212,15 @@ export const RAFA_PREGNANCY_REPORT = {
     },
     {
       id: 'risco_g6pd',
-      titulo: 'G6PD (parceiro portador)',
+      titulo: 'G6PD (Palmer portador)',
       cor: '#7a5fa6',
       achados: [
-        'Padrão X-recessivo: Palmer (XᵍY) cruzando Rafa (XX)',
-        'Se feto masculino: 50% chance de afetado',
-        'Se feto feminino: 50% chance de portadora (não afetada)',
-        'Aconselhamento genético no 1º trimestre indicado',
-        'Lista de fármacos a evitar no neonato afetado disponível',
+        'Herança X-recessiva — Palmer XᵍY (afetado), Rafa não testada',
+        'Cenário esperado (Rafa XX normal): 0% filho afetado, 100% filha portadora obrigatória (assintomática)',
+        'Cenário pior (Rafa XᵍX portadora — incomum): 50% filho afetado, 50% filha portadora',
+        'Solicitar genotipagem G6PD da Rafa para definir cenário real',
+        'Triagem neonatal SUS (teste do pezinho ampliado) já detecta G6PD no RN',
+        'Lista de fármacos a evitar no RN afetado: sulfas, dapsona, nitrofurantoína, primaquina, naftaleno',
       ],
     },
     {
