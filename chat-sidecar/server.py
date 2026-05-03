@@ -340,7 +340,9 @@ async def _stream_chat(req: ChatRequest):
     # ── Sandbox decision ──
     use_sandbox = await needs_sandbox(req.message)
     worktree_path = None
-    agent_cwd = "/Users/palmer/Work/Dev/vault"
+    agent_cwd = os.environ.get("AGENT_CWD", "/Users/palmer/Work/Dev/vault")
+    if not os.path.isdir(agent_cwd):
+        agent_cwd = "/tmp"
 
     if use_sandbox:
         yield f"data: {json.dumps({'sandbox_status': 'preparing', 'message': 'Preparando ambiente isolado...'})}\n\n"
