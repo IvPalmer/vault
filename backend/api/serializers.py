@@ -201,7 +201,7 @@ class HealthExamSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'profile', 'profile_name', 'tipo', 'tipo_label', 'nome', 'data',
             'valores', 'arquivo_path', 'laboratorio', 'medico', 'notes',
-            'pregnancy', 'created_at', 'updated_at',
+            'pregnancy', 'checkpoint_id', 'created_at', 'updated_at',
         ]
         read_only_fields = ['profile', 'created_at', 'updated_at']
 
@@ -233,6 +233,7 @@ class PregnancySerializer(serializers.ModelSerializer):
     ig_atual_semanas = serializers.SerializerMethodField()
     dias_ate_dpp = serializers.SerializerMethodField()
     cobertura_parto = serializers.SerializerMethodField()
+    completed_checkpoint_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = Pregnancy
@@ -241,6 +242,7 @@ class PregnancySerializer(serializers.ModelSerializer):
             'confirmada_em', 'dum', 'dpp', 'status', 'notes',
             'plano_nome', 'plano_vigencia_inicio', 'carencia_obstetrica_dias',
             'consultations', 'ig_atual_semanas', 'dias_ate_dpp', 'cobertura_parto',
+            'completed_checkpoint_ids',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['created_at', 'updated_at']
@@ -258,6 +260,15 @@ class PregnancySerializer(serializers.ModelSerializer):
             return None
         from datetime import date
         return (obj.dpp - date.today()).days
+
+    def get_completed_checkpoint_ids(self, obj):
+        """Distinct checkpoint_ids of HealthExam records linked to this
+        pregnancy OR belonging to the gestante. Returns list of strings."""
+        from django.db.models import Q
+        qs = obj.gestante.health_exams.filter(
+            Q(pregnancy=obj) | Q(pregnancy__isnull=True)
+        ).exclude(checkpoint_id='').values_list('checkpoint_id', flat=True).distinct()
+        return list(qs)
 
     def get_cobertura_parto(self, obj):
         """Returns dict with status of obstetric coverage vs DPP.

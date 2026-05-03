@@ -29,6 +29,8 @@ import PregnancyCheckpoints from './saude/PregnancyCheckpoints'
 import NextActionWidget from './saude/NextActionWidget'
 import CoberturaWidget from './saude/CoberturaWidget'
 import ExamsRecentWidget from './saude/ExamsRecentWidget'
+import AddExamForm from './saude/AddExamForm'
+import MobilogramaWidget from './saude/MobilogramaWidget'
 
 const EXAM_TYPE_LABELS = {
   hemograma: 'Hemograma', bioquimica: 'Bioquímica', hormonal: 'Hormonal',
@@ -95,6 +97,7 @@ function ExamRow({ exam }) {
  * Renders exam list + vitals scoped to the given profile_id.
  */
 function PersonalView({ profileId, profileName }) {
+  const [adding, setAdding] = useState(false)
   const { data: exams = [], isLoading: examsLoading } = useQuery({
     queryKey: ['health-exams', profileId],
     queryFn: () => api.get(`/saude/exams/${profileId ? `?profile_id=${profileId}` : ''}`),
@@ -146,6 +149,7 @@ function PersonalView({ profileId, profileName }) {
         <div className={styles.sectionHeader}>
           <h2 className={styles.sectionTitle}>Histórico completo · exames</h2>
           <span className={styles.sectionCount}>{exams.length}</span>
+          <button className={widgetStyles.addBtn} onClick={() => setAdding(true)}>+ Adicionar exame</button>
         </div>
         {examsLoading ? (
           <div className={styles.empty}>Carregando…</div>
@@ -164,6 +168,10 @@ function PersonalView({ profileId, profileName }) {
           ))
         )}
       </section>
+
+      {adding && (
+        <AddExamForm profileId={profileId} profileName={profileName} onClose={() => setAdding(false)} />
+      )}
     </div>
   )
 }
@@ -172,11 +180,13 @@ function PersonalView({ profileId, profileName }) {
  * FamiliaView — pregnancy-centric dashboard with checkpoints, cobertura, hero gauge.
  */
 function FamiliaView() {
+  const [adding, setAdding] = useState(false)
   const { data: pregnancies = [], isLoading } = useQuery({
     queryKey: ['pregnancies-shared'],
     queryFn: () => api.get('/saude/pregnancies/'),
   })
   const ativa = pregnancies.find(p => p.status === 'ativa')
+  const completedSet = useMemo(() => new Set(ativa?.completed_checkpoint_ids || []), [ativa])
 
   if (isLoading) return <div className={styles.empty}>Carregando…</div>
   if (!ativa) {
@@ -199,19 +209,34 @@ function FamiliaView() {
           <PregnancyHero pregnancy={ativa} />
         </div>
         <div className={styles.heroRight}>
-          <NextActionWidget pregnancy={ativa} />
+          <NextActionWidget pregnancy={ativa} completedIds={completedSet} />
           <CoberturaWidget pregnancy={ativa} />
         </div>
       </div>
 
-      <PregnancyTimeline pregnancy={ativa} />
+      <PregnancyTimeline pregnancy={ativa} completedIds={completedSet} />
+
+      <div className={styles.gridTwoCol}>
+        <MobilogramaWidget pregnancy={ativa} profileId={ativa.gestante} />
+      </div>
 
       <section className={styles.section}>
         <div className={styles.sectionHeader}>
           <h2 className={styles.sectionTitle}>Checkpoints pré-natais — Ministério da Saúde</h2>
+          <span className={styles.sectionCount}>{completedSet.size} concluídos</span>
+          <button className={widgetStyles.addBtn} onClick={() => setAdding(true)}>+ Registrar exame/consulta</button>
         </div>
-        <PregnancyCheckpoints pregnancy={ativa} />
+        <PregnancyCheckpoints pregnancy={ativa} completedIds={completedSet} />
       </section>
+
+      {adding && (
+        <AddExamForm
+          profileId={ativa.gestante}
+          profileName={ativa.gestante_name}
+          pregnancyId={ativa.id}
+          onClose={() => setAdding(false)}
+        />
+      )}
 
       {pregnancies.length > 1 && (
         <section className={styles.section}>

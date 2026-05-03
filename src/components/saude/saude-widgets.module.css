@@ -613,3 +613,332 @@
   text-align: center;
   padding: 12px;
 }
+
+/* ── Modal (add exam) ──────────────────────────────── */
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+
+.modal {
+  background: #fff;
+  border-radius: 14px;
+  width: 100%;
+  max-width: 520px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.2);
+}
+
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.modalTitle {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.modalClose {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: var(--text-secondary, #6b6660);
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.modalClose:hover { background: rgba(0, 0, 0, 0.06); }
+
+.modalForm {
+  padding: 16px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.formRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.formRow label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #6b6660);
+}
+
+.formRow input,
+.formRow select,
+.formRow textarea {
+  padding: 8px 10px;
+  font-size: 13px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  font-family: inherit;
+  background: #fff;
+  color: var(--text-primary, #2a2724);
+}
+
+.formRow input:focus,
+.formRow select:focus,
+.formRow textarea:focus {
+  outline: none;
+  border-color: var(--accent, #c47e3a);
+}
+
+.formHint {
+  font-size: 10px;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 2px;
+}
+
+.formError {
+  background: rgba(180, 60, 60, 0.08);
+  border: 1px solid rgba(180, 60, 60, 0.25);
+  color: #b43c3c;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.btnPrimary,
+.btnSecondary {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+}
+
+.btnPrimary {
+  background: var(--accent, #c47e3a);
+  color: #fff;
+}
+.btnPrimary:hover { opacity: 0.92; }
+.btnPrimary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btnSecondary {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text-primary, #2a2724);
+}
+.btnSecondary:hover { background: rgba(0, 0, 0, 0.09); }
+
+.btnGhost {
+  background: transparent;
+  color: var(--text-secondary, #6b6660);
+  border: none;
+  padding: 8px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.btnGhost:hover { background: rgba(0, 0, 0, 0.04); }
+
+/* ── Mobilograma widget ─────────────────────────────── */
+.mobiloWidget,
+.mobiloEmpty {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mobiloEmptyText {
+  font-size: 12px;
+  color: var(--text-secondary, #6b6660);
+  text-align: center;
+  padding: 12px 0;
+}
+
+.mobiloHelp {
+  font-size: 10px;
+  color: var(--text-secondary, #6b6660);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.mobiloStart {
+  background: var(--accent, #c47e3a);
+  color: #fff;
+  border: none;
+  padding: 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.mobiloStart:hover { opacity: 0.92; }
+
+.mobiloMain {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+}
+
+.mobiloKicks {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.mobiloKicksNum {
+  font-size: 48px;
+  font-weight: 700;
+  color: var(--accent, #c47e3a);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.mobiloKicksOf {
+  font-size: 18px;
+  color: var(--text-secondary, #6b6660);
+}
+
+.mobiloTime {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+
+.mobiloTime span:first-child {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-primary, #2a2724);
+}
+
+.mobiloTimeLabel {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 2px;
+}
+
+.mobiloProgress {
+  height: 8px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.mobiloProgressFill {
+  height: 100%;
+  background: var(--accent, #c47e3a);
+  transition: width 0.2s ease;
+}
+
+.mobiloAlert {
+  background: rgba(180, 60, 60, 0.1);
+  border-left: 3px solid #b43c3c;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #6b2a2a;
+  line-height: 1.4;
+}
+
+.mobiloActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.mobiloTap {
+  flex: 1;
+  background: var(--accent, #c47e3a);
+  color: #fff;
+  border: none;
+  padding: 16px;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mobiloTap:active { transform: scale(0.97); }
+
+.mobiloHistory {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mobiloHistoryTitle {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #6b6660);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.mobiloHistoryRow {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-secondary, #6b6660);
+  padding: 4px 0;
+}
+
+.mobiloHistoryRow span:nth-child(2) {
+  color: var(--text-primary, #2a2724);
+  font-weight: 500;
+}
+
+/* ── Add button (top of tab) ────────────────────────── */
+.addBtn {
+  background: var(--accent, #c47e3a);
+  color: #fff;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.addBtn:hover { opacity: 0.92; }

@@ -752,6 +752,7 @@ VITAL_TYPE_CHOICES = (
     ('cintura', 'Circunferência Abdominal (cm)'),
     ('fcf', 'FCF Fetal (bpm)'),
     ('au', 'Altura Uterina (cm)'),
+    ('mobilograma', 'Mobilograma (movimentos)'),
 )
 
 
@@ -777,6 +778,10 @@ class HealthExam(models.Model):
     pregnancy = models.ForeignKey(
         'Pregnancy', on_delete=models.SET_NULL, null=True, blank=True, related_name='exams',
         help_text='Optional link to a pregnancy if this exam is part of pre-natal care',
+    )
+    checkpoint_id = models.CharField(
+        max_length=50, blank=True,
+        help_text='Stable id of the prenatal checkpoint this exam fulfills (e.g. "usg-datacao", "totg")',
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
