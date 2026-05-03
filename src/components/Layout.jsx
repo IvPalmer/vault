@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import MonthPicker from './MonthPicker'
+import ChatWidget from './widgets/ChatWidget'
 import { useProfile } from '../context/ProfileContext'
 import { useAuth } from '../context/AuthContext'
 import styles from './Layout.module.css'
@@ -83,6 +84,7 @@ function Layout({ children }) {
       <main className={(isHome || isPessoal || isAnalytics || isSaude) ? styles.mainWide : styles.main}>
         {children}
       </main>
+      <ChatWidget />
     </div>
   )
 }

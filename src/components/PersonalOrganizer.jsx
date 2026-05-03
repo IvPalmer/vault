@@ -25,7 +25,6 @@ import GreetingWidget from './widgets/GreetingWidget'
 import { FinSaldo, FinSobra, FinFatura } from './widgets/FinanceWidgets'
 import EmailWidget from './widgets/EmailWidget'
 import DriveWidget from './widgets/DriveWidget'
-import ChatWidget from './widgets/ChatWidget'
 import CustomWidget from './widgets/CustomWidget'
 import { WidgetSettingsPanel, SettingsGearButton, SettingsField, settingsStyles as ss } from './widgets/WidgetSettingsPanel'
 
@@ -2097,7 +2096,6 @@ function PersonalOrganizerInner({ profileId }) {
 
   return (
     <div className={styles.page}>
-      <ChatWidget />
       <WidgetCatalog onAdd={addWidget} activeWidgetTypes={activeWidgetTypes} />
       <div className={styles.tabBarRow}>
         <TabBar
