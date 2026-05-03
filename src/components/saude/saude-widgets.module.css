@@ -934,7 +934,7 @@
   padding: 20px 24px;
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 18px;
 }
 
 .labHeader {
@@ -951,10 +951,20 @@
   margin-top: 4px;
 }
 
+.labCategoriesGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 14px;
+}
+
 .labCategory {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.018);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 10px;
+  padding: 12px 14px;
 }
 
 .labCategoryHeader {
@@ -962,7 +972,7 @@
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
-  padding-bottom: 4px;
+  padding-bottom: 6px;
   border-bottom: 1px dashed rgba(0, 0, 0, 0.08);
   flex-wrap: wrap;
 }
@@ -986,8 +996,8 @@
 
 .markerGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
 }
 
 .markerCard {

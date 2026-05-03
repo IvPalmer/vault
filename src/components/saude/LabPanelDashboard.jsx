@@ -76,22 +76,24 @@ export default function LabPanelDashboard({ panel }) {
         </div>
       </div>
 
-      {panel.categorias.map(cat => (
-        <div key={cat.id} className={styles.labCategory}>
-          <div className={styles.labCategoryHeader}>
-            <h3 className={styles.labCategoryTitle}>{cat.nome}</h3>
-            {cat.data_atualizacao && (
-              <span className={styles.labCategoryUpdate}>
-                atualizado {cat.data_atualizacao.split('-').reverse().join('/')}
-                {cat.lab_atualizacao && ` · ${cat.lab_atualizacao}`}
-              </span>
-            )}
+      <div className={styles.labCategoriesGrid}>
+        {panel.categorias.map(cat => (
+          <div key={cat.id} className={styles.labCategory}>
+            <div className={styles.labCategoryHeader}>
+              <h3 className={styles.labCategoryTitle}>{cat.nome}</h3>
+              {cat.data_atualizacao && (
+                <span className={styles.labCategoryUpdate}>
+                  {cat.data_atualizacao.split('-').reverse().join('/')}
+                  {cat.lab_atualizacao && ` · ${cat.lab_atualizacao}`}
+                </span>
+              )}
+            </div>
+            <div className={styles.markerGrid}>
+              {cat.markers.map(m => <MarkerCard key={m.key} marker={m} />)}
+            </div>
           </div>
-          <div className={styles.markerGrid}>
-            {cat.markers.map(m => <MarkerCard key={m.key} marker={m} />)}
-          </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   )
 }
