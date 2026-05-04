@@ -40,6 +40,8 @@ services:
       - backend
     environment:
       VAULT_API: http://backend:8000
+      VAULT_API_URL: http://backend:8000/api
+      VAULT_API_HOST: ${VAULT_API_HOST:-vault.grooveops.dev}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - vault_chat_memory:/app/memory

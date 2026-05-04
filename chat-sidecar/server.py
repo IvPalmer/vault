@@ -56,6 +56,7 @@ MAX_MEMORY = 50  # keep last 50 exchanges per profile
 _vault_mcp = create_vault_mcp_server()
 
 VAULT_API = os.environ.get("VAULT_API", "http://localhost:8001")
+_VAULT_API_HOST = os.environ.get("VAULT_API_HOST")
 
 # Profile metadata for personalized responses
 PROFILE_META = {
@@ -90,6 +91,8 @@ async def _fetch_context(profile_id: str) -> str:
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d")
     headers = {"X-Profile-ID": profile_id}
+    if _VAULT_API_HOST:
+        headers["Host"] = _VAULT_API_HOST
 
     async def _get(path: str, params: dict | None = None) -> dict | list | None:
         try:
