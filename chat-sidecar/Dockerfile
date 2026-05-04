@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # claude CLI refuses --dangerously-skip-permissions when running as root.
-RUN useradd -m -u 1000 sidecar && \
+RUN useradd -m -u 1001 sidecar && \
     mkdir -p /home/sidecar/.claude && \
     chown -R sidecar:sidecar /app /home/sidecar
 USER sidecar

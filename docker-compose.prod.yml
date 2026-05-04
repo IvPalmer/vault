@@ -46,8 +46,9 @@ services:
       # Subscription auth: bind-mount Claude Code OAuth credentials from host.
       # Create on the VPS by extracting the JSON from your Mac keychain:
       #   security find-generic-password -s "Claude Code-credentials" -a "$USER" -w
-      # then scp it to ${CLAUDE_CREDS_PATH:-./claude-credentials.json} on the VPS.
-      - ${CLAUDE_CREDS_PATH:-./claude-credentials.json}:/home/sidecar/.claude/.credentials.json:ro
+      # then upload it to /etc/dokploy/secrets/vault-claude.json on the VPS.
+      # Path lives outside the git checkout so deploys do not wipe it.
+      - ${CLAUDE_CREDS_PATH:-/etc/dokploy/secrets/vault-claude.json}:/home/sidecar/.claude/.credentials.json:ro
 
   web:
     build:
