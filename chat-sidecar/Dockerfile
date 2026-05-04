@@ -19,5 +19,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# claude CLI refuses --dangerously-skip-permissions when running as root.
+RUN useradd -m -u 1000 sidecar && \
+    mkdir -p /home/sidecar/.claude && \
+    chown -R sidecar:sidecar /app /home/sidecar
+USER sidecar
+ENV HOME=/home/sidecar
+
 EXPOSE 5178
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "5178"]
