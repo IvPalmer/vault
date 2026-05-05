@@ -1547,6 +1547,83 @@
 .implPrioridade[data-priority="alta"]  { background: rgba(180, 60, 60, 0.15); color: #b43c3c; }
 .implPrioridade[data-priority="media"] { background: rgba(196, 126, 58, 0.15); color: #c47e3a; }
 
+.implLiveBadge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 3px 7px;
+  border-radius: 8px;
+  background: rgba(70, 140, 90, 0.15);
+  color: #468c5a;
+  white-space: nowrap;
+}
+
+.implSectionDescBadge {
+  color: #468c5a;
+  font-weight: 600;
+}
+
+.implMarkersBlock {
+  background: rgba(70, 140, 90, 0.04);
+  border: 1px solid rgba(70, 140, 90, 0.15);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.implMarkersTitle {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #468c5a;
+  margin-bottom: 8px;
+}
+
+.implMarkersGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px;
+}
+
+.implMarkerChip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+.implMarkerChip[data-status="alto"]            { border-left: 3px solid #b43c3c; }
+.implMarkerChip[data-status="baixo"]           { border-left: 3px solid #5b8bc4; }
+.implMarkerChip[data-status="limite_superior"] { border-left: 3px solid #c47e3a; }
+.implMarkerChip[data-status="limite_inferior"] { border-left: 3px solid #c47e3a; }
+.implMarkerChip[data-status="critico"]         { border-left: 3px solid #8c1e1e; }
+.implMarkerChip[data-status="normal"]          { border-left: 3px solid #468c5a; }
+
+.implMarkerChipLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary, #6b6660);
+}
+
+.implMarkerChipValue {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #2a2724);
+  font-variant-numeric: tabular-nums;
+}
+
+.implMarkerChipMeta {
+  font-size: 10px;
+  color: var(--text-secondary, #6b6660);
+}
+
 .implChevron {
   font-size: 18px;
   color: var(--text-secondary, #6b6660);

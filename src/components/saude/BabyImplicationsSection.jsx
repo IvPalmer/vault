@@ -2,12 +2,58 @@
  * BabyImplicationsSection — synthesizes findings from both Palmer's and
  * Rafa's exams that have direct or potential impact on the pregnancy or
  * neonate. Lives in the Família tab.
+ *
+ * Each implication may declare `marker_refs` linking it to specific
+ * LabMarker rows in the DB. The section fetches markers for both
+ * profiles and renders live value chips inside the relevant cards.
  */
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import api from '../../api/client'
 import styles from './saude-widgets.module.css'
 import { BABY_IMPLICATIONS, PRIORIDADE_LABEL } from './babyImplications'
 
-function ImplicationCard({ item, expanded, onToggle }) {
+function fmtValue(v) {
+  if (v === null || v === undefined) return '—'
+  const n = parseFloat(v)
+  if (isNaN(n)) return v
+  // Smart formatting: integers stay integer, decimals get up to 2 places
+  if (Math.abs(n) >= 1000) return n.toLocaleString('pt-BR')
+  if (Number.isInteger(n)) return n.toString()
+  return n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
+}
+
+function fmtDate(iso) {
+  if (!iso) return ''
+  const [y, m, d] = iso.split('-')
+  return `${d}/${m}/${y.slice(2)}`
+}
+
+function MarkerChip({ marker }) {
+  if (!marker) return null
+  const value = marker.value !== null && marker.value !== undefined
+    ? fmtValue(marker.value)
+    : marker.value_text || '—'
+  return (
+    <div className={styles.implMarkerChip} data-status={marker.status}>
+      <span className={styles.implMarkerChipLabel}>{marker.label}</span>
+      <span className={styles.implMarkerChipValue}>{value}{marker.unit && ` ${marker.unit}`}</span>
+      <span className={styles.implMarkerChipMeta}>
+        {marker.status} · {fmtDate(marker.exam_data)}
+      </span>
+    </div>
+  )
+}
+
+function ImplicationCard({ item, expanded, onToggle, markerMap }) {
+  // Resolve marker_refs to actual marker objects from the map
+  const liveMarkers = useMemo(() => {
+    if (!item.marker_refs || !markerMap) return []
+    return item.marker_refs
+      .map(ref => markerMap.get(`${ref.profile}/${ref.category}.${ref.key}`))
+      .filter(Boolean)
+  }, [item.marker_refs, markerMap])
+
   return (
     <div className={styles.implCard} data-priority={item.prioridade}>
       <button className={styles.implHeader} onClick={onToggle}>
@@ -16,6 +62,11 @@ function ImplicationCard({ item, expanded, onToggle }) {
           <span className={styles.implTitulo}>{item.titulo}</span>
         </div>
         <div className={styles.implHeaderRight}>
+          {liveMarkers.length > 0 && (
+            <span className={styles.implLiveBadge} title="Valores ao vivo do banco">
+              {liveMarkers.length} live
+            </span>
+          )}
           <span className={styles.implPrioridade} data-priority={item.prioridade}>
             {PRIORIDADE_LABEL[item.prioridade]}
           </span>
@@ -27,6 +78,15 @@ function ImplicationCard({ item, expanded, onToggle }) {
         <div className={styles.implBody}>
           <div className={styles.implOrigem}>Fonte: {item.origem}</div>
           <div className={styles.implResumo}>{item.resumo}</div>
+
+          {liveMarkers.length > 0 && (
+            <div className={styles.implMarkersBlock}>
+              <div className={styles.implMarkersTitle}>Valores atuais (banco)</div>
+              <div className={styles.implMarkersGrid}>
+                {liveMarkers.map(m => <MarkerChip key={m.id} marker={m} />)}
+              </div>
+            </div>
+          )}
 
           {item.cenarios && (
             <div className={styles.implScenarios}>
@@ -77,6 +137,56 @@ export default function BabyImplicationsSection() {
   const defaultExpanded = new Set(BABY_IMPLICATIONS.filter(i => i.prioridade === 'alta').map(i => i.id))
   const [expanded, setExpanded] = useState(defaultExpanded)
 
+  // Fetch profiles to map names -> ids
+  const { data: profiles = [] } = useQuery({
+    queryKey: ['profiles'],
+    queryFn: async () => (await api.get('/profiles/')).data || [],
+    staleTime: 60_000,
+  })
+
+  const profileByName = useMemo(() => {
+    const m = new Map()
+    for (const p of profiles) m.set(p.name?.toLowerCase(), p)
+    return m
+  }, [profiles])
+
+  const palmer = profileByName.get('palmer')
+  const rafa = profileByName.get('rafa')
+
+  // Fetch lab markers for both profiles in parallel
+  const { data: palmerMarkers = [] } = useQuery({
+    queryKey: ['lab-markers', palmer?.id],
+    queryFn: async () => {
+      if (!palmer?.id) return []
+      return (await api.get(`/saude/lab-markers/?profile_id=${palmer.id}`)).data || []
+    },
+    enabled: !!palmer?.id,
+  })
+
+  const { data: rafaMarkers = [] } = useQuery({
+    queryKey: ['lab-markers', rafa?.id],
+    queryFn: async () => {
+      if (!rafa?.id) return []
+      return (await api.get(`/saude/lab-markers/?profile_id=${rafa.id}`)).data || []
+    },
+    enabled: !!rafa?.id,
+  })
+
+  // Build map: "palmer/inflamatorio.pcr" -> marker (most recent)
+  // Backend already orders by exam.data desc, so first occurrence is latest
+  const markerMap = useMemo(() => {
+    const m = new Map()
+    for (const mk of palmerMarkers) {
+      const k = `palmer/${mk.category_slug}.${mk.key}`
+      if (!m.has(k)) m.set(k, mk)
+    }
+    for (const mk of rafaMarkers) {
+      const k = `rafa/${mk.category_slug}.${mk.key}`
+      if (!m.has(k)) m.set(k, mk)
+    }
+    return m
+  }, [palmerMarkers, rafaMarkers])
+
   const toggle = (id) => {
     setExpanded(prev => {
       const next = new Set(prev)
@@ -94,12 +204,23 @@ export default function BabyImplicationsSection() {
 
   const order = ['alta', 'media', 'baixa']
 
+  // Count of items with at least one live marker resolved
+  const linkedCount = BABY_IMPLICATIONS.filter(i =>
+    i.marker_refs && i.marker_refs.some(r => markerMap.get(`${r.profile}/${r.category}.${r.key}`))
+  ).length
+
   return (
     <div className={styles.implSection}>
       <div className={styles.implSectionHeader}>
         <h2 className={styles.implSectionTitle}>Implicações para o bebê — síntese cruzada</h2>
         <div className={styles.implSectionDesc}>
-          Achados de ambos os perfis (Palmer + Rafa) com impacto direto ou potencial na gestação ou no neonato. Itens de alta prioridade abertos por padrão.
+          Achados de ambos os perfis (Palmer + Rafa) com impacto direto ou potencial na gestação ou no neonato.
+          Itens de alta prioridade abertos por padrão.
+          {linkedCount > 0 && (
+            <span className={styles.implSectionDescBadge}>
+              {' · '}{linkedCount} {linkedCount === 1 ? 'item' : 'itens'} com valores ao vivo do banco
+            </span>
+          )}
         </div>
       </div>
 
@@ -115,6 +236,7 @@ export default function BabyImplicationsSection() {
                 item={item}
                 expanded={expanded.has(item.id)}
                 onToggle={() => toggle(item.id)}
+                markerMap={markerMap}
               />
             ))}
           </div>

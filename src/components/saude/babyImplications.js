@@ -14,6 +14,9 @@ export const BABY_IMPLICATIONS = [
     origem: 'Palmer · painel laboratorial 2025-05-28 + genético 2024',
     categoria: 'Genético',
     prioridade: 'alta',
+    marker_refs: [
+      { profile: 'palmer', category: 'especificos', key: 'g6pd' },
+    ],
     resumo: 'Palmer tem deficiência de G6PD confirmada (atividade 2.1 U/gHb · Classe III WHO). Herança ligada ao X recessiva — Palmer é XᵍY. Rafa não testada.',
     cenarios: [
       {
@@ -56,6 +59,10 @@ export const BABY_IMPLICATIONS = [
     origem: 'Palmer · follow-up DASA 2026-04-28',
     categoria: 'Resolvido',
     prioridade: 'baixa',
+    marker_refs: [
+      { profile: 'palmer', category: 'inflamatorio', key: 'pcr' },
+      { profile: 'palmer', category: 'inflamatorio', key: 'vhs' },
+    ],
     resumo: 'PCR caiu de 3.24 → 0.25 mg/dL e VHS de 17 → 14 mm/h em ~11 meses. Processo inflamatório sistêmico resolvido entre mai/2025 e abr/2026. Não há mais suspeita ativa de doença autoimune sistêmica que pudesse impactar o neonato. Manejo ortopédico (FAI/CAM) continua mas não é fator de risco gestacional.',
     acoes: [
       'Manter monitoramento periódico de PCR/VHS (semestral)',
@@ -85,6 +92,10 @@ export const BABY_IMPLICATIONS = [
     origem: 'Rafa · hemograma + bioquímica 2024-08-26',
     categoria: 'Risco DMG',
     prioridade: 'media',
+    marker_refs: [
+      { profile: 'rafa', category: 'glicemico', key: 'hba1c' },
+      { profile: 'rafa', category: 'glicemico', key: 'glicose' },
+    ],
     resumo: 'Em 2024, HbA1c estava 5.7% (limite pré-DM). Normalizou para 5.1% em 2025. Mas histórico é fator de risco para diabetes gestacional (DMG), que afeta crescimento fetal (macrossomia), hipoglicemia neonatal, parto distócico.',
     acoes: [
       'TOTG 75g 24–28s — não pular nem postergar',
@@ -115,6 +126,9 @@ export const BABY_IMPLICATIONS = [
     origem: 'Rafa · hemograma 2025-05-28',
     categoria: 'Hematológico',
     prioridade: 'baixa',
+    marker_refs: [
+      { profile: 'rafa', category: 'hemograma', key: 'plaquetas' },
+    ],
     resumo: 'Plaquetas 464k em maio/2025 (ref <450k). Aumento discreto, geralmente reativo. Importante na gestação porque trombocitose pode mascarar trombocitopenia desenvolvendo (HELLP, púrpura gestacional).',
     acoes: [
       'Repetir hemograma no 1º trimestre confirmado',
@@ -129,6 +143,12 @@ export const BABY_IMPLICATIONS = [
     origem: 'Rafa · painel pré-gestacional 2025-05-28',
     categoria: 'Proteção',
     prioridade: 'baixa',
+    marker_refs: [
+      { profile: 'rafa', category: 'micronutrientes', key: 'ferritina' },
+      { profile: 'rafa', category: 'micronutrientes', key: 'b12' },
+      { profile: 'rafa', category: 'micronutrientes', key: 'folato' },
+      { profile: 'rafa', category: 'micronutrientes', key: 'vit_d' },
+    ],
     resumo: 'Ferritina 33.8 (ref >30 ideal pré-gest), B12 609, folato 23.6, vitamina D 40.8. Reservas excelentes para iniciar gestação. Reduz risco de defeito de tubo neural e anemia gestacional.',
     acoes: [
       'Manter ácido fólico 5mg/dia até 12 sem (já em curso)',
@@ -144,6 +164,11 @@ export const BABY_IMPLICATIONS = [
     origem: 'Rafa · tireoide 2025-05-28',
     categoria: 'Endócrino',
     prioridade: 'baixa',
+    marker_refs: [
+      { profile: 'rafa', category: 'tireoide', key: 'tsh' },
+      { profile: 'rafa', category: 'tireoide', key: 't4_livre' },
+      { profile: 'rafa', category: 'tireoide', key: 'anti_tpo' },
+    ],
     resumo: 'TSH 0.96 µUI/mL — atende meta gestacional 1º tri (<2.5). Anti-TPO e anti-Tg negativos (sem autoimunidade). T4 livre 1.13 (normal). Reduz risco de hipotireoidismo gestacional (impacto em desenvolvimento neurológico fetal).',
     acoes: [
       'Repetir TSH + T4 livre no 1º trimestre confirmado',
