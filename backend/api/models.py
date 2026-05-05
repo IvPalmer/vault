@@ -793,6 +793,72 @@ class HealthExam(models.Model):
         return f'{self.profile.name} | {self.nome} ({self.data})'
 
 
+LAB_MARKER_STATUS_CHOICES = (
+    ('normal', 'Normal'),
+    ('alto', 'Alto'),
+    ('baixo', 'Baixo'),
+    ('limite_superior', 'Limite superior'),
+    ('limite_inferior', 'Limite inferior'),
+    ('critico', 'Crítico'),
+)
+
+
+class LabMarker(models.Model):
+    """A single laboratory marker reading. Belongs to a HealthExam (the
+    collection event) but indexed by category for fast panel rendering.
+
+    Each marker carries its own reference range and status — refs differ
+    by lab, sex, age, so we don't normalize them into a separate table.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    exam = models.ForeignKey(
+        HealthExam, on_delete=models.CASCADE, related_name='markers',
+        help_text='The collection event this marker belongs to',
+    )
+    profile = models.ForeignKey(
+        Profile, on_delete=models.CASCADE, related_name='lab_markers',
+        help_text='Denormalized for fast queries — must equal exam.profile',
+    )
+
+    category_slug = models.CharField(max_length=50, db_index=True,
+        help_text='ex: "hemograma", "lipidios", "tireoide"')
+    category_label = models.CharField(max_length=100,
+        help_text='Display label for the category')
+    category_order = models.IntegerField(default=0)
+
+    key = models.CharField(max_length=60,
+        help_text='Stable key per category, ex: "hemoglobina", "ldl", "tsh"')
+    label = models.CharField(max_length=100, help_text='Display label')
+    order = models.IntegerField(default=0)
+
+    value = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True)
+    value_text = models.CharField(max_length=100, blank=True,
+        help_text='For non-numeric results: "positivo", "↑", "negativo"')
+    unit = models.CharField(max_length=30, blank=True)
+
+    ref_min = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True)
+    ref_max = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True)
+    ref_text = models.CharField(max_length=200, blank=True,
+        help_text='For complex refs: "depende fase ciclo", "<190 desejável"')
+
+    status = models.CharField(max_length=20, choices=LAB_MARKER_STATUS_CHOICES, default='normal')
+    obs = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['category_order', 'order', 'key']
+        indexes = [
+            models.Index(fields=['profile', 'category_slug']),
+            models.Index(fields=['profile', 'key']),
+        ]
+
+    def __str__(self):
+        v = self.value if self.value is not None else self.value_text
+        return f'{self.profile.name} | {self.category_slug}.{self.key} = {v} {self.unit}'
+
+
 class VitalReading(models.Model):
     """A single vital sign measurement at a point in time."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

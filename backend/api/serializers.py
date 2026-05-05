@@ -5,7 +5,7 @@ from .models import (
     RecurringMapping, BudgetConfig, BalanceOverride, BankTemplate,
     SetupTemplate, FamilyNote, GoogleAccount, CalendarSelection,
     Project, PersonalTask, PersonalNote, DashboardState,
-    HealthExam, VitalReading, Pregnancy, PrenatalConsultation,
+    HealthExam, VitalReading, Pregnancy, PrenatalConsultation, LabMarker,
 )
 
 
@@ -204,6 +204,25 @@ class HealthExamSerializer(serializers.ModelSerializer):
             'pregnancy', 'checkpoint_id', 'created_at', 'updated_at',
         ]
         read_only_fields = ['profile', 'created_at', 'updated_at']
+
+
+class LabMarkerSerializer(serializers.ModelSerializer):
+    """Marker as it lives in the panel. Frontend groups by category."""
+    exam_data = serializers.DateField(source='exam.data', read_only=True)
+    exam_lab = serializers.CharField(source='exam.laboratorio', read_only=True)
+    exam_nome = serializers.CharField(source='exam.nome', read_only=True)
+
+    class Meta:
+        model = LabMarker
+        fields = [
+            'id', 'exam', 'exam_data', 'exam_lab', 'exam_nome',
+            'category_slug', 'category_label', 'category_order',
+            'key', 'label', 'order',
+            'value', 'value_text', 'unit',
+            'ref_min', 'ref_max', 'ref_text',
+            'status', 'obs',
+        ]
+        read_only_fields = ['profile']
 
 
 class VitalReadingSerializer(serializers.ModelSerializer):

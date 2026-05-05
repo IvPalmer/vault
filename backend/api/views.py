@@ -64,7 +64,7 @@ from .models import (
     BankTemplate, SetupTemplate, FamilyNote, SalaryConfig,
     GoogleAccount, CalendarSelection,
     Project, PersonalTask, PersonalNote,
-    HealthExam, VitalReading, Pregnancy, PrenatalConsultation,
+    HealthExam, VitalReading, Pregnancy, PrenatalConsultation, LabMarker,
 )
 from .serializers import (
     AccountSerializer, CategorySerializer, SubcategorySerializer,
@@ -77,7 +77,7 @@ from .serializers import (
     FamilyNoteSerializer,
     GoogleAccountSerializer, CalendarSelectionSerializer,
     ProjectSerializer, PersonalTaskSerializer, PersonalNoteSerializer,
-    HealthExamSerializer, VitalReadingSerializer,
+    HealthExamSerializer, VitalReadingSerializer, LabMarkerSerializer,
     PregnancySerializer, PrenatalConsultationSerializer,
 )
 from .services import (
@@ -3020,6 +3020,41 @@ class HealthExamViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(profile=self.request.profile)
+
+
+class LabMarkerViewSet(viewsets.ModelViewSet):
+    """Lab markers belonging to exams. Filterable by category and exam.
+
+    Frontend assembles the lab panel client-side: groups by category_slug,
+    keeps the most recent value per (category, key), exposes history.
+    """
+    serializer_class = LabMarkerSerializer
+    pagination_class = None
+
+    def _scope_profile(self):
+        override = self.request.query_params.get('profile_id')
+        if override:
+            try:
+                return Profile.objects.get(id=override)
+            except Profile.DoesNotExist:
+                return self.request.profile
+        return self.request.profile
+
+    def get_queryset(self):
+        qs = LabMarker.objects.filter(profile=self._scope_profile()).select_related('exam')
+        category = self.request.query_params.get('category')
+        if category:
+            qs = qs.filter(category_slug=category)
+        exam = self.request.query_params.get('exam_id')
+        if exam:
+            qs = qs.filter(exam_id=exam)
+        # ordered: newest exam first, then category_order, then marker order
+        return qs.order_by('-exam__data', 'category_order', 'order', 'key')
+
+    def perform_create(self, serializer):
+        # profile is denormalized — mirror exam.profile
+        exam = serializer.validated_data['exam']
+        serializer.save(profile=exam.profile)
 
 
 class VitalReadingViewSet(viewsets.ModelViewSet):

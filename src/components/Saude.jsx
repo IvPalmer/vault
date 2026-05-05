@@ -38,6 +38,7 @@ import HipImagingCard from './saude/HipImagingCard'
 import ClinicalReportCard from './saude/ClinicalReportCard'
 import { PALMER_LAB_PANEL, PALMER_CLINICAL_REPORT, PALMER_OBSERVATIONS } from './saude/palmerHealthData'
 import { RAFA_LAB_PANEL, RAFA_PREGNANCY_REPORT, RAFA_OBSERVATIONS } from './saude/rafaHealthData'
+import { useLabPanel } from './saude/useLabPanel'
 
 const EXAM_TYPE_LABELS = {
   hemograma: 'Hemograma', bioquimica: 'Bioquímica', hormonal: 'Hormonal',
@@ -129,6 +130,10 @@ function PersonalView({ profileId, profileName }) {
   const isPalmer = profileName?.toLowerCase().includes('palmer')
   const isRafa = profileName?.toLowerCase().includes('rafa')
 
+  // DB-driven lab panel with fallback to hardcoded JS
+  const fallback = isPalmer ? PALMER_LAB_PANEL : (isRafa ? RAFA_LAB_PANEL : null)
+  const { panel: livePanel, source: panelSource } = useLabPanel(profileId, fallback)
+
   return (
     <div className={styles.tabContent}>
       <div className={styles.gridTwoCol}>
@@ -157,15 +162,24 @@ function PersonalView({ profileId, profileName }) {
 
       {isPalmer && (
         <>
+          <div className={widgetStyles.relatorioBanner}>
+            <div>
+              <div className={widgetStyles.relatorioBannerTitle}>Relatório médico completo</div>
+              <div className={widgetStyles.relatorioBannerDesc}>Síntese de imagem + laboratório + hipóteses diagnósticas para encaminhamento. Print-ready (A4).</div>
+            </div>
+            <a href="/relatorio-palmer.html" target="_blank" rel="noopener" className={widgetStyles.relatorioBannerBtn}>
+              Abrir relatório →
+            </a>
+          </div>
           <ClinicalReportCard report={PALMER_CLINICAL_REPORT} observations={PALMER_OBSERVATIONS} />
           <HipImagingCard />
-          <LabPanelDashboard panel={PALMER_LAB_PANEL} />
+          <LabPanelDashboard panel={livePanel} source={panelSource} />
         </>
       )}
       {isRafa && (
         <>
           <ClinicalReportCard report={RAFA_PREGNANCY_REPORT} observations={RAFA_OBSERVATIONS} />
-          <LabPanelDashboard panel={RAFA_LAB_PANEL} />
+          <LabPanelDashboard panel={livePanel} source={panelSource} />
         </>
       )}
 

@@ -39,7 +39,7 @@ from .views import (
     SalaryProjectionView, SalarySyncView, SalaryConfigView,
     PluggySyncView,
     ProjectViewSet, PersonalTaskViewSet, PersonalNoteViewSet,
-    HealthExamViewSet, VitalReadingViewSet,
+    HealthExamViewSet, VitalReadingViewSet, LabMarkerViewSet,
     PregnancyViewSet, PrenatalConsultationViewSet,
 )
 from .auth_views import GoogleLoginView, TokenRefreshView, AuthMeView, GoogleAuthStartView, GoogleAuthCallbackView
@@ -71,6 +71,7 @@ router.register(r'pessoal/tasks', PersonalTaskViewSet, basename='personaltask')
 router.register(r'pessoal/notes', PersonalNoteViewSet, basename='personalnote')
 router.register(r'saude/exams', HealthExamViewSet, basename='healthexam')
 router.register(r'saude/vitals', VitalReadingViewSet, basename='vitalreading')
+router.register(r'saude/lab-markers', LabMarkerViewSet, basename='labmarker')
 router.register(r'saude/pregnancies', PregnancyViewSet, basename='pregnancy')
 router.register(r'saude/consultations', PrenatalConsultationViewSet, basename='prenatalconsult')
 

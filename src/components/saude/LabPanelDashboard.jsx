@@ -63,16 +63,19 @@ function MarkerCard({ marker }) {
   )
 }
 
-export default function LabPanelDashboard({ panel }) {
+export default function LabPanelDashboard({ panel, source }) {
   if (!panel) return null
-  const dataFmt = panel.data_coleta.split('-').reverse().join('/')
+  const dataFmt = panel.data_coleta ? panel.data_coleta.split('-').reverse().join('/') : ''
 
   return (
     <div className={styles.labPanel}>
       <div className={styles.labHeader}>
         <div>
           <div className={styles.widgetLabel}>Painel laboratorial completo</div>
-          <div className={styles.labMeta}>{panel.laboratorio} · {dataFmt} · {panel.contexto}</div>
+          <div className={styles.labMeta}>
+            {panel.laboratorio}{dataFmt && ` · ${dataFmt}`}{panel.contexto && ` · ${panel.contexto}`}
+            {source === 'db' && <span className={styles.sourceBadge}> · live do banco</span>}
+          </div>
         </div>
       </div>
 
