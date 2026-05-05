@@ -106,9 +106,11 @@ export function checkpointStatus(checkpoint, currentWeek, completedIds = new Set
  * Decimal weeks since DUM (e.g. 18.4 = 18w + ~3d).
  * Returns null if no DUM.
  */
+import { parseLocalDate } from './dateUtils'
+
 export function weeksFromDum(dum) {
   if (!dum) return null
-  const dumDate = typeof dum === 'string' ? new Date(dum) : dum
+  const dumDate = typeof dum === 'string' ? parseLocalDate(dum) : dum
   const today = new Date()
   const diffMs = today - dumDate
   return diffMs / (1000 * 60 * 60 * 24 * 7)
@@ -129,6 +131,6 @@ export function formatWeeks(decimalWeeks) {
  */
 export function computeDpp(dum) {
   if (!dum) return null
-  const dumDate = typeof dum === 'string' ? new Date(dum) : new Date(dum)
+  const dumDate = typeof dum === 'string' ? parseLocalDate(dum) : new Date(dum)
   return new Date(dumDate.getTime() + 280 * 24 * 60 * 60 * 1000)
 }

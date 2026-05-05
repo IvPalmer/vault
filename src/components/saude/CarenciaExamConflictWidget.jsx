@@ -11,33 +11,7 @@
 import { useMemo } from 'react'
 import styles from './saude-widgets.module.css'
 import { CHECKPOINTS, getKindMeta } from './checkpoints'
-
-function parseLocalDate(iso) {
-  if (!iso) return null
-  const [y, m, d] = iso.split('-').map(Number)
-  return new Date(y, m - 1, d)
-}
-
-function fmtDate(d) {
-  if (!d) return ''
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`
-}
-
-function fmtDateShort(d) {
-  if (!d) return ''
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`
-}
-
-function addDays(date, days) {
-  const r = new Date(date)
-  r.setDate(r.getDate() + days)
-  return r
-}
-
-function diffDays(a, b) {
-  const ms = a.getTime() - b.getTime()
-  return Math.round(ms / 86_400_000)
-}
+import { parseLocalDate, addDays, diffDays, fmtDate, fmtDateShort, todayLocal } from './dateUtils'
 
 /**
  * For a checkpoint with `week: [start, end]` and a DUM date, compute the
@@ -75,8 +49,7 @@ export default function CarenciaExamConflictWidget({ pregnancy }) {
 
   const conflicts = useMemo(() => {
     if (!dum || !carencias) return []
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
+    const today = todayLocal()
     const horizon = addDays(today, 60)
 
     const out = []

@@ -2,10 +2,11 @@
  * CoberturaWidget — obstetric coverage countdown vs DPP risk visualization.
  */
 import styles from './saude-widgets.module.css'
+import { parseLocalDate } from './dateUtils'
 
 function formatDate(d) {
   if (!d) return '—'
-  const dt = typeof d === 'string' ? new Date(d) : d
+  const dt = typeof d === 'string' ? parseLocalDate(d) : d
   return dt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
@@ -42,9 +43,9 @@ export default function CoberturaWidget({ pregnancy }) {
   }
 
   // risco
-  const dpp = pregnancy?.dpp ? new Date(pregnancy.dpp) : null
-  const fim = new Date(fim_carencia)
-  const inicio = pregnancy?.plano_vigencia_inicio ? new Date(pregnancy.plano_vigencia_inicio) : null
+  const dpp = pregnancy?.dpp ? parseLocalDate(pregnancy.dpp) : null
+  const fim = parseLocalDate(fim_carencia)
+  const inicio = pregnancy?.plano_vigencia_inicio ? parseLocalDate(pregnancy.plano_vigencia_inicio) : null
   const totalDays = inicio ? (fim - inicio) / (1000 * 60 * 60 * 24) : 300
   const todayDays = inicio ? (new Date() - inicio) / (1000 * 60 * 60 * 24) : 0
   const carenciaPct = Math.min(100, Math.max(0, (todayDays / totalDays) * 100))

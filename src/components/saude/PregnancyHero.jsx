@@ -7,6 +7,7 @@
 import { useMemo } from 'react'
 import styles from './saude-widgets.module.css'
 import { weeksFromDum, formatWeeks, computeDpp } from './checkpoints'
+import { parseLocalDate } from './dateUtils'
 
 const SIZE = 220
 const STROKE = 14
@@ -32,7 +33,7 @@ export default function PregnancyHero({ pregnancy }) {
   const { decimalWeeks, dpp, daysToDpp, progressPct } = useMemo(() => {
     const dum = pregnancy?.dum
     const w = weeksFromDum(dum)
-    const dppDate = pregnancy?.dpp ? new Date(pregnancy.dpp) : computeDpp(dum)
+    const dppDate = pregnancy?.dpp ? parseLocalDate(pregnancy.dpp) : computeDpp(dum)
     const days = dppDate ? Math.ceil((dppDate - new Date()) / (1000 * 60 * 60 * 24)) : null
     const pct = w != null ? Math.min(1, Math.max(0, w / 40)) : 0
     return { decimalWeeks: w, dpp: dppDate, daysToDpp: days, progressPct: pct }
