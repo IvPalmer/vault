@@ -106,8 +106,8 @@ export function useLabPanel(profileId, fallbackPanel) {
     queryKey: ['lab-markers', profileId],
     queryFn: async () => {
       if (!profileId) return []
-      const res = await api.get(`/saude/lab-markers/?profile_id=${profileId}`)
-      return res.data || []
+      // api.get() returns parsed JSON directly (no .data wrapper)
+      return (await api.get(`/saude/lab-markers/?profile_id=${profileId}`)) || []
     },
     enabled: !!profileId,
   })

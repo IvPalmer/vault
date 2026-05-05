@@ -137,10 +137,11 @@ export default function BabyImplicationsSection() {
   const defaultExpanded = new Set(BABY_IMPLICATIONS.filter(i => i.prioridade === 'alta').map(i => i.id))
   const [expanded, setExpanded] = useState(defaultExpanded)
 
-  // Fetch profiles to map names -> ids
+  // Fetch profiles to map names -> ids.
+  // Note: api.get() returns parsed JSON directly (no .data wrapper).
   const { data: profiles = [] } = useQuery({
     queryKey: ['profiles'],
-    queryFn: async () => (await api.get('/profiles/')).data || [],
+    queryFn: async () => (await api.get('/profiles/')) || [],
     staleTime: 60_000,
   })
 
@@ -158,7 +159,7 @@ export default function BabyImplicationsSection() {
     queryKey: ['lab-markers', palmer?.id],
     queryFn: async () => {
       if (!palmer?.id) return []
-      return (await api.get(`/saude/lab-markers/?profile_id=${palmer.id}`)).data || []
+      return (await api.get(`/saude/lab-markers/?profile_id=${palmer.id}`)) || []
     },
     enabled: !!palmer?.id,
   })
@@ -167,7 +168,7 @@ export default function BabyImplicationsSection() {
     queryKey: ['lab-markers', rafa?.id],
     queryFn: async () => {
       if (!rafa?.id) return []
-      return (await api.get(`/saude/lab-markers/?profile_id=${rafa.id}`)).data || []
+      return (await api.get(`/saude/lab-markers/?profile_id=${rafa.id}`)) || []
     },
     enabled: !!rafa?.id,
   })
