@@ -33,6 +33,7 @@ import AddExamForm from './saude/AddExamForm'
 import MobilogramaWidget from './saude/MobilogramaWidget'
 import FetalDevelopmentCard from './saude/FetalDevelopmentCard'
 import BabyImplicationsSection from './saude/BabyImplicationsSection'
+import CarenciaExamConflictWidget from './saude/CarenciaExamConflictWidget'
 import LabPanelDashboard from './saude/LabPanelDashboard'
 import HipImagingCard from './saude/HipImagingCard'
 import ClinicalReportCard from './saude/ClinicalReportCard'
@@ -254,6 +255,8 @@ function FamiliaView() {
       </div>
 
       <PregnancyTimeline pregnancy={ativa} completedIds={completedSet} />
+
+      <CarenciaExamConflictWidget pregnancy={ativa} />
 
       <BabyImplicationsSection />
 

@@ -1752,6 +1752,146 @@
 
 .implEvitarList li { margin-bottom: 2px; }
 
+/* ── Conflitos carência × exames ─────────────────────── */
+.conflictWidget {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.conflictWidget[data-status="warning"] {
+  border-color: rgba(196, 126, 58, 0.35);
+  background: linear-gradient(135deg, rgba(196, 126, 58, 0.04), #fff 60%);
+}
+
+.conflictHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.conflictBadge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 3px 9px;
+  border-radius: 10px;
+}
+
+.conflictBadge[data-status="warning"] {
+  background: rgba(196, 126, 58, 0.15);
+  color: #c47e3a;
+}
+
+.conflictBadge[data-status="ok"] {
+  background: rgba(70, 140, 90, 0.15);
+  color: #468c5a;
+}
+
+.conflictList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.conflictRow {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.conflictRow[data-status="uncovered"] {
+  border-left: 3px solid #b43c3c;
+}
+
+.conflictRow[data-status="partial"] {
+  border-left: 3px solid #c47e3a;
+}
+
+.conflictRowHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.conflictKind {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #fff;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.conflictTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #2a2724);
+  flex: 1;
+}
+
+.conflictStatusPill {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 7px;
+  border-radius: 8px;
+}
+
+.conflictStatusPill[data-status="uncovered"] {
+  background: rgba(180, 60, 60, 0.15);
+  color: #b43c3c;
+}
+
+.conflictStatusPill[data-status="partial"] {
+  background: rgba(196, 126, 58, 0.15);
+  color: #c47e3a;
+}
+
+.conflictDetails {
+  font-size: 12px;
+  color: var(--text-secondary, #6b6660);
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.conflictDetails strong {
+  color: var(--text-primary, #2a2724);
+  font-weight: 600;
+}
+
+.conflictLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary, #6b6660);
+}
+
+.conflictAction {
+  margin-top: 4px;
+  padding: 6px 9px;
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--text-primary, #2a2724);
+  line-height: 1.5;
+}
+
 /* ── Relatorio banner (Palmer panel) ────────────────── */
 .relatorioBanner {
   display: flex;

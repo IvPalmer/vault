@@ -13,13 +13,17 @@
 
 export const CHECKPOINTS = [
   // ── 1º trimestre ──
-  { id: '1a-consulta', week: [6, 12], label: '1ª consulta pré-natal', kind: 'consulta', critical: true },
-  { id: 'usg-datacao', week: [7, 12], label: 'USG datação', kind: 'usg', critical: true,
-    notes: 'Define DUM/IG corrigida' },
+  { id: '1a-consulta', week: [6, 12], label: '1ª consulta pré-natal', kind: 'consulta', critical: true,
+    carencia_slug: 'consultas' },
+  { id: 'usg-datacao', week: [6, 9], label: 'USG datação', kind: 'usg', critical: true,
+    notes: 'Janela ideal 6-9 sem (define DUM/IG corrigida). Aceitável até 12 sem.',
+    carencia_slug: 'usg' },
   { id: 'lab-1tri', week: [8, 12], label: 'Painel laboratorial 1º tri', kind: 'exame_lab', critical: true,
-    notes: 'Hemograma, tipagem sg + Coombs, glicemia jejum, TSH, sorologias (HIV, sífilis, HepB/C, toxo, rubéola, CMV), urina + urocultura' },
+    notes: 'Hemograma, tipagem sg + Coombs, glicemia jejum, TSH, sorologias (HIV, sífilis, HepB/C, toxo, rubéola, CMV), urina + urocultura',
+    carencia_slug: 'exames_basicos' },
   { id: 'usg-morfo-1', week: [11, 13.6], label: 'USG morfológica 1º tri', kind: 'usg', critical: true,
-    notes: 'TN, osso nasal, doppler ducto venoso (rastreio cromossomopatias)' },
+    notes: 'TN, osso nasal, doppler ducto venoso (rastreio cromossomopatias)',
+    carencia_slug: 'usg' },
 
   // ── Aconselhamento genético G6PD (Palmer) ──
   { id: 'aconselhamento-g6pd', week: [10, 16], label: 'Aconselhamento genético G6PD', kind: 'consulta', critical: false,
@@ -28,11 +32,14 @@ export const CHECKPOINTS = [
   // ── 2º trimestre ──
   { id: 'consulta-mensal-2tri', week: [16], label: 'Consulta pré-natal mensal', kind: 'consulta', critical: true },
   { id: 'usg-morfo-2', week: [18, 22], label: 'USG morfológica 2º tri', kind: 'usg', critical: true,
-    notes: 'Anatomia fetal completa, sexo, placenta, líquido amniótico' },
+    notes: 'Anatomia fetal completa, sexo, placenta, líquido amniótico',
+    carencia_slug: 'usg' },
   { id: 'totg', week: [24, 28], label: 'TOTG (teste tolerância glicose)', kind: 'exame_lab', critical: true,
-    notes: 'Diagnóstico de DMG (diabetes gestacional)' },
+    notes: 'Diagnóstico de DMG (diabetes gestacional)',
+    carencia_slug: 'exames_basicos' },
   { id: 'eco-fetal', week: [24, 28], label: 'Ecocardiograma fetal', kind: 'usg', critical: false,
-    notes: 'Indicado se rastreio 1º tri alterado, idade materna avançada, diabetes' },
+    notes: 'Indicado se rastreio 1º tri alterado, idade materna avançada, diabetes',
+    carencia_slug: 'usg' },
   { id: 'coombs-anti-d', week: [28], label: 'Coombs indireto + Anti-D (se Rh-)', kind: 'exame_lab', critical: true,
     notes: 'Imunoglobulina anti-D se gestante Rh negativo' },
   { id: 'mobilograma-start', week: [28], label: 'Iniciar mobilograma diário', kind: 'rotina', critical: true,
@@ -41,11 +48,14 @@ export const CHECKPOINTS = [
   // ── 3º trimestre ──
   { id: 'consulta-quinzenal', week: [32], label: 'Consultas quinzenais', kind: 'consulta', critical: true },
   { id: 'lab-3tri', week: [32, 34], label: 'Painel laboratorial 3º tri', kind: 'exame_lab', critical: true,
-    notes: 'Hemograma, sorologias (HIV, sífilis, HepB), urina, glicemia, Coombs (se Rh-)' },
+    notes: 'Hemograma, sorologias (HIV, sífilis, HepB), urina, glicemia, Coombs (se Rh-)',
+    carencia_slug: 'exames_basicos' },
   { id: 'gbs', week: [35, 37], label: 'Cultura Strep B (GBS)', kind: 'exame_lab', critical: true,
-    notes: 'Swab vaginal/retal — define profilaxia antibiótica intra-parto' },
+    notes: 'Swab vaginal/retal — define profilaxia antibiótica intra-parto',
+    carencia_slug: 'exames_basicos' },
   { id: 'usg-3tri', week: [36, 40], label: 'USG perfil biofísico', kind: 'usg', critical: false,
-    notes: 'Avaliação fetal, líquido amniótico, posição' },
+    notes: 'Avaliação fetal, líquido amniótico, posição',
+    carencia_slug: 'usg' },
   { id: 'consulta-semanal', week: [37], label: 'Consultas semanais', kind: 'consulta', critical: true },
   { id: 'plano-parto', week: [34, 38], label: 'Plano de parto + escolha hospital', kind: 'rotina', critical: true },
 

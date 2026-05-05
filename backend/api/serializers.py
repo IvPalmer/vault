@@ -253,6 +253,7 @@ class PregnancySerializer(serializers.ModelSerializer):
     dias_ate_dpp = serializers.SerializerMethodField()
     cobertura_parto = serializers.SerializerMethodField()
     completed_checkpoint_ids = serializers.SerializerMethodField()
+    carencias = serializers.SerializerMethodField()
 
     class Meta:
         model = Pregnancy
@@ -261,7 +262,7 @@ class PregnancySerializer(serializers.ModelSerializer):
             'confirmada_em', 'dum', 'dpp', 'status', 'notes',
             'plano_nome', 'plano_vigencia_inicio', 'carencia_obstetrica_dias',
             'consultations', 'ig_atual_semanas', 'dias_ate_dpp', 'cobertura_parto',
-            'completed_checkpoint_ids',
+            'completed_checkpoint_ids', 'carencias',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['created_at', 'updated_at']
@@ -313,3 +314,42 @@ class PregnancySerializer(serializers.ModelSerializer):
             'fim_carencia': fim_carencia.isoformat(),
             'dias_descoberto': (fim_carencia - obj.dpp).days,
         }
+
+    def get_carencias(self, obj):
+        """Computes clear dates for each major carência category based on
+        plano_vigencia_inicio. Hardcoded for Amil PRC 609 (Bronze DF) until
+        a proper plan model exists.
+
+        Returns dict {category_slug: {label, days, clear_date, status}} where
+        status is 'cleared' (today >= clear_date) or 'pending'.
+        """
+        if not obj.plano_vigencia_inicio:
+            return None
+        from datetime import date, timedelta
+        today = date.today()
+        # PRC 609 carência days by category (Amil Bronze DF, Nova Saúde >12mo non-congeneric)
+        rules = [
+            ('consultas',       'Consultas eletivas',          1),
+            ('exames_basicos',  'Exames básicos',              1),
+            ('usg',             'Ultrassonografia',           30),
+            ('tc_rm',           'TC / RM / cardio',           30),
+            ('endoscopia',      'Endoscopia',                 30),
+            ('day_hospital',    'Cirurgia day-hospital',      60),
+            ('hemodinamica',    'Hemodinâmica',               60),
+            ('quimio_radio',    'Quimio / radioterapia',      90),
+            ('hemoterapia',     'Hemoterapia',                90),
+            ('dialise',         'Diálise',                    90),
+            ('terapias',        'Terapias (fisio/fono/psico)', 180),
+            ('obstetricia',     'Internação obstétrica',     obj.carencia_obstetrica_dias),
+        ]
+        out = {}
+        for slug, label, days in rules:
+            clear = obj.plano_vigencia_inicio + timedelta(days=days)
+            out[slug] = {
+                'label': label,
+                'days': days,
+                'clear_date': clear.isoformat(),
+                'status': 'cleared' if today >= clear else 'pending',
+                'days_to_clear': max(0, (clear - today).days),
+            }
+        return out
