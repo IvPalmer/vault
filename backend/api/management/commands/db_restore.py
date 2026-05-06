@@ -109,6 +109,9 @@ class Command(BaseCommand):
                 'due_day': t.get('due_day'),
                 'is_active': t.get('is_active', True),
                 'display_order': t.get('display_order', 0),
+                'contract_start': t.get('contract_start', '') or '',
+                'contract_term_months': t.get('contract_term_months'),
+                'end_month': t.get('end_month', '') or '',
             }
             if tpl_profile:
                 defaults['profile'] = tpl_profile
@@ -239,6 +242,7 @@ class Command(BaseCommand):
                 'template': template,
                 'category': category,
                 'month_str': b['month_str'],
+                'pay_num': b.get('pay_num') or 0,
             }
             if cfg_profile:
                 lookup['profile'] = cfg_profile
