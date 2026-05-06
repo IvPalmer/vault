@@ -243,6 +243,9 @@ class RecurringTemplate(models.Model):
     template_type = models.CharField(max_length=20, choices=TEMPLATE_TYPE_CHOICES)
     default_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     due_day = models.IntegerField(null=True, blank=True)
+    contract_start = models.CharField(max_length=7, blank=True, default='')
+    contract_term_months = models.IntegerField(null=True, blank=True)
+    end_month = models.CharField(max_length=7, blank=True, default='')
     is_active = models.BooleanField(default=True)
     display_order = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -254,6 +257,20 @@ class RecurringTemplate(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.template_type})"
+
+    def is_active_in_month(self, month_str):
+        """Return whether this recurring template applies to YYYY-MM."""
+        if self.contract_start and month_str < self.contract_start:
+            return False
+        end_month = self.end_month
+        if not end_month and self.contract_start and self.contract_term_months:
+            year = int(self.contract_start[:4])
+            month = int(self.contract_start[5:7])
+            end_index = (year * 12 + month - 1) + self.contract_term_months - 1
+            end_month = f'{end_index // 12:04d}-{end_index % 12 + 1:02d}'
+        if end_month and month_str > end_month:
+            return False
+        return True
 
 
 class Transaction(models.Model):
@@ -383,12 +400,25 @@ class BudgetConfig(models.Model):
         RecurringTemplate, on_delete=models.CASCADE, null=True, blank=True, related_name='budget_configs'
     )
     month_str = models.CharField(max_length=7)
+    pay_num = models.SmallIntegerField(default=0)
     limit_override = models.DecimalField(max_digits=12, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['month_str']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['profile', 'template', 'month_str', 'pay_num'],
+                condition=models.Q(template__isnull=False),
+                name='uniq_budget_tpl_month_pay',
+            ),
+            models.UniqueConstraint(
+                fields=['profile', 'category', 'month_str', 'pay_num'],
+                condition=models.Q(category__isnull=False),
+                name='uniq_budget_cat_month_pay',
+            ),
+        ]
 
     def __str__(self):
         name = self.category.name if self.category else (self.template.name if self.template else '?')
