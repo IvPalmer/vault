@@ -64,6 +64,9 @@ class Command(BaseCommand):
                 'due_day': t.due_day,
                 'is_active': t.is_active,
                 'display_order': t.display_order,
+                'contract_start': t.contract_start,
+                'contract_term_months': t.contract_term_months,
+                'end_month': t.end_month,
             })
 
         # --- RecurringMapping ---
@@ -100,6 +103,7 @@ class Command(BaseCommand):
                 'template_id': str(b.template_id) if b.template_id else None,
                 'template_name': b.template.name if b.template else None,
                 'month_str': b.month_str,
+                'pay_num': b.pay_num,
                 'limit_override': str(b.limit_override),
             })
 

@@ -56,6 +56,9 @@ def _do_backup():
             'due_day': t.due_day,
             'is_active': t.is_active,
             'display_order': t.display_order,
+            'contract_start': t.contract_start,
+            'contract_term_months': t.contract_term_months,
+            'end_month': t.end_month,
             'profile_id': str(t.profile_id) if t.profile_id else None,
             'profile_name': t.profile.name if t.profile else None,
         })
@@ -94,6 +97,7 @@ def _do_backup():
             'template_id': str(b.template_id) if b.template_id else None,
             'template_name': b.template.name if b.template else None,
             'month_str': b.month_str,
+            'pay_num': b.pay_num,
             'limit_override': str(b.limit_override),
             'profile_id': str(b.profile_id) if b.profile_id else None,
             'profile_name': b.profile.name if b.profile else None,
