@@ -12,7 +12,7 @@ def set_car_financing_end(apps, schema_editor):
         name = (template.name or '').lower()
         if 'financiamento' in name and 'carro' in name:
             template.contract_start = template.contract_start or '2024-09'
-            template.end_month = '2026-07'
+            template.end_month = '2026-08'
             template.save(update_fields=['contract_start', 'end_month'])
 
 

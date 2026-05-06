@@ -3,6 +3,7 @@ Analytics services — business logic for summary, control metrics,
 recurring budget tracking, and transaction management.
 """
 import re
+import unicodedata
 from collections import Counter
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -31,6 +32,77 @@ def _extract_base_desc(description):
     # Itau format: "STORE NAME 01/06"
     cleaned = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', desc).strip()
     return cleaned.lower()
+
+
+def _normalize_transaction_description(description):
+    """Normalize descriptions for duplicate detection."""
+    nfkd = unicodedata.normalize('NFKD', description or '')
+    ascii_only = nfkd.encode('ASCII', 'ignore').decode()
+    return re.sub(r'[^a-z0-9]', '', ascii_only.lower())
+
+
+def _dedupe_description_key(description):
+    norm_desc = _normalize_transaction_description(description)
+    if 'sispagpixraphaelazevedo' in norm_desc or norm_desc == 'raphaelazevedop':
+        return 'salary_raphael_azevedo'
+    if 'juroslimitedaconta' in norm_desc:
+        return 'juros_limite_da_conta'
+    if 'easyplan' in norm_desc:
+        return 'easyplan'
+    if 'ramiro' in norm_desc:
+        return 'ramiro'
+    if 'gsoensino' in norm_desc:
+        return 'gso_ensino'
+    return norm_desc
+
+
+def _deduped_transaction_sum(transactions):
+    """
+    Sum a queryset/list of transactions once per normalized content key.
+    Key deliberately avoids category/source fields so duplicate imports do not
+    inflate dashboard actuals.
+    """
+    seen = set()
+    total = Decimal('0.00')
+    for txn in transactions:
+        key = (
+            txn.date,
+            abs(txn.amount),
+            txn.account_id,
+            _dedupe_description_key(txn.description),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        total += txn.amount
+    return total
+
+
+def _template_active_in_month(template, month_str):
+    if not template:
+        return True
+    checker = getattr(template, 'is_active_in_month', None)
+    if checker:
+        return checker(month_str)
+    contract_start = getattr(template, 'contract_start', '') or ''
+    end_month = getattr(template, 'end_month', '') or ''
+    term_months = getattr(template, 'contract_term_months', None)
+    if not end_month and contract_start and term_months:
+        year = int(contract_start[:4])
+        month = int(contract_start[5:7])
+        end_index = (year * 12 + month - 1) + term_months - 1
+        end_month = f'{end_index // 12:04d}-{end_index % 12 + 1:02d}'
+    if contract_start and month_str < contract_start:
+        return False
+    if end_month and month_str > end_month:
+        return False
+    return True
+
+
+def _mapping_expected_amount(mapping):
+    if mapping.template and not _template_active_in_month(mapping.template, mapping.month_str):
+        return Decimal('0.00')
+    return mapping.expected_amount or Decimal('0.00')
 
 
 def _cc_month_field(profile):
@@ -70,13 +142,14 @@ def _build_cc_fatura_query_single(account_id, month_str, profile):
 def _get_expected_amount(template, month_str, profile=None):
     """
     Return the expected amount for a recurring template in a month.
-    Uses BudgetConfig override if it exists, otherwise template.default_limit.
+    Uses summed BudgetConfig overrides if they exist, otherwise template.default_limit.
     """
-    try:
-        bc = BudgetConfig.objects.get(template=template, month_str=month_str, profile=profile)
-        return bc.limit_override
-    except BudgetConfig.DoesNotExist:
-        return template.default_limit
+    if template and not _template_active_in_month(template, month_str):
+        return Decimal('0.00')
+    total = BudgetConfig.objects.filter(
+        template=template, month_str=month_str, profile=profile,
+    ).aggregate(total=Sum('limit_override'))['total']
+    return total if total is not None else template.default_limit
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +170,8 @@ def initialize_month(month_str, profile=None):
     )
     created = 0
     for tpl in templates:
+        if not _template_active_in_month(tpl, month_str):
+            continue
         expected = _get_expected_amount(tpl, month_str, profile=profile)
         _, was_created = RecurringMapping.objects.get_or_create(
             template=tpl,
@@ -202,7 +277,7 @@ def get_recurring_data(month_str, profile=None):
         if mapping.status == 'skipped':
             return 'Pulado', float(mapping.actual_amount or 0)
 
-        expected = float(mapping.expected_amount)
+        expected = float(_mapping_expected_amount(mapping))
 
         if mapping.match_mode == 'category' and mapping.category:
             # Category match: sum all transactions in category
@@ -253,7 +328,7 @@ def get_recurring_data(month_str, profile=None):
             return ''
 
         name = _get_name(mapping)
-        expected = float(mapping.expected_amount)
+        expected = float(_mapping_expected_amount(mapping))
 
         # Name similarity match
         if all_descs:
@@ -395,7 +470,7 @@ def get_recurring_data(month_str, profile=None):
             'mapping_id': str(mapping.id),
             'name': name,
             'due_day': mapping.template.due_day if mapping.template else None,
-            'expected': float(mapping.expected_amount),
+            'expected': float(_mapping_expected_amount(mapping)),
             'actual': actual,
             'status': status,
             'matched_desc': matched_info['matched_desc'],
@@ -703,6 +778,9 @@ def get_recurring_templates(profile=None):
             'template_type': tpl.template_type,
             'default_limit': float(tpl.default_limit),
             'due_day': tpl.due_day,
+            'contract_start': tpl.contract_start,
+            'contract_term_months': tpl.contract_term_months,
+            'end_month': tpl.end_month,
             'display_order': tpl.display_order,
         })
 
@@ -712,7 +790,8 @@ def get_recurring_templates(profile=None):
 def update_recurring_template(template_id, profile=None, **kwargs):
     """
     Update a RecurringTemplate used for recurring items.
-    Supported fields: name, template_type, default_limit, due_day, display_order
+    Supported fields: name, template_type, default_limit, due_day,
+    contract_start, contract_term_months, end_month, display_order
     """
     tpl = RecurringTemplate.objects.get(id=template_id, profile=profile)
 
@@ -724,6 +803,12 @@ def update_recurring_template(template_id, profile=None, **kwargs):
         tpl.default_limit = Decimal(str(kwargs['default_limit']))
     if 'due_day' in kwargs:
         tpl.due_day = int(kwargs['due_day']) if kwargs['due_day'] else None
+    if 'contract_start' in kwargs:
+        tpl.contract_start = (kwargs['contract_start'] or '').strip()
+    if 'contract_term_months' in kwargs:
+        tpl.contract_term_months = int(kwargs['contract_term_months']) if kwargs['contract_term_months'] else None
+    if 'end_month' in kwargs:
+        tpl.end_month = (kwargs['end_month'] or '').strip()
     if 'display_order' in kwargs and kwargs['display_order'] is not None:
         tpl.display_order = int(kwargs['display_order'])
 
@@ -735,11 +820,17 @@ def update_recurring_template(template_id, profile=None, **kwargs):
         'template_type': tpl.template_type,
         'default_limit': float(tpl.default_limit),
         'due_day': tpl.due_day,
+        'contract_start': tpl.contract_start,
+        'contract_term_months': tpl.contract_term_months,
+        'end_month': tpl.end_month,
         'display_order': tpl.display_order,
     }
 
 
-def create_recurring_template(name, template_type, default_limit, due_day=None, profile=None):
+def create_recurring_template(
+    name, template_type, default_limit, due_day=None, profile=None,
+    contract_start='', contract_term_months=None, end_month='',
+):
     """
     Create a new RecurringTemplate for recurring budget tracking.
     """
@@ -754,6 +845,9 @@ def create_recurring_template(name, template_type, default_limit, due_day=None, 
         template_type=template_type,
         default_limit=Decimal(str(default_limit)),
         due_day=due_day,
+        contract_start=(contract_start or '').strip(),
+        contract_term_months=int(contract_term_months) if contract_term_months else None,
+        end_month=(end_month or '').strip(),
         is_active=True,
         display_order=max_order + 1,
         profile=profile,
@@ -765,6 +859,9 @@ def create_recurring_template(name, template_type, default_limit, due_day=None, 
         'template_type': tpl.template_type,
         'default_limit': float(tpl.default_limit),
         'due_day': tpl.due_day,
+        'contract_start': tpl.contract_start,
+        'contract_term_months': tpl.contract_term_months,
+        'end_month': tpl.end_month,
         'display_order': tpl.display_order,
     }
 
@@ -931,9 +1028,7 @@ def get_metricas(month_str, profile=None):
     # 1. ENTRADAS ATUAIS — actual income received this month
     #    Includes cross-month transactions linked TO this month's mappings
     # =====================================================================
-    entradas_atuais = (income_txns.aggregate(
-        total=Sum('amount')
-    )['total'] or Decimal('0.00')) + cross_month_include_income
+    entradas_atuais = _deduped_transaction_sum(income_txns) + cross_month_include_income
 
     # =====================================================================
     # 2. ENTRADAS PROJETADAS — total expected income from recurring template
@@ -947,15 +1042,13 @@ def get_metricas(month_str, profile=None):
 
     entradas_projetadas = Decimal('0.00')
     for m in income_mappings:
-        entradas_projetadas += m.expected_amount
+        entradas_projetadas += _mapping_expected_amount(m)
 
     # =====================================================================
     # 3. GASTOS ATUAIS — total actual expenses (CC + checking)
     #    Includes cross-month expense transactions linked TO this month
     # =====================================================================
-    gastos_atuais = abs((expense_txns.aggregate(
-        total=Sum('amount')
-    )['total'] or Decimal('0.00')) + cross_month_include_expense)
+    gastos_atuais = abs(_deduped_transaction_sum(expense_txns) + cross_month_include_expense)
 
     # =====================================================================
     # 4. GASTOS PROJETADOS — expected total expenses for the month
@@ -970,7 +1063,7 @@ def get_metricas(month_str, profile=None):
 
     fixo_expected_total = Decimal('0.00')
     for m in fixo_mappings_all:
-        fixo_expected_total += m.expected_amount
+        fixo_expected_total += _mapping_expected_amount(m)
 
     # Identify fixo items billed to a CC account (e.g. insurance, gym).
     # These amounts are already inside fatura_total, so subtract from fixo
@@ -986,7 +1079,7 @@ def get_metricas(month_str, profile=None):
         if not linked_txns and m.transaction:
             linked_txns = [m.transaction]
         if linked_txns and all(t.account_id in cc_account_ids for t in linked_txns):
-            fixo_on_cc += m.expected_amount
+            fixo_on_cc += _mapping_expected_amount(m)
             _fixo_on_cc_mapping_ids.add(m.id)
     fixo_for_budget = fixo_expected_total - fixo_on_cc
 
@@ -999,7 +1092,7 @@ def get_metricas(month_str, profile=None):
 
     invest_template_total = Decimal('0.00')
     for m in invest_mappings_all:
-        invest_template_total += m.expected_amount
+        invest_template_total += _mapping_expected_amount(m)
 
     # Dynamic savings target: use max(template total, savings_target_pct × income)
     # but ONLY when previous month's projected balance is positive (room to save).
@@ -1212,7 +1305,7 @@ def get_metricas(month_str, profile=None):
     # =====================================================================
     a_entrar = Decimal('0.00')
     for mapping in income_mappings:
-        expected = mapping.expected_amount
+        expected = _mapping_expected_amount(mapping)
         actual = _get_actual_for_mapping(mapping, is_income=True)
         if expected == 0 or actual >= expected * Decimal('0.9'):
             continue  # Fully received (or within tolerance)
@@ -1231,7 +1324,7 @@ def get_metricas(month_str, profile=None):
         # Skip CC-billed fixo — their payment comes via fatura, not checking
         if mapping.id in _fixo_on_cc_mapping_ids:
             continue
-        expected = mapping.expected_amount
+        expected = _mapping_expected_amount(mapping)
         actual = _get_actual_for_mapping(mapping, is_income=False)
         if expected == 0 or actual >= expected * Decimal('0.9'):
             continue  # Fully paid (or within tolerance)
@@ -1322,7 +1415,7 @@ def get_metricas(month_str, profile=None):
                         total=Sum('amount'))['total'] or Decimal('0'))
                 _debt_amount = _prev_fatura
             else:
-                _debt_amount = _cm.expected_amount or (_cm.template.default_limit if _cm.template else Decimal('0'))
+                _debt_amount = _mapping_expected_amount(_cm) or (_cm.template.default_limit if _cm.template else Decimal('0'))
             carryover_debt += _debt_amount
             if _paid_from_current:
                 carryover_paid_late += _debt_amount
@@ -3407,12 +3500,16 @@ def get_projection(start_month_str, num_months=0, profile=None):
     all_tpl_ids = [t.id for t in income_tpls + fixo_tpls + invest_tpls]
     bc_lookup = {}
     if all_tpl_ids and future_months:
-        for bc in BudgetConfig.objects.filter(
+        for row in BudgetConfig.objects.filter(
             profile=profile, template_id__in=all_tpl_ids, month_str__in=future_months,
-        ):
-            bc_lookup[(str(bc.template_id), bc.month_str)] = float(bc.limit_override) if bc.limit_override is not None else None
+        ).values('template_id', 'month_str').annotate(total=Sum('limit_override')):
+            bc_lookup[(str(row['template_id']), row['month_str'])] = (
+                float(row['total']) if row['total'] is not None else None
+            )
 
     def _tpl_amount(tpl, month):
+        if not _template_active_in_month(tpl, month):
+            return 0.0
         val = bc_lookup.get((str(tpl.id), month))
         return val if val is not None else float(tpl.default_limit)
 
@@ -3465,7 +3562,7 @@ def get_projection(start_month_str, num_months=0, profile=None):
                 cat_type = mp.custom_type if mp.is_custom else (
                     mp.template.template_type if mp.template else ''
                 )
-                expected = float(mp.expected_amount)
+                expected = float(_mapping_expected_amount(mp))
                 if cat_type == 'Income':
                     income += expected
                 elif cat_type == 'Fixo':
@@ -6037,14 +6134,34 @@ def sync_salary_to_budget(profile, num_months=12, start_month_str=None):
 
     upserted = 0
     for m in projection['months']:
-        brl = Decimal(str(m['brl_personal']))
-        obj, created = BudgetConfig.objects.update_or_create(
-            profile=profile,
-            template=cfg.income_template,
-            month_str=m['month'],
-            defaults={'limit_override': brl},
-        )
-        upserted += 1
+        payments = m.get('payments') or []
+        if payments:
+            for payment in payments:
+                brl = Decimal(str(payment['brl_personal']))
+                BudgetConfig.objects.update_or_create(
+                    profile=profile,
+                    template=cfg.income_template,
+                    month_str=m['month'],
+                    pay_num=payment.get('pay_num') or 0,
+                    defaults={'limit_override': brl},
+                )
+                upserted += 1
+            BudgetConfig.objects.filter(
+                profile=profile,
+                template=cfg.income_template,
+                month_str=m['month'],
+                pay_num=0,
+            ).delete()
+        else:
+            brl = Decimal(str(m['brl_personal']))
+            BudgetConfig.objects.update_or_create(
+                profile=profile,
+                template=cfg.income_template,
+                month_str=m['month'],
+                pay_num=0,
+                defaults={'limit_override': brl},
+            )
+            upserted += 1
 
     projection['budget_configs_upserted'] = upserted
 

@@ -895,21 +895,7 @@ class RecurringMappingViewSet(viewsets.ModelViewSet):
                 {'error': 'month_str required'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        templates = RecurringTemplate.objects.filter(is_active=True, profile=request.profile)
-        created = 0
-        for tpl in templates:
-            _, was_created = RecurringMapping.objects.get_or_create(
-                template=tpl,
-                month_str=month_str,
-                profile=request.profile,
-                defaults={
-                    'expected_amount': tpl.default_limit,
-                    'status': 'missing',
-                },
-            )
-            if was_created:
-                created += 1
-        return Response({'created': created, 'month_str': month_str})
+        return Response(initialize_month(month_str, profile=request.profile))
 
     @action(detail=False, methods=['post'], url_path='auto-match')
     def auto_match(self, request):
@@ -1604,7 +1590,13 @@ class RecurringTemplatesView(APIView):
         if not name:
             return Response({'error': 'name required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = create_recurring_template(name, template_type, default_limit, due_day, profile=request.profile)
+            result = create_recurring_template(
+                name, template_type, default_limit, due_day,
+                profile=request.profile,
+                contract_start=request.data.get('contract_start', ''),
+                contract_term_months=request.data.get('contract_term_months'),
+                end_month=request.data.get('end_month', ''),
+            )
             return Response(result, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -1614,7 +1606,10 @@ class RecurringTemplatesView(APIView):
         if not template_id:
             return Response({'error': 'id required'}, status=status.HTTP_400_BAD_REQUEST)
         kwargs = {}
-        for field in ('name', 'template_type', 'default_limit', 'due_day', 'display_order'):
+        for field in (
+            'name', 'template_type', 'default_limit', 'due_day',
+            'contract_start', 'contract_term_months', 'end_month', 'display_order',
+        ):
             if field in request.data:
                 kwargs[field] = request.data[field]
         # Accept category_type as alias for template_type (backward compat)
