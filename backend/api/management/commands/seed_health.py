@@ -97,6 +97,23 @@ RAFA_EXAMS = [
         'valores': {},
         'notes': 'Consolidado do laboratório.',
     },
+    # ─── 1ª consulta pré-natal (2026-05-05) ───
+    {
+        'tipo': 'outro',
+        'nome': '1ª consulta pré-natal',
+        'data': date(2026, 5, 5),
+        'medico': 'Dra. Nahara Alves Gomes Torres (CRM-DF 18529)',
+        'laboratorio': 'Grupo Elas — Setor Sudoeste, Brasília',
+        'arquivo_path': 'family/pregnancy/consultas/2026-05-05_1a_consulta/',
+        'checkpoint_id': '1a-consulta',
+        'notes': 'CID Z34.9. IG ~5+5. Solicitou painel laboratorial 1º tri completo (14 exames) + USG transvaginal gestacional. Receituário: Ogestan-Pré 1×/dia + sintomáticos.',
+        'valores': {
+            'ig_consulta': '5+5',
+            'cid': 'Z34.9',
+            'pedidos_lab_count': 14,
+            'pedidos_imagem': ['USG transvaginal gestacional'],
+        },
+    },
 ]
 
 
@@ -177,17 +194,31 @@ class Command(BaseCommand):
 
         # ── Rafa exams ──
         for spec in RAFA_EXAMS:
+            defaults = {
+                'tipo': spec['tipo'],
+                'arquivo_path': spec.get('arquivo_path', ''),
+                'notes': spec.get('notes', ''),
+                'valores': spec.get('valores', {}),
+                'medico': spec.get('medico', ''),
+                'laboratorio': spec.get('laboratorio', ''),
+                'checkpoint_id': spec.get('checkpoint_id', ''),
+            }
+            # Link pregnancy-related exams (consulta + future pre-natal exams)
+            if spec.get('checkpoint_id'):
+                defaults['pregnancy'] = pregnancy
             obj, created = HealthExam.objects.get_or_create(
                 profile=rafa,
                 nome=spec['nome'],
                 data=spec['data'],
-                defaults={
-                    'tipo': spec['tipo'],
-                    'arquivo_path': spec.get('arquivo_path', ''),
-                    'notes': spec.get('notes', ''),
-                    'valores': spec.get('valores', {}),
-                },
+                defaults=defaults,
             )
+            # If exam already exists but is missing checkpoint_id linkage, fill it in
+            if not created and spec.get('checkpoint_id') and not obj.checkpoint_id:
+                obj.checkpoint_id = spec['checkpoint_id']
+                obj.pregnancy = pregnancy
+                obj.medico = obj.medico or spec.get('medico', '')
+                obj.laboratorio = obj.laboratorio or spec.get('laboratorio', '')
+                obj.save()
             tag = '+' if created else '·'
             self.stdout.write(f'  {tag} Rafa: {obj.nome} ({obj.data})')
 
