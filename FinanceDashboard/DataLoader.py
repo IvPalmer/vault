@@ -108,13 +108,17 @@ class DataLoader:
 
             # Deduplicate (Stronger Logic)
             # Use description_original if available, otherwise description
-            dedup_cols = ['date', 'amount', 'account']
             if 'description_original' in self.transactions.columns:
-                dedup_cols.append('description_original')
+                desc_col = 'description_original'
             else:
-                dedup_cols.append('description')
+                desc_col = 'description'
 
+            self.transactions['_dedup_description'] = (
+                self.transactions[desc_col].fillna('').astype(str).str.lower().str.strip()
+            )
+            dedup_cols = ['date', 'amount', 'account', '_dedup_description']
             self.transactions.drop_duplicates(subset=dedup_cols, inplace=True)
+            self.transactions.drop(columns=['_dedup_description'], inplace=True)
 
             self.transactions.sort_values(by='date', ascending=False, inplace=True)
 

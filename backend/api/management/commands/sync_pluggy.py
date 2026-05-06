@@ -385,14 +385,11 @@ class Command(BaseCommand):
             return re.sub(r'\s+', ' ', s.strip().lower())
 
         existing_pluggy_by_content = {}  # (amount, norm_desc) -> set of dates
-        # Also index by (date, amount) for description-agnostic CC dedup
-        existing_pluggy_by_date_amt = set()  # {(date, amount)}
         for t in Transaction.objects.filter(
             account_id__in=acct_ids, profile=self.profile
         ).exclude(external_id='').values_list('date', 'amount', 'description'):
             ckey = (t[1], _content_norm(t[2]))
             existing_pluggy_by_content.setdefault(ckey, set()).add(t[0])
-            existing_pluggy_by_date_amt.add((t[0], t[1]))
 
         # Load existing transactions for fuzzy dedup against legacy imports.
         # Legacy data has different casing, punctuation, accents, and sometimes
@@ -402,22 +399,39 @@ class Command(BaseCommand):
             ascii_only = nfkd.encode('ASCII', 'ignore').decode()
             return re.sub(r'[^a-z0-9]', '', ascii_only.lower())
 
+        def _dedup_norm(s):
+            norm_desc = _norm(s)
+            if 'sispagpixraphaelazevedo' in norm_desc or norm_desc == 'raphaelazevedop':
+                return 'salary_raphael_azevedo'
+            if 'juroslimitedaconta' in norm_desc:
+                return 'juros_limite_da_conta'
+            if 'easyplan' in norm_desc:
+                return 'easyplan'
+            if 'ramiro' in norm_desc:
+                return 'ramiro'
+            if 'gsoensino' in norm_desc:
+                return 'gso_ensino'
+            return norm_desc
+
+        existing_synced_by_amt = {}  # (abs_amt, norm_desc) -> set(date)
+        for t in Transaction.objects.filter(
+            account_id__in=acct_ids, profile=self.profile,
+        ).exclude(external_id='').values_list('date', 'amount', 'description'):
+            synced_key = (abs(t[1]), _dedup_norm(t[2]))
+            existing_synced_by_amt.setdefault(synced_key, set()).add(t[0])
+
         existing_legacy = set()
         existing_legacy_by_key = {}  # key -> (amount, description) for updating
         # Also index by (amount, norm_desc) for date-tolerant matching
         existing_legacy_by_amt = {}  # (abs_amt, norm_desc) -> list of (date, amount, description)
-        # Index by (date, abs_amount) for amount-only matching (handles renamed PIX descriptions)
-        existing_legacy_by_date_amt = {}  # (date, abs_amt) -> list of (amount, description)
         for t in Transaction.objects.filter(
             account=vault_acct, profile=self.profile, external_id=''
         ).values_list('date', 'amount', 'description'):
-            key = (t[0], abs(t[1]), _norm(t[2]))
+            key = (t[0], abs(t[1]), _dedup_norm(t[2]))
             existing_legacy.add(key)
             existing_legacy_by_key[key] = (t[1], t[2])
-            amt_key = (abs(t[1]), _norm(t[2]))
+            amt_key = (abs(t[1]), _dedup_norm(t[2]))
             existing_legacy_by_amt.setdefault(amt_key, []).append((t[0], t[1], t[2]))
-            da_key = (t[0], abs(t[1]))
-            existing_legacy_by_date_amt.setdefault(da_key, []).append((t[1], t[2]))
 
         # Index by (date, norm_desc) -> max abs_amount for FX duplicate detection
         existing_legacy_by_date_desc = {}
@@ -485,19 +499,19 @@ class Command(BaseCommand):
                 skipped_count += 1
                 continue
 
-            # Description-agnostic dedup for CC: bill endpoint and account endpoint
-            # return completely different descriptions for the same transaction.
-            if is_cc and (txn_date, amount) in existing_pluggy_by_date_amt:
-                skipped_count += 1
-                continue
-
             # Track for future iterations in this batch
             existing_pluggy_by_content.setdefault(content_key, set()).add(txn_date)
-            existing_pluggy_by_date_amt.add((txn_date, amount))
 
             # Fuzzy dedup: match on (date, abs_amount, normalized_description)
             # Handles legacy data with different casing, punctuation, accents
-            norm_desc = _norm(description)
+            raw_norm_desc = _norm(description)
+            norm_desc = _dedup_norm(description)
+            synced_dates = existing_synced_by_amt.get((abs(amount), norm_desc), set())
+            if any(abs((txn_date - d).days) <= 1 for d in synced_dates):
+                skipped_count += 1
+                existing_ext_ids.add(ext_id)
+                continue
+
             fuzzy_key = (txn_date, abs(amount), norm_desc)
             matched = False
             if fuzzy_key in existing_legacy:
@@ -508,28 +522,13 @@ class Command(BaseCommand):
                 amt_key = (abs(amount), norm_desc)
                 for ldate, lamt, ldesc in existing_legacy_by_amt.get(amt_key, []):
                     if abs((txn_date - ldate).days) <= 1:
-                        alt_key = (ldate, abs(lamt), _norm(ldesc))
+                        alt_key = (ldate, abs(lamt), _dedup_norm(ldesc))
                         if alt_key in existing_legacy:
                             matched_amount, matched_desc = lamt, ldesc
                             fuzzy_key = alt_key
                             txn_date_match = ldate
                             matched = True
                             break
-
-            # Fallback: match on (date, abs_amount) only when there's exactly
-            # one legacy txn with that combo. Handles PIX descriptions where
-            # legacy OFX uses abbreviated names (e.g. "Antanio02 03") and
-            # Pluggy uses full names (e.g. "PIX TRANSF Antônio02/03").
-            if not matched:
-                da_key = (txn_date, abs(amount))
-                candidates = existing_legacy_by_date_amt.get(da_key, [])
-                if len(candidates) == 1:
-                    matched_amount, matched_desc = candidates[0]
-                    fuzzy_key = (txn_date, abs(matched_amount), _norm(matched_desc))
-                    if fuzzy_key in existing_legacy:
-                        matched = True
-                        if self.verbosity >= 2:
-                            self.stdout.write(f'  Date+amount dedup: "{matched_desc}" -> "{description}"')
 
             if matched:
                 if not self.dry_run:
@@ -559,6 +558,7 @@ class Command(BaseCommand):
                         first.save(update_fields=update_fields)
                 updated_count += 1
                 existing_ext_ids.add(ext_id)
+                existing_synced_by_amt.setdefault((abs(amount), norm_desc), set()).add(txn_date)
                 existing_legacy.discard(fuzzy_key)
                 continue
 
@@ -567,7 +567,7 @@ class Command(BaseCommand):
             # If a legacy txn exists with same date+description but >2x the amount,
             # the Pluggy version is the FX original — skip it.
             if is_cc and not matched:
-                fx_key = (txn_date, norm_desc)
+                fx_key = (txn_date, raw_norm_desc)
                 if fx_key in existing_legacy_by_date_desc:
                     legacy_amt = existing_legacy_by_date_desc[fx_key]
                     if legacy_amt > abs(amount) * 2:
@@ -663,6 +663,7 @@ class Command(BaseCommand):
             batch_create.append(txn)
             new_count += 1
             existing_ext_ids.add(ext_id)
+            existing_synced_by_amt.setdefault((abs(amount), norm_desc), set()).add(txn_date)
 
         if batch_create and not self.dry_run:
             Transaction.objects.bulk_create(batch_create, batch_size=500)
