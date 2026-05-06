@@ -203,7 +203,7 @@ export const BABY_IMPLICATIONS = [
     acoes: [
       'Agendar TODOS os 14 labs imediatamente — carência exames básicos = 1 dia, já cobertos pela Amil desde 29/04/2026',
       'Lab sugerido: DASA / Lab Exame (Asa Sul) — onde foram feitos os exames anteriores da Rafa',
-      'USG transvaginal: 2 opções → (a) particular agora ~R$200-400 (Brasília) para ter datação cedo, (b) aguardar 28/05/2026 (Amil libera) → IG estará ~8+6, ainda na janela ideal 6-9 sem',
+      'USG transvaginal: 2 opções → (a) particular agora — Doctoralia Brasília tem R$ 80-250 (Dr. Bruno Souza R$80, Êxito Saúde R$80, Dr. Rafael Mendes R$100, Dr. Adervane R$130, Sergio Mattioda/Rangell Guerra R$150, Raquel Meirelles R$250); especialistas top R$ 500-700 (Dra. Tábata Longo R$650). (b) Aguardar 28/05/2026 (Amil libera) → IG estará ~8+6, ainda na janela ideal 6-9 sem',
       'Iniciar Ogestan-Pré ou Regenesis-Pré 1cp/dia hoje (vitamina pré-natal com folato + ferro)',
       'Prescrição sintomáticos: paracetamol/Buscoduo/Simeco/Dramin/Luftal/Tamarine — apenas se necessário',
       'Hidratante corpo (Mustela/Bio Oil) + FPS 60+ desde já',
