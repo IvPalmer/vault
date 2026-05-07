@@ -218,13 +218,13 @@ export const BABY_IMPLICATIONS = [
   },
   {
     id: 'orcamento-parto',
-    titulo: 'Orçamento total real — R$ 19-23k (com Proasa) vs R$ 32-39k (só Amil)',
-    origem: 'Adesão Proasa 06/05/2026 · family/finance/projecao_parto.md',
+    titulo: 'Orçamento total real — R$ 17,8-21,8k (com Proasa) vs R$ 31-38k (só Amil)',
+    origem: 'NFS-e 10500 (consulta R$450 confirmado) + Proasa adesão 06/05',
     categoria: 'Financeiro',
     prioridade: 'alta',
-    resumo: 'Dra. Nahara é particular fora da rede Proasa — honorários (R$ 7k consultas + R$ 10k parto = R$ 17k) são out-of-pocket sempre. Proasa cobre HOSPITAL: internação, sala de parto, equipe plantonista, UTI neonatal eventual. Total realista com Proasa: R$ 19-23k esperado (vs R$ 32-39k só Amil). Economia real R$ 13-16k esperado, R$ 50-66k se UTI necessária.',
+    resumo: 'Dra. Nahara fora da rede Proasa — honorários (R$ 5,85k consultas R$450/cada × 13 + R$ 10k parto = R$ 15,85k) são out-of-pocket sempre. Proasa cobre HOSPITAL: internação, sala de parto, equipe plantonista, UTI neonatal eventual. Total realista com Proasa: R$ 17,8-21,8k esperado (vs R$ 31-38k só Amil). Economia real R$ 13-16k esperado, R$ 50-65k se UTI necessária.',
     acoes: [
-      'Out-of-pocket Dra. Nahara: 13 consultas × R$500 = R$6.5k + R$10k parto = R$16.5k total (fora rede Proasa)',
+      'Out-of-pocket Dra. Nahara: 13 consultas × R$450 = R$5,85k + R$10k parto = R$15,85k total (fora rede Proasa)',
       'Plano Proasa cobre: hospital + internação + equipe plantão + UTI neonatal eventual',
       'Mensalidade Proasa Rafa: R$503/mês × 8 meses = R$4k (+ copay R$500-1500)',
       'Upgrade enfermaria→apto no parto (ADV 300): R$1.5-4.5k direto ao hospital — OU subir pra ADV 400 em outubro',
@@ -252,6 +252,22 @@ export const BABY_IMPLICATIONS = [
   },
 
   {
+    id: 'nfe-reembolso-cpf',
+    titulo: 'NFs no CPF do Palmer · pode dificultar reembolso Proasa Rafa',
+    origem: 'NFS-e 10500 (1ª consulta 05/05/2026) · family/pregnancy/notas_fiscais.md',
+    categoria: 'Operacional',
+    prioridade: 'alta',
+    resumo: '1ª NF emitida no CPF do Palmer (titular financeiro) com paciente Rafa. Operadoras geralmente exigem NF no nome do beneficiário do plano. Como Proasa é plano da Rafa, pode complicar reembolso ~R$ 3-5k estimado das consultas + parto.',
+    acoes: [
+      'Confirmar com Easyplan/Proasa: NF deve estar no CPF do beneficiário (Rafa) ou aceita CPF do tomador?',
+      'Se exigir Rafa: pedir reemissão da NFS-e 10500 no CPF da Rafa (040.378.591-06)',
+      'Para próximas ~12 consultas: pedir NF já no CPF da Rafa desde o início',
+      'Para o parto: idem — emissão direto no CPF da Rafa',
+      'Pedir Easyplan tabela de reembolso vigente ADV 300 DF (consultas + parto)',
+      'Reembolso estimado: R$ 3-5k dos R$ 15.850 out-of-pocket (~20-30%)',
+    ],
+  },
+  {
     id: 'orientacoes-dra-nahara-1tri',
     titulo: 'Orientações Dra. Nahara — 1º trimestre (alimentação, atividade, cosméticos)',
     origem: '6 docs entregues 1ª consulta · family/pregnancy/orientacoes_dra_nahara.md',
@@ -259,7 +275,7 @@ export const BABY_IMPLICATIONS = [
     prioridade: 'media',
     resumo: 'Material entregue pela Dra. Nahara cobre frequência das consultas (mensal até 32-34s, quinzenal 34-37s, semanal 37+), alterações fisiológicas 1º tri, guia alimentar (recomendados/proibidos), chás permitidos/proibidos, atividade física (150min/sem moderado), maquiagem/cosméticos.',
     acoes: [
-      'Frequência consultas Dra. Nahara: mensal até 32-34s, quinzenal 34-37s, semanal 37s-parto = ~13 consultas total = R$ 6.500',
+      'Frequência consultas Dra. Nahara: mensal até 32-34s, quinzenal 34-37s, semanal 37s-parto = ~13 consultas × R$450 = R$ 5.850 (NFS-e 10500 confirmou valor)',
       'Janelas: mensal→quinzenal ~13/11/2026, quinzenal→semanal ~10/12/2026',
       'Alimentos a EVITAR: carnes cruas/malpassadas, peixes alto mercúrio (tubarão/peixe-espada), queijos não pasteurizados, ovos crus, embutidos, álcool. Cafeína máx 200mg/dia.',
       'Chás PROIBIDOS: canela, boldo, carqueja, hibisco, sene, losna, confrei, chá verde/preto/mate. Permitidos: camomila, erva-doce, capim-limão, gengibre (1g/dia), hortelã.',
