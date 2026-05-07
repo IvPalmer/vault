@@ -103,7 +103,7 @@ export const PALMER_LAB_PANEL = {
     },
     {
       id: 'inflamatorio',
-      nome: 'Marcadores inflamatórios',
+      nome: 'Marcadores inflamatórios + EpA',
       data_atualizacao: '2026-04-28',
       lab_atualizacao: 'DASA',
       markers: [
@@ -118,6 +118,9 @@ export const PALMER_LAB_PANEL = {
           history: [
             { data: '2025-05-28', value: 17, status: 'alto' },
           ] },
+        { key: 'hla_b27', label: 'HLA-B27', value_text: 'Não detectado', status: 'normal',
+          ref_text: 'Não detectado',
+          obs: 'Negativo. Exclui predisposição genética para espondiloartropatias (EpA, espondilite anquilosante, artrite reativa, artrite psoriásica axial). Investigação reumatológica encerrada.' },
       ],
     },
     {
@@ -240,9 +243,10 @@ export const PALMER_CLINICAL_REPORT = {
       achados: [
         'PCR normalizou em abr/2026 — 3.24 → 0.25 mg/dL (queda de 13×)',
         'VHS normalizou — 17 → 14 mm/h (dentro da referência)',
-        'Processo inflamatório sistêmico resolvido entre mai/2025 e abr/2026',
-        'Investigação reumatológica sistêmica (HLA-B27, FAN) deixa de ser prioridade',
-        'Foco agora: dor estrutural local (FAI/morfologia CAM) — manejo ortopédico',
+        'HLA-B27 NÃO DETECTADO em 04/05/2026 — exclui predisposição genética para EpA',
+        'Espondiloartropatia (espondilite anquilosante, artrite reativa, psoriásica axial) DESCARTADA',
+        'Investigação reumatológica encerrada — encaminhamento não justificado',
+        'Foco 100%: estrutural (IFA cam) + neuropático (genitofemoral) + tecido mole (tendinopatia glútea)',
       ],
     },
     {
@@ -282,8 +286,8 @@ export const PALMER_OBSERVATIONS = [
     prioridade: 'media',
   },
   {
-    titulo: 'PCR e VHS normalizaram (abr/2026)',
-    texto: 'PCR caiu de 3.24 → 0.25 mg/dL (13×) e VHS de 17 → 14 mm/h em ~11 meses. Processo inflamatório sistêmico resolvido. Investigação reumatológica sistêmica deixa de ser prioridade — manejo agora foca em FAI/CAM estrutural (ortopedia + fisioterapia).',
+    titulo: 'PCR + VHS normalizados + HLA-B27 negativo (mai/2026)',
+    texto: 'Investigação inflamatória/genética encerrada: PCR 0.25 mg/dL, VHS 14 mm/h, HLA-B27 NÃO DETECTADO (04/05/2026). Espondiloartropatia descartada. Encaminhamento reumatológico não justificado. Foco 100% em manejo ortopédico (FAI/CAM estrutural) + medicina da dor (bloqueio diagnóstico genitofemoral).',
     prioridade: 'baixa',
   },
   {

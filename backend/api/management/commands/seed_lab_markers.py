@@ -100,13 +100,16 @@ PALMER_CATEGORIES = [
         ],
     },
     {
-        'slug': 'inflamatorio', 'label': 'Marcadores inflamatórios', 'order': 8,
+        'slug': 'inflamatorio', 'label': 'Marcadores inflamatórios + EpA', 'order': 8,
         'exam_date': PALMER_FOLLOWUP_DATE,  # most recent values
         'markers': [
             {'key': 'pcr', 'label': 'PCR ultrassensível', 'value': 0.25, 'unit': 'mg/dL', 'ref_max': 0.5, 'status': 'normal',
              'obs': 'Normalizou — caiu 13× desde mai/2025. Resolução do processo inflamatório sistêmico.'},
             {'key': 'vhs', 'label': 'VHS', 'value': 14, 'unit': 'mm/h', 'ref_max': 15, 'status': 'normal',
              'obs': 'Dentro da referência. Caiu de 17 (mai/2025).'},
+            {'key': 'hla_b27', 'label': 'HLA-B27', 'value_text': 'Não detectado', 'status': 'normal',
+             'ref_text': 'Não detectado',
+             'obs': 'Negativo. Exclui predisposição genética para espondiloartropatias (EpA, espondilite anquilosante, artrite reativa, psoriásica axial). Investigação reumatológica encerrada.'},
         ],
     },
     {

@@ -55,18 +55,21 @@ export const BABY_IMPLICATIONS = [
 
   {
     id: 'pcr-paterna',
-    titulo: 'PCR e VHS Palmer normalizaram (abr/2026)',
-    origem: 'Palmer · follow-up DASA 2026-04-28',
+    titulo: 'Investigação inflamatória/EpA Palmer encerrada (mai/2026)',
+    origem: 'Palmer · follow-up DASA 2026-04-28 + HLA-B27 liberado 04/05/2026',
     categoria: 'Resolvido',
     prioridade: 'baixa',
     marker_refs: [
       { profile: 'palmer', category: 'inflamatorio', key: 'pcr' },
       { profile: 'palmer', category: 'inflamatorio', key: 'vhs' },
+      { profile: 'palmer', category: 'inflamatorio', key: 'hla_b27' },
     ],
-    resumo: 'PCR caiu de 3.24 → 0.25 mg/dL e VHS de 17 → 14 mm/h em ~11 meses. Processo inflamatório sistêmico resolvido entre mai/2025 e abr/2026. Não há mais suspeita ativa de doença autoimune sistêmica que pudesse impactar o neonato. Manejo ortopédico (FAI/CAM) continua mas não é fator de risco gestacional.',
+    resumo: 'PCR 0.25 mg/dL + VHS 14 mm/h normalizados + HLA-B27 NÃO DETECTADO. Espondiloartropatia (espondilite anquilosante, artrite reativa, psoriásica axial) descartada. Não há doença autoimune sistêmica que possa impactar o neonato. Encaminhamento reumatológico não justificado. Foco 100% em manejo ortopédico (FAI/CAM estrutural) + medicina da dor (genitofemoral).',
     acoes: [
-      'Manter monitoramento periódico de PCR/VHS (semestral)',
-      'Foco em manejo ortopédico (fisioterapia, posturologia) — não afeta gestação',
+      'Investigação laboratorial inflamatória/genética encerrada',
+      'Monitoramento periódico não rotineiro (apenas se sintomas novos)',
+      'Foco: manejo ortopédico (fisioterapia, posturologia) + bloqueio diagnóstico genitofemoral',
+      'Sem implicações gestacionais — NÃO transmite EpA pra bebê',
     ],
   },
 
