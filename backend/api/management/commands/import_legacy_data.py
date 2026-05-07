@@ -195,7 +195,7 @@ class Command(BaseCommand):
                 rename_count += 1
         self.stdout.write(f'  Cloned {rename_count} rename rules')
 
-        # Clone recurring templates
+        # Clone recurring templates (including contract bounds)
         tpl_count = 0
         for tpl in RecurringTemplate.objects.filter(profile=source):
             _, created = RecurringTemplate.objects.get_or_create(
@@ -207,6 +207,9 @@ class Command(BaseCommand):
                     'due_day': tpl.due_day,
                     'is_active': tpl.is_active,
                     'display_order': tpl.display_order,
+                    'contract_start': tpl.contract_start,
+                    'contract_term_months': tpl.contract_term_months,
+                    'end_month': tpl.end_month,
                 },
             )
             if created:

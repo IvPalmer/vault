@@ -4,7 +4,7 @@ recurring budget tracking, and transaction management.
 """
 import re
 import unicodedata
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal
 from difflib import get_close_matches, SequenceMatcher
@@ -95,25 +95,73 @@ def _dedupe_description_key(description):
     return _normalize_transaction_description(description)
 
 
+def _is_pluggy_source(source_file):
+    """A row originated from Pluggy if its source_file starts with 'pluggy:'."""
+    return bool(source_file and source_file.startswith('pluggy:'))
+
+
 def _deduped_transaction_sum(transactions):
     """
-    Sum a queryset/list of transactions once per normalized content key.
-    Key deliberately avoids category/source fields so duplicate imports do not
-    inflate dashboard actuals.
+    Sum a queryset/list of transactions, collapsing Pluggy↔legacy phantom
+    pairs only (the actual import duplication pattern).
+
+    Algorithm: bucket by (account, abs(amount), normalized_description) —
+    NO date in the bucket, because Pluggy and legacy can record the same
+    real charge on dates 1 day apart (e.g. consórcio cota: legacy 05, Pluggy
+    06). Within each bucket, greedy-match Pluggy↔legacy pairs within ±1 day.
+    Each matched pair counts as one transaction (uses the Pluggy amount,
+    falls back to the kept side).
+
+    Same-source rows (two Pluggy or two legacy) are NEVER merged — they're
+    legitimate distinct payments (e.g. user paid Claudia R$200 twice in
+    one day).
     """
-    seen = set()
-    total = Decimal('0.00')
+    buckets = defaultdict(list)
     for txn in transactions:
         key = (
-            txn.date,
             abs(txn.amount),
             txn.account_id,
             _dedupe_description_key(txn.description),
         )
-        if key in seen:
+        buckets[key].append(txn)
+
+    total = Decimal('0.00')
+    for rows in buckets.values():
+        pluggy_rows = sorted(
+            [r for r in rows if _is_pluggy_source(getattr(r, 'source_file', ''))],
+            key=lambda r: r.date,
+        )
+        legacy_rows = sorted(
+            [r for r in rows if not _is_pluggy_source(getattr(r, 'source_file', ''))],
+            key=lambda r: r.date,
+        )
+
+        if not pluggy_rows or not legacy_rows:
+            # Same-source bucket → all rows are legitimate.
+            for r in rows:
+                total += r.amount
             continue
-        seen.add(key)
-        total += txn.amount
+
+        # Greedy pair Pluggy↔legacy within ±1 day. Surviving (unmatched)
+        # rows from either side are real distinct payments.
+        unmatched_legacy = list(legacy_rows)
+        unmatched_pluggy = []
+        for p in pluggy_rows:
+            paired = None
+            for l in unmatched_legacy:
+                if abs((p.date - l.date).days) <= 1:
+                    paired = l
+                    break
+            if paired:
+                # Phantom pair: count once, prefer Pluggy amount (richer metadata).
+                total += p.amount
+                unmatched_legacy.remove(paired)
+            else:
+                unmatched_pluggy.append(p)
+
+        # Add remaining unmatched rows (legitimate, didn't pair)
+        for r in unmatched_legacy + unmatched_pluggy:
+            total += r.amount
     return total
 
 
@@ -273,8 +321,9 @@ def get_recurring_data(month_str, profile=None):
     result = initialize_month(month_str, profile=profile)
     was_initialized = result['initialized']
 
-    # Fetch all mappings for this month
-    mappings = RecurringMapping.objects.filter(
+    # Fetch all mappings for this month, excluding those whose template's
+    # contract has ended (e.g. car financing past end_month).
+    mappings_qs = RecurringMapping.objects.filter(
         month_str=month_str,
         profile=profile,
     ).select_related('template', 'category', 'transaction', 'transaction__account').prefetch_related(
@@ -282,6 +331,10 @@ def get_recurring_data(month_str, profile=None):
     ).order_by(
         'display_order', 'template__display_order', 'custom_name'
     )
+    mappings = [
+        m for m in mappings_qs
+        if m.template is None or _template_active_in_month(m.template, m.month_str)
+    ]
 
     # Transaction pools for suggestion matching
     txns = Transaction.objects.filter(
@@ -1799,14 +1852,18 @@ def _compute_custom_metrics(month_str, metricas_data, profile=None):
         cats_by_id = {str(c.id): c for c in Category.objects.filter(id__in=cat_ids_needed, profile=profile)}
 
     # Batch: BudgetConfig overrides for referenced categories (1 query)
+    # Sum across pay_num so category overrides remain stable even if a
+    # category accidentally gets split rows (currently only salary uses
+    # pay_num > 0, but defensive aggregation is cheap).
     budget_overrides = {}
     if cat_ids_needed:
-        budget_overrides = {
-            str(bc.category_id): float(bc.limit_override)
-            for bc in BudgetConfig.objects.filter(
-                category_id__in=cat_ids_needed, month_str=month_str, profile=profile,
-            )
-        }
+        agg = (
+            BudgetConfig.objects
+            .filter(category_id__in=cat_ids_needed, month_str=month_str, profile=profile)
+            .values('category_id')
+            .annotate(total=Sum('limit_override'))
+        )
+        budget_overrides = {str(row['category_id']): float(row['total']) for row in agg}
 
     # Batch: category spending for referenced categories (1 query)
     cat_spending = {}
@@ -1981,7 +2038,10 @@ def _compute_custom_metrics(month_str, metricas_data, profile=None):
                         else:
                             agg = cat_spending.get(cat_key, Decimal('0.00'))
                         actual = abs(agg)
-                    expected = float(mapping.expected_amount)
+                    # Respect template contract bounds (e.g. car financing
+                    # ended) — _mapping_expected_amount returns 0 if the
+                    # template is no longer active in this month.
+                    expected = float(_mapping_expected_amount(mapping))
                     value = f'R$ {int(actual):,}'.replace(',', '.')
                     if expected > 0:
                         subtitle = f'de R$ {int(expected):,} esperado'.replace(',', '.')
@@ -3841,11 +3901,13 @@ def get_orcamento(month_str, profile=None):
         total_avg += avg
 
     # ── 8. Manual overrides (BudgetConfig) ───────────────────────────
+    # Sum across pay_num so category overrides aggregate any split rows.
     budget_overrides = {
-        bc.category_id: float(bc.limit_override)
-        for bc in BudgetConfig.objects.filter(
-            category_id__in=cat_ids, month_str=month_str, profile=profile,
-        )
+        row['category_id']: float(row['total'])
+        for row in BudgetConfig.objects
+        .filter(category_id__in=cat_ids, month_str=month_str, profile=profile)
+        .values('category_id')
+        .annotate(total=Sum('limit_override'))
     }
 
     # ── 9. Build per-category budget ─────────────────────────────────
@@ -5108,14 +5170,16 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     budget_month = eff_end
 
     # Get all budget configs for the target month (category-based)
-    budget_configs = list(
+    # Aggregate by category — handles any split rows safely.
+    budget_agg = (
         BudgetConfig.objects
         .filter(month_str=budget_month, category__isnull=False, profile=profile)
-        .select_related('category')
+        .values('category_id')
+        .annotate(total=Sum('limit_override'))
     )
 
     # Also check Category.default_limit for categories without BudgetConfig
-    budget_cat_ids = {bc.category_id for bc in budget_configs}
+    budget_cat_ids = {row['category_id'] for row in budget_agg}
     cats_with_defaults = list(
         Category.objects
         .filter(is_active=True, default_limit__gt=0, profile=profile)
@@ -5124,8 +5188,8 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
 
     # Build budget map: category_id -> budget amount
     budget_map = {}
-    for bc in budget_configs:
-        budget_map[bc.category_id] = float(bc.limit_override)
+    for row in budget_agg:
+        budget_map[row['category_id']] = float(row['total'])
     for cat in cats_with_defaults:
         budget_map[cat.id] = float(cat.default_limit)
 
@@ -5656,11 +5720,11 @@ def get_spending_insights(profile=None):
         profile=profile, category_type='Variavel', is_active=True, default_limit__gt=0
     )
     for cat in variavel_cats:
-        # Check for month override
-        override = BudgetConfig.objects.filter(
+        # Sum override across pay_num rows (defensive — categories use 0 today).
+        override_total = BudgetConfig.objects.filter(
             profile=profile, category=cat, month_str=latest
-        ).first()
-        limit = float(override.limit_override) if override else float(cat.default_limit)
+        ).aggregate(t=Sum('limit_override'))['t']
+        limit = float(override_total) if override_total is not None else float(cat.default_limit)
         if limit <= 0:
             continue
         spent = abs(float(

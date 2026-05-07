@@ -391,27 +391,14 @@ class Command(BaseCommand):
             ckey = (t[1], _content_norm(t[2]))
             existing_pluggy_by_content.setdefault(ckey, set()).add(t[0])
 
-        # Load existing transactions for fuzzy dedup against legacy imports.
-        # Legacy data has different casing, punctuation, accents, and sometimes
-        # dates off by 1 day, so we normalize aggressively.
-        def _norm(s):
-            nfkd = unicodedata.normalize('NFKD', s)
-            ascii_only = nfkd.encode('ASCII', 'ignore').decode()
-            return re.sub(r'[^a-z0-9]', '', ascii_only.lower())
-
-        def _dedup_norm(s):
-            norm_desc = _norm(s)
-            if 'sispagpixraphaelazevedo' in norm_desc or norm_desc == 'raphaelazevedop':
-                return 'salary_raphael_azevedo'
-            if 'juroslimitedaconta' in norm_desc:
-                return 'juros_limite_da_conta'
-            if 'easyplan' in norm_desc:
-                return 'easyplan'
-            if 'ramiro' in norm_desc:
-                return 'ramiro'
-            if 'gsoensino' in norm_desc:
-                return 'gso_ensino'
-            return norm_desc
+        # Use the central normalization helper from services.py so all dedup paths
+        # (sync, get_metricas aggregation, dedup_phantom_transactions command)
+        # apply identical rules. This strips Pluggy verbose prefixes
+        # ("PIX TRANSF ", "PAG BOLETO ", etc.) so legacy CSV format
+        # ("Claudia28 01") and Pluggy verbose format ("PIX TRANSF Claudia28/01")
+        # collapse to the same key.
+        from api.services import _normalize_transaction_description as _dedup_norm
+        _norm = _dedup_norm  # backward-compat alias for code below
 
         existing_synced_by_amt = {}  # (abs_amt, norm_desc) -> set(date)
         for t in Transaction.objects.filter(

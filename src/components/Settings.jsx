@@ -1211,6 +1211,28 @@ function Settings({ onOpenWizard }) {
                           color="var(--color-text)"
                         />
                       </span>
+                      <span
+                        title="In\u00edcio (YYYY-MM)"
+                        style={{ minWidth: 70, fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}
+                      >
+                        <InlineEdit
+                          value={tpl.contract_start || ''}
+                          placeholder="in\u00edcio"
+                          onSave={(val) => handleUpdateTemplate(tpl.id, 'contract_start', val)}
+                          color="var(--color-text-secondary)"
+                        />
+                      </span>
+                      <span
+                        title="Fim do contrato (YYYY-MM)"
+                        style={{ minWidth: 70, fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}
+                      >
+                        <InlineEdit
+                          value={tpl.end_month || ''}
+                          placeholder="fim"
+                          onSave={(val) => handleUpdateTemplate(tpl.id, 'end_month', val)}
+                          color="var(--color-text-secondary)"
+                        />
+                      </span>
                       <button
                         className={styles.deleteBtn}
                         onClick={() => handleDeleteTemplate(tpl.id, tpl.name)}

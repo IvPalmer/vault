@@ -29,27 +29,71 @@ class RecurringTemplateContractTests(TestCase):
 
 
 class TransactionDedupTests(TestCase):
-    def test_metric_sum_dedupes_case_variants_only_once(self):
+    def test_metric_sum_dedupes_pluggy_legacy_pair_only_once(self):
+        """Pluggy + legacy versions of the same payment count as one."""
         profile = Profile.objects.create(name='Tester')
         account = Account.objects.create(profile=profile, name='Checking', account_type='checking')
         txns = [
             Transaction.objects.create(
-                profile=profile,
-                account=account,
-                date=date(2026, 4, 10),
-                description='JUROS LIMITE DA CONTA',
-                amount=Decimal('-100.00'),
+                profile=profile, account=account, date=date(2026, 4, 10),
+                description='PIX TRANSF Claudia10/04', amount=Decimal('-100.00'),
+                source_file='pluggy:abc',
             ),
             Transaction.objects.create(
-                profile=profile,
-                account=account,
-                date=date(2026, 4, 10),
-                description='Juros Limite Da Conta',
-                amount=Decimal('-100.00'),
+                profile=profile, account=account, date=date(2026, 4, 10),
+                description='Claudia10 04', amount=Decimal('-100.00'),
+                source_file='Checking',
             ),
         ]
-
         self.assertEqual(_deduped_transaction_sum(txns), Decimal('-100.00'))
+
+    def test_metric_sum_keeps_legitimate_same_day_same_amount(self):
+        """
+        Two real same-source PIX to the same person same day same amount
+        (e.g. user paid Claudia R$200 in morning AND afternoon) MUST count
+        twice. Source-aware dedup prevents undercounting.
+        """
+        profile = Profile.objects.create(name='Tester')
+        account = Account.objects.create(profile=profile, name='Checking', account_type='checking')
+        txns = [
+            Transaction.objects.create(
+                profile=profile, account=account, date=date(2026, 4, 10),
+                description='PIX TRANSF Claudia10/04', amount=Decimal('-200.00'),
+                source_file='pluggy:abc1',
+            ),
+            Transaction.objects.create(
+                profile=profile, account=account, date=date(2026, 4, 10),
+                description='PIX TRANSF Claudia10/04', amount=Decimal('-200.00'),
+                source_file='pluggy:abc2',
+            ),
+        ]
+        self.assertEqual(_deduped_transaction_sum(txns), Decimal('-400.00'))
+
+    def test_metric_sum_handles_max_count_pair(self):
+        """
+        If user has 2 real Pluggy payments and only 1 legacy entry (some
+        legacy CSVs missed one), real count is max(pluggy=2, legacy=1)=2.
+        """
+        profile = Profile.objects.create(name='Tester')
+        account = Account.objects.create(profile=profile, name='Checking', account_type='checking')
+        txns = [
+            Transaction.objects.create(
+                profile=profile, account=account, date=date(2026, 4, 10),
+                description='PIX TRANSF Claudia10/04', amount=Decimal('-100.00'),
+                source_file='pluggy:a',
+            ),
+            Transaction.objects.create(
+                profile=profile, account=account, date=date(2026, 4, 10),
+                description='PIX TRANSF Claudia10/04', amount=Decimal('-100.00'),
+                source_file='pluggy:b',
+            ),
+            Transaction.objects.create(
+                profile=profile, account=account, date=date(2026, 4, 10),
+                description='Claudia10 04', amount=Decimal('-100.00'),
+                source_file='Checking',
+            ),
+        ]
+        self.assertEqual(_deduped_transaction_sum(txns), Decimal('-200.00'))
 
     def test_dedup_command_preserves_consorcio_same_day_same_amount(self):
         """
@@ -97,6 +141,81 @@ class TransactionDedupTests(TestCase):
         remaining = list(Transaction.objects.filter(profile=profile))
         self.assertEqual(len(remaining), 1)
         self.assertTrue(remaining[0].source_file.startswith('pluggy:'))
+
+    def test_dedup_command_skips_same_source_pairs(self):
+        """
+        Two pluggy rows with same date+amount+description (legitimate distinct
+        same-day payments to same person) MUST NOT be deleted by the command.
+        """
+        profile = Profile.objects.create(name='Tester')
+        account = Account.objects.create(profile=profile, name='Checking', account_type='checking')
+        Transaction.objects.create(
+            profile=profile, account=account, date=date(2026, 1, 28),
+            description='PIX TRANSF Claudia28/01', amount=Decimal('-200.00'),
+            external_id='pluggy-a', source_file='pluggy:abc',
+        )
+        Transaction.objects.create(
+            profile=profile, account=account, date=date(2026, 1, 28),
+            description='PIX TRANSF Claudia28/01', amount=Decimal('-200.00'),
+            external_id='pluggy-b', source_file='pluggy:def',
+        )
+
+        call_command('dedup_phantom_transactions', apply=True, stdout=StringIO())
+
+        self.assertEqual(Transaction.objects.filter(profile=profile).count(), 2)
+
+    def test_dedup_command_skips_short_descriptions(self):
+        """
+        Generic descriptions like 'IOF' (3 chars normalized) MUST NOT be
+        deduped. Length threshold is >= 4.
+        """
+        profile = Profile.objects.create(name='Tester')
+        account = Account.objects.create(profile=profile, name='Checking', account_type='checking')
+        Transaction.objects.create(
+            profile=profile, account=account, date=date(2026, 1, 28),
+            description='IOF', amount=Decimal('-2.50'),
+            source_file='pluggy:a',
+        )
+        Transaction.objects.create(
+            profile=profile, account=account, date=date(2026, 1, 28),
+            description='Iof', amount=Decimal('-2.50'),
+            source_file='Checking',
+        )
+
+        call_command('dedup_phantom_transactions', apply=True, stdout=StringIO())
+
+        self.assertEqual(Transaction.objects.filter(profile=profile).count(), 2)
+
+
+class GetRecurringDataExpiredTests(TestCase):
+    def test_expired_template_excluded_from_recurring_data(self):
+        """Templates past their end_month should not appear in recurring UI."""
+        from api.services import get_recurring_data
+        from api.models import RecurringMapping
+
+        profile = Profile.objects.create(name='Tester')
+        active_tpl = RecurringTemplate.objects.create(
+            profile=profile, name='Aluguel', template_type='Fixo',
+            default_limit=Decimal('1000.00'),
+        )
+        expired_tpl = RecurringTemplate.objects.create(
+            profile=profile, name='Carro Velho', template_type='Fixo',
+            default_limit=Decimal('500.00'), end_month='2025-12',
+        )
+        # Mappings for both in May/26 (expired ended Dec/25)
+        RecurringMapping.objects.create(
+            profile=profile, template=active_tpl, month_str='2026-05',
+            expected_amount=Decimal('1000.00'),
+        )
+        RecurringMapping.objects.create(
+            profile=profile, template=expired_tpl, month_str='2026-05',
+            expected_amount=Decimal('500.00'),
+        )
+
+        result = get_recurring_data('2026-05', profile=profile)
+        names = [item['name'] for item in result.get('all', [])]
+        self.assertIn('Aluguel', names)
+        self.assertNotIn('Carro Velho', names)
 
 
 class SalaryBudgetSyncTests(TestCase):

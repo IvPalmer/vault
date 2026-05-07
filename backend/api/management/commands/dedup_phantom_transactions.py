@@ -53,32 +53,60 @@ class Command(BaseCommand):
             return qs.none()
 
     def _find_groups(self, profile):
+        """
+        Find phantom Pluggy/legacy duplicate pairs.
+
+        Bucket by (account, abs(amount), normalized_description) — date is
+        intentionally omitted from the bucket because Pluggy posts the bank-
+        side date while legacy CSV imports use the user-side date, and the
+        two can differ by a day for the same real charge (e.g. consórcio
+        cotas: legacy 05/02, Pluggy 06/02).
+
+        Within each bucket, pair Pluggy rows with legacy rows greedily by
+        closest date. A pair is a phantom only when:
+          - One side is pluggy: source_file
+          - Other side is non-pluggy
+          - Dates differ by at most 1 day
+
+        Same-source rows (two pluggy or two legacy) are NEVER paired —
+        they are presumed legitimate distinct payments.
+
+        Skip groups whose normalized description is too short (< 4 chars) to
+        avoid over-matching generic descriptions like "IOF" or "Compra".
+        """
         buckets = defaultdict(list)
         txns = Transaction.objects.using(self.db_alias).filter(profile=profile).select_related('account').order_by(
             'account_id', 'amount', 'date', 'created_at'
         )
         for txn in txns:
             desc_key = dedupe_description_key(txn.description)
-            # Skip rows with empty or extremely short normalized descriptions
-            # (would over-match generic txns like "Compra"/"Saque" without identifier)
-            if len(desc_key) < 3:
+            if len(desc_key) < 4:
                 continue
             key = (txn.account_id, abs(txn.amount), desc_key)
             buckets[key].append(txn)
 
         groups = []
         for rows in buckets.values():
-            rows = sorted(rows, key=lambda t: (t.date, t.created_at))
-            current = []
-            for txn in rows:
-                if not current or abs((txn.date - current[-1].date).days) <= 1:
-                    current.append(txn)
-                else:
-                    if len(current) > 1:
-                        groups.append(current)
-                    current = [txn]
-            if len(current) > 1:
-                groups.append(current)
+            if len(rows) < 2:
+                continue
+            pluggy = sorted(
+                [r for r in rows if (r.source_file or '').startswith('pluggy:')],
+                key=lambda r: r.date,
+            )
+            legacy = sorted(
+                [r for r in rows if not (r.source_file or '').startswith('pluggy:')],
+                key=lambda r: r.date,
+            )
+            if not pluggy or not legacy:
+                continue
+            # Greedy pair Pluggy↔legacy by closest date within ±1 day
+            unmatched_legacy = list(legacy)
+            for p in pluggy:
+                for l in unmatched_legacy:
+                    if abs((p.date - l.date).days) <= 1:
+                        groups.append([p, l])
+                        unmatched_legacy.remove(l)
+                        break
         return groups
 
     def _transfer_links(self, delete_txn, keep_txn):
@@ -87,6 +115,26 @@ class Command(BaseCommand):
             mapping.transactions.add(keep_txn)
         for mapping in delete_txn.cross_month_links.all():
             mapping.cross_month_transactions.add(keep_txn)
+
+    def _resolve_group(self, group):
+        """
+        Decide which rows to keep and which to delete in a phantom group.
+
+        Phantom groups always have at least one Pluggy and at least one legacy
+        row (enforced by _find_groups). Real count = max(len(pluggy), len(legacy)).
+        Keep the larger side intact; delete the smaller side. Pluggy wins ties
+        because its rows carry richer metadata (external_id, pluggy_category,
+        bill linkage).
+        """
+        pluggy_rows = [r for r in group if (r.source_file or '').startswith('pluggy:')]
+        legacy_rows = [r for r in group if not (r.source_file or '').startswith('pluggy:')]
+        if len(pluggy_rows) >= len(legacy_rows):
+            keep_rows, delete_rows = pluggy_rows, legacy_rows
+        else:
+            keep_rows, delete_rows = legacy_rows, pluggy_rows
+        # Pick the best-ranked surviving row to inherit links from delete rows
+        link_target = sorted(keep_rows, key=keep_score, reverse=True)[0]
+        return link_target, delete_rows
 
     def handle(self, *args, **options):
         apply = options['apply']
@@ -102,13 +150,14 @@ class Command(BaseCommand):
             delete_ids = []
             self.stdout.write(f'\nProfile: {profile.name}')
             for group in groups:
-                keep = sorted(group, key=keep_score, reverse=True)[0]
-                duplicates = [txn for txn in group if txn.id != keep.id]
-                delete_ids.extend(txn.id for txn in duplicates)
-                total_amount = sum(abs(txn.amount) for txn in duplicates)
+                link_target, delete_rows = self._resolve_group(group)
+                if not delete_rows:
+                    continue
+                delete_ids.extend(txn.id for txn in delete_rows)
+                total_amount = sum(abs(txn.amount) for txn in delete_rows)
                 self.stdout.write(
-                    f'  {keep.date} {keep.account.name} {keep.description[:60]} '
-                    f'R${abs(keep.amount)}: keep {keep.id}, delete {len(duplicates)} '
+                    f'  {link_target.date} {link_target.account.name} {link_target.description[:60]} '
+                    f'R${abs(link_target.amount)}: keep {link_target.id}, delete {len(delete_rows)} '
                     f'(phantom R${total_amount})'
                 )
             self.stdout.write(f'  Total duplicate rows: {len(delete_ids)}')
@@ -117,9 +166,9 @@ class Command(BaseCommand):
             if apply and delete_ids:
                 with db_transaction.atomic(using=self.db_alias):
                     for group in groups:
-                        keep = sorted(group, key=keep_score, reverse=True)[0]
-                        for duplicate in [txn for txn in group if txn.id != keep.id]:
-                            self._transfer_links(duplicate, keep)
+                        link_target, delete_rows = self._resolve_group(group)
+                        for duplicate in delete_rows:
+                            self._transfer_links(duplicate, link_target)
                             duplicate.delete()
                 self.stdout.write(self.style.SUCCESS(f'  Deleted {len(delete_ids)} rows'))
 
