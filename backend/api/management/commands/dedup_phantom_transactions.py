@@ -1,5 +1,3 @@
-import re
-import unicodedata
 import uuid
 from collections import defaultdict
 
@@ -7,36 +5,16 @@ from django.core.management.base import BaseCommand
 from django.db import transaction as db_transaction
 
 from api.models import Profile, RecurringMapping, Transaction
-
-
-KNOWN_BAD_KEYS = {
-    'juros_limite_da_conta',
-    'salary_raphael_azevedo',
-    'easyplan',
-    'ramiro',
-    'gso_ensino',
-}
-
-
-def normalize_description(description):
-    nfkd = unicodedata.normalize('NFKD', description or '')
-    ascii_only = nfkd.encode('ASCII', 'ignore').decode()
-    return re.sub(r'[^a-z0-9]', '', ascii_only.lower())
+from api.services import _normalize_transaction_description as normalize_description
 
 
 def dedupe_description_key(description):
-    norm_desc = normalize_description(description)
-    if 'sispagpixraphaelazevedo' in norm_desc or norm_desc == 'raphaelazevedop':
-        return 'salary_raphael_azevedo'
-    if 'juroslimitedaconta' in norm_desc:
-        return 'juros_limite_da_conta'
-    if 'easyplan' in norm_desc:
-        return 'easyplan'
-    if 'ramiro' in norm_desc:
-        return 'ramiro'
-    if 'gsoensino' in norm_desc:
-        return 'gso_ensino'
-    return norm_desc
+    """Use the same normalization as services._normalize_transaction_description.
+
+    Pluggy noise prefixes (PIX TRANSF, PAG BOLETO, etc.) are stripped so
+    legacy CSV format and Pluggy verbose format collapse to the same key.
+    """
+    return normalize_description(description)
 
 
 def keep_score(txn):
@@ -81,7 +59,9 @@ class Command(BaseCommand):
         )
         for txn in txns:
             desc_key = dedupe_description_key(txn.description)
-            if desc_key not in KNOWN_BAD_KEYS:
+            # Skip rows with empty or extremely short normalized descriptions
+            # (would over-match generic txns like "Compra"/"Saque" without identifier)
+            if len(desc_key) < 3:
                 continue
             key = (txn.account_id, abs(txn.amount), desc_key)
             buckets[key].append(txn)

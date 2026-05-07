@@ -52,20 +52,51 @@ class TransactionDedupTests(TestCase):
         self.assertEqual(_deduped_transaction_sum(txns), Decimal('-100.00'))
 
     def test_dedup_command_preserves_consorcio_same_day_same_amount(self):
+        """
+        Real consórcio rows have unique numeric IDs in description
+        (CONS PARCELA785892834991). Different IDs → different normalized
+        keys → preserved separately even with same date+amount.
+        """
         profile = Profile.objects.create(name='Tester')
         account = Account.objects.create(profile=profile, name='Checking', account_type='checking')
-        for _ in range(2):
+        for cota_id in ('785892834991', '785892834926'):
             Transaction.objects.create(
                 profile=profile,
                 account=account,
                 date=date(2026, 1, 10),
-                description='CONS PARCELA',
+                description=f'CONS PARCELA{cota_id}',
                 amount=Decimal('-500.00'),
             )
 
         call_command('dedup_phantom_transactions', apply=True, stdout=StringIO())
 
         self.assertEqual(Transaction.objects.filter(profile=profile).count(), 2)
+
+    def test_dedup_command_merges_pluggy_legacy_pix_pair(self):
+        """
+        The Pluggy "PIX TRANSF Claudia28/01" and legacy "Claudia28 01"
+        formats normalize to the same key after stripping prefixes.
+        Should be merged.
+        """
+        profile = Profile.objects.create(name='Tester')
+        account = Account.objects.create(profile=profile, name='Checking', account_type='checking')
+        Transaction.objects.create(
+            profile=profile, account=account, date=date(2026, 1, 28),
+            description='PIX TRANSF Claudia28/01', amount=Decimal('-2050.00'),
+            external_id='pluggy-1', source_file='pluggy:abc',
+        )
+        Transaction.objects.create(
+            profile=profile, account=account, date=date(2026, 1, 28),
+            description='Claudia28 01', amount=Decimal('-2050.00'),
+            external_id='legacy-1', source_file='Checking',
+        )
+
+        call_command('dedup_phantom_transactions', apply=True, stdout=StringIO())
+
+        # Should keep one (the Pluggy version - higher keep_score)
+        remaining = list(Transaction.objects.filter(profile=profile))
+        self.assertEqual(len(remaining), 1)
+        self.assertTrue(remaining[0].source_file.startswith('pluggy:'))
 
 
 class SalaryBudgetSyncTests(TestCase):

@@ -34,26 +34,65 @@ def _extract_base_desc(description):
     return cleaned.lower()
 
 
+_PLUGGY_NOISE_PREFIXES = (
+    'pix transf ',
+    'pix trans ',
+    'pix qrs ',
+    'pix qr ',
+    'pix recebido ',
+    'pix enviado ',
+    'pix aut ',
+    'sispag pix ',
+    'sispag ',
+    'pag boleto ',
+    'pagto boleto ',
+    'fatura paga ',
+    'pagto cartao ',
+    'pagto da fatura ',
+    'saque atm ',
+    'transf ',
+    'ted ',
+    'doc ',
+    'compra ',
+)
+
+
 def _normalize_transaction_description(description):
-    """Normalize descriptions for duplicate detection."""
+    """
+    Normalize descriptions for duplicate detection.
+
+    Strips Pluggy-specific verbose prefixes ("PIX TRANSF", "PAG BOLETO", etc.)
+    so legacy CSV format ("Claudia28 01") and Pluggy verbose format
+    ("PIX TRANSF Claudia28/01") collapse to the same key.
+
+    Keeps unique content (names, IDs, dates) so legitimate distinct
+    transactions (e.g. consórcio cotas with unique numeric IDs) stay separate.
+    """
     nfkd = unicodedata.normalize('NFKD', description or '')
-    ascii_only = nfkd.encode('ASCII', 'ignore').decode()
-    return re.sub(r'[^a-z0-9]', '', ascii_only.lower())
+    ascii_only = nfkd.encode('ASCII', 'ignore').decode().lower().strip()
+    # Strip known Pluggy noise prefixes iteratively (handles compound prefixes)
+    changed = True
+    while changed:
+        changed = False
+        for prefix in _PLUGGY_NOISE_PREFIXES:
+            if ascii_only.startswith(prefix):
+                ascii_only = ascii_only[len(prefix):].lstrip()
+                changed = True
+    return re.sub(r'[^a-z0-9]', '', ascii_only)
 
 
 def _dedupe_description_key(description):
-    norm_desc = _normalize_transaction_description(description)
-    if 'sispagpixraphaelazevedo' in norm_desc or norm_desc == 'raphaelazevedop':
-        return 'salary_raphael_azevedo'
-    if 'juroslimitedaconta' in norm_desc:
-        return 'juros_limite_da_conta'
-    if 'easyplan' in norm_desc:
-        return 'easyplan'
-    if 'ramiro' in norm_desc:
-        return 'ramiro'
-    if 'gsoensino' in norm_desc:
-        return 'gso_ensino'
-    return norm_desc
+    """
+    Return a stable key for duplicate detection.
+
+    Uses the normalized description directly. Pluggy noise prefixes are
+    stripped in _normalize_transaction_description so legacy + Pluggy
+    versions of the same payment collapse to the same key.
+
+    Distinct legitimate transactions (consórcio cotas with unique numeric
+    IDs in description, different recipients in PIX) stay separate.
+    """
+    return _normalize_transaction_description(description)
 
 
 def _deduped_transaction_sum(transactions):
