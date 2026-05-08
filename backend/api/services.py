@@ -3786,23 +3786,24 @@ def get_projection(start_month_str, num_months=0, profile=None):
 
 def get_orcamento(month_str, profile=None):
     """
-    ORÇAMENTO — Dynamic variable spending budget.
+    Per-category consumption tracker for the month.
 
-    Available budget = income − all committed expenses (fixo + invest + cartão).
-    This is how much you can freely spend and still cover all obligations.
-    Distributed across categories proportionally based on 6-month spending profile.
-    Shows all categories with current or historical variable spending.
+    Returns total real consumption per Category (variable + fixo + cc purchases).
+    Excludes Income, Investimento, and Cartao bill payments — those are tracked
+    in dedicated sections. Fixo (rent, energy, etc) IS consumption and IS included.
+
+    The smart-budget allocation (distributing remaining envelope across categories)
+    is NOT implemented here yet — kept as future work. For now, each card shows:
+    Gasto (total this month) / Média 6m / Δ vs média. Reference for status is
+    avg_6m. Manual BudgetConfig overrides expose `reference_amount=limite`.
     """
     from django.db.models import Count
 
-    # ── 1. Available budget from metricas ────────────────────────────
-    # Source of truth is metricas['orcamento_variavel'] — same formula, no drift.
+    # ── 1. Envelope context (informational) ──────────────────────────
+    # total_available = "envelope variável" = how much is left after committed
+    # outflows. We expose it for the section header banner, but it does NOT gate
+    # which categories show up — every category with consumption renders.
     metricas = get_metricas(month_str, profile=profile)
-    entradas = metricas['entradas_projetadas']
-    fixo = metricas['fixo_for_budget'] if metricas.get('fixo_for_budget') is not None else metricas['fixo_expected_total']
-    invest = metricas['invest_expected_total']
-    cartao = metricas['fatura_total']
-
     starting_balance = 0.0
     if metricas.get('is_future') and metricas.get('projected_balance') is not None:
         starting_balance = metricas['projected_balance']
@@ -3810,73 +3811,80 @@ def get_orcamento(month_str, profile=None):
         starting_balance = metricas['prev_month_saldo']
     carryover_debt = metricas.get('carryover_debt', 0.0)
     starting_balance -= carryover_debt
-
     _orc_metric = metricas.get('orcamento_variavel')
     if _orc_metric is None:
+        entradas = metricas['entradas_projetadas']
+        fixo = metricas['fixo_for_budget'] if metricas.get('fixo_for_budget') is not None else metricas['fixo_expected_total']
+        invest = metricas['invest_expected_total']
+        cartao = metricas['fatura_total']
         total_available = round(starting_balance + entradas - fixo - invest - cartao, 2)
     else:
         total_available = float(_orc_metric)
     has_envelope = total_available > 0
-    display_mode = 'budget' if has_envelope else 'tracking'
 
-    # ── 2. Identify committed (fixo/invest/income) transaction IDs ───
+    # ── 2. Non-consumption transactions to exclude ───────────────────
+    # Income inflows, Investimento outflows, and Cartao bill payments are NOT
+    # category consumption (they're tracked in their own sections). Fixo IS
+    # consumption (Aluguel, Energia, Plano de Saúde all hit a category).
     all_months = [month_str] + [_month_str_add(month_str, -i) for i in range(1, 7)]
     lookback_months = all_months[1:]
 
-    committed_txn_ids = set()
-    committed_cat_ids = set()
-    fixo_txn_ids = set()  # Subset of committed: just Fixo (for per-cat fixo display)
+    excluded_txn_ids = set()
+    fixo_txn_ids = set()  # metadata: which spent came from fixo (not displayed)
+    NON_CONSUMPTION_TYPES = {'Income', 'Investimento', 'Cartao'}
     for mapping in RecurringMapping.objects.filter(
         month_str__in=all_months, profile=profile,
     ).exclude(status='skipped').select_related('template').prefetch_related(
         'transactions', 'cross_month_transactions'
     ):
         ttype = mapping.template.template_type if mapping.template else (mapping.custom_type or '')
-        if ttype not in ('Fixo', 'Income', 'Investimento'):
-            continue
-        if mapping.match_mode == 'category' and mapping.category_id:
-            committed_cat_ids.add(mapping.category_id)
-        for t in mapping.transactions.all():
-            committed_txn_ids.add(t.id)
-            if ttype == 'Fixo':
+        if ttype in NON_CONSUMPTION_TYPES:
+            for t in mapping.transactions.all():
+                excluded_txn_ids.add(t.id)
+            for t in mapping.cross_month_transactions.all():
+                excluded_txn_ids.add(t.id)
+            if mapping.transaction_id:
+                excluded_txn_ids.add(mapping.transaction_id)
+        elif ttype == 'Fixo':
+            for t in mapping.transactions.all():
                 fixo_txn_ids.add(t.id)
-        for t in mapping.cross_month_transactions.all():
-            committed_txn_ids.add(t.id)
-            if ttype == 'Fixo':
+            for t in mapping.cross_month_transactions.all():
                 fixo_txn_ids.add(t.id)
-        if mapping.transaction_id:
-            committed_txn_ids.add(mapping.transaction_id)
-            if ttype == 'Fixo':
+            if mapping.transaction_id:
                 fixo_txn_ids.add(mapping.transaction_id)
 
-    # ── 3. Active categories (exclude system + committed-only) ───────
+    # ── 3. Active categories (exclude system buckets only) ───────────
+    # Transferencias = account movements; Renda = income; Investimentos = invest
+    # outflows tracked elsewhere; Não categorizado = uncategorized triage.
     EXCLUDE_NAMES = {'Transferencias', 'Renda', 'Investimentos', 'Não categorizado'}
     all_cats = list(Category.objects.filter(
         is_active=True, profile=profile,
-    ).exclude(name__in=EXCLUDE_NAMES).exclude(
-        id__in=committed_cat_ids,
-    ).order_by('name'))
+    ).exclude(name__in=EXCLUDE_NAMES).order_by('name'))
     cat_ids = [c.id for c in all_cats]
 
-    # ── 4. Variable expense query builder ────────────────────────────
-    def _var_qs(**extra):
+    # ── 4. Consumption query: any negative txn in an active category ─
+    def _consumption_qs(**extra):
         qs = Transaction.objects.filter(
             amount__lt=0, is_internal_transfer=False,
             category_id__in=cat_ids, profile=profile, **extra,
         )
-        if committed_txn_ids:
-            qs = qs.exclude(id__in=committed_txn_ids)
+        if excluded_txn_ids:
+            qs = qs.exclude(id__in=excluded_txn_ids)
         return qs
 
-    # ── 5. Current month spending ────────────────────────────────────
+    # ── 5. Current month spending (total: fixo + variable + cc) ──────
     current_spending = dict(
-        _var_qs(month_str=month_str)
+        _consumption_qs(month_str=month_str)
         .values('category_id').annotate(total=Sum('amount'))
         .values_list('category_id', 'total')
     )
-    # Fixo spending per category for current month — shown as context on cards
-    # (e.g. Moradia: R$220 variável + R$5015 fixo = aluguel). Kept separate so
-    # the variable budget math stays correct.
+    sub_spending = {}
+    for row in _consumption_qs(month_str=month_str).values(
+        'category_id', 'subcategory_id'
+    ).annotate(total=Sum('amount')):
+        sub_spending.setdefault(row['category_id'], {})[row['subcategory_id']] = row['total']
+
+    # Fixo portion (metadata; folded into spent for display)
     fixo_spending = {}
     if fixo_txn_ids:
         fixo_spending = dict(
@@ -3886,20 +3894,15 @@ def get_orcamento(month_str, profile=None):
             ).values('category_id').annotate(total=Sum('amount'))
             .values_list('category_id', 'total')
         )
-    sub_spending = {}
-    for row in _var_qs(month_str=month_str).values(
-        'category_id', 'subcategory_id'
-    ).annotate(total=Sum('amount')):
-        sub_spending.setdefault(row['category_id'], {})[row['subcategory_id']] = row['total']
 
-    # ── 6. 6-month lookback spending profile ─────────────────────────
+    # ── 6. 6-month lookback (same total-consumption basis) ───────────
     lookback_spending = dict(
-        _var_qs(month_str__in=lookback_months)
+        _consumption_qs(month_str__in=lookback_months)
         .values('category_id').annotate(total=Sum('amount'))
         .values_list('category_id', 'total')
     )
     lookback_month_counts = dict(
-        _var_qs(month_str__in=lookback_months)
+        _consumption_qs(month_str__in=lookback_months)
         .values('category_id').annotate(mc=Count('month_str', distinct=True))
         .values_list('category_id', 'mc')
     )
@@ -3908,7 +3911,7 @@ def get_orcamento(month_str, profile=None):
     for sub in Subcategory.objects.filter(category_id__in=cat_ids).order_by('name'):
         all_subcategories.setdefault(sub.category_id, []).append(sub)
 
-    # ── 7. Compute spending profile (6-month avg per category) ───────
+    # ── 7. 6-month avg per category (months-with-spend basis) ────────
     avg_by_cat = {}
     total_avg = 0.0
     for cat in all_cats:
@@ -3918,8 +3921,7 @@ def get_orcamento(month_str, profile=None):
         avg_by_cat[cat.id] = avg
         total_avg += avg
 
-    # ── 8. Manual overrides (BudgetConfig) ───────────────────────────
-    # Sum across pay_num so category overrides aggregate any split rows.
+    # ── 8. Manual overrides (BudgetConfig) — exposed as reference ────
     budget_overrides = {
         row['category_id']: float(row['total'])
         for row in BudgetConfig.objects
@@ -3928,10 +3930,10 @@ def get_orcamento(month_str, profile=None):
         .annotate(total=Sum('limit_override'))
     }
 
-    # ── 9. Build per-category budget ─────────────────────────────────
+    # ── 9. Build per-category cards ──────────────────────────────────
     categories = []
-    total_limit = 0.0
     total_spent = 0.0
+    total_current_consumption = 0.0
 
     for cat in all_cats:
         has_current = cat.id in current_spending
@@ -3939,55 +3941,37 @@ def get_orcamento(month_str, profile=None):
         if not has_current and not has_history:
             continue
 
-        avg_6m = avg_by_cat.get(cat.id, 0.0)
-
-        # Limit: manual override > proportional allocation. Only applies in
-        # budget mode; in tracking mode (no envelope) limits stay 0 and the
-        # reference is avg_6m. Overrides are paused until envelope returns.
-        if has_envelope and cat.id in budget_overrides:
-            limit = budget_overrides[cat.id]
-        elif has_envelope and total_avg > 0:
-            limit = total_available * (avg_6m / total_avg)
-        else:
-            limit = 0.0
-
         spent = float(abs(current_spending.get(cat.id, Decimal('0.00'))))
-        remaining = max(0, limit - spent)
+        avg_6m = avg_by_cat.get(cat.id, 0.0)
+        fixo_in_cat = float(abs(fixo_spending.get(cat.id, Decimal('0.00'))))
+        variable_in_cat = max(0.0, spent - fixo_in_cat)
 
-        # Reference for display + status. Budget mode uses limit; tracking mode
-        # falls back to avg_6m so cards still convey "above/below normal pace".
-        if has_envelope and limit > 0:
-            reference_amount = limit
-            reference_label = 'limite'
+        # Reference: manual override > 6m average. Used for status + delta.
+        if cat.id in budget_overrides and budget_overrides[cat.id] > 0:
+            reference_amount = budget_overrides[cat.id]
+            reference_source = 'manual'
         elif avg_6m > 0:
             reference_amount = avg_6m
-            reference_label = 'media'
+            reference_source = 'average_6m'
         else:
             reference_amount = 0.0
-            reference_label = 'none'
+            reference_source = 'none'
 
-        pct_of_reference = (spent / reference_amount * 100) if reference_amount > 0 else (
-            100.0 if spent > 0 else 0.0
-        )
+        pct_of_reference = (spent / reference_amount * 100) if reference_amount > 0 else 0.0
         delta_vs_reference = spent - reference_amount if reference_amount > 0 else 0.0
 
-        # Status thresholds differ by mode. Budget mode: %>100 over, >80 warning.
-        # Tracking mode: %>120 over (significantly above normal), >100 warning,
-        # else ok. Categories with no spend land 'ok'.
-        if reference_label == 'limite':
+        if reference_source == 'manual':
             status = 'over' if pct_of_reference > 100 else ('warning' if pct_of_reference > 80 else 'ok')
-        elif reference_label == 'media':
+        elif reference_source == 'average_6m':
             status = 'over' if pct_of_reference > 120 else ('warning' if pct_of_reference > 100 else 'ok')
         else:
-            status = 'over' if spent > 0 else 'ok'
+            status = 'ok'
 
-        # Backwards-compatible pct field (still % of limit; meaningless in tracking).
-        pct = (spent / limit * 100) if limit > 0 else (100.0 if spent > 0 else 0.0)
-
-        total_limit += limit
         total_spent += spent
+        if has_current:
+            total_current_consumption += spent
 
-        # Subcategory breakdown (only subs with spending)
+        # Subcategory breakdown (only subs with spending this month)
         cat_sub_spending = sub_spending.get(cat.id, {})
         subcategories_data = []
         for sub in all_subcategories.get(cat.id, []):
@@ -4001,49 +3985,45 @@ def get_orcamento(month_str, profile=None):
         subcategories_data.sort(key=lambda s: -s['spent'])
         uncategorized_spent = float(abs(cat_sub_spending.get(None, Decimal('0.00'))))
 
-        fixo_in_cat = float(abs(fixo_spending.get(cat.id, Decimal('0.00'))))
-
         categories.append({
             'id': str(cat.id),
             'name': cat.name,
-            'limit': round(limit, 2),
             'spent': round(spent, 2),
-            'remaining': round(remaining, 2),
-            'pct': round(pct, 1),
+            'fixed_spent': round(fixo_in_cat, 2),
+            'variable_spent': round(variable_in_cat, 2),
             'avg_6m': round(avg_6m, 2),
-            'share_pct': round((avg_6m / total_avg * 100) if total_avg > 0 else 0, 1),
-            'status': status,
-            'has_current_spend': has_current,
             'reference_amount': round(reference_amount, 2),
-            'reference_label': reference_label,
+            'reference_source': reference_source,
             'pct_of_reference': round(pct_of_reference, 1),
             'delta_vs_reference': round(delta_vs_reference, 2),
-            'fixo_spent': round(fixo_in_cat, 2),
+            'status': status,
+            'has_current_spend': has_current,
             'subcategories': subcategories_data,
             'uncategorized_spent': round(uncategorized_spent, 2),
+            # Future smart-budget hooks (nullable until implemented).
+            'projected_amount': None,
+            'pace_pct': None,
         })
 
-    if display_mode == 'budget':
-        categories.sort(key=lambda c: -c['limit'])
-    else:
-        # Tracking mode: current-spend cards first, ordered by overspend vs avg.
-        # History-only cards trail, sorted by avg_6m for predictability.
-        categories.sort(key=lambda c: (
-            not c['has_current_spend'],
-            -c['delta_vs_reference'] if c['has_current_spend'] else -c['avg_6m'],
-        ))
-    total_pct = (total_spent / total_limit * 100) if total_limit > 0 else 0
+    # current_share_pct = % of this month's total consumption.
+    for c in categories:
+        c['current_share_pct'] = round(
+            (c['spent'] / total_current_consumption * 100) if total_current_consumption > 0 else 0.0, 1
+        )
+
+    # Sort: cards with current spend first (by spent desc), history-only at end.
+    categories.sort(key=lambda c: (
+        not c['has_current_spend'],
+        -c['spent'] if c['has_current_spend'] else -c['avg_6m'],
+    ))
 
     return {
         'month_str': month_str,
         'categories': categories,
+        'total_spent': round(total_spent, 2),
+        # Envelope context: shown as a banner, doesn't gate cards.
         'starting_balance': round(starting_balance, 2),
         'total_available': round(total_available, 2),
-        'total_limit': round(total_limit, 2),
-        'total_spent': round(total_spent, 2),
-        'total_remaining': round(max(0, total_limit - total_spent), 2),
-        'total_pct': round(total_pct, 1),
-        'display_mode': display_mode,
         'has_envelope': has_envelope,
         'deficit': round(-total_available, 2) if total_available < 0 else 0.0,
     }
