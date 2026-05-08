@@ -3822,63 +3822,34 @@ def get_orcamento(month_str, profile=None):
         total_available = float(_orc_metric)
     has_envelope = total_available > 0
 
-    # ── 2. Non-consumption transactions to exclude ───────────────────
-    # Income inflows, Investimento outflows, and Cartao bill payments are NOT
-    # category consumption (they're tracked in their own sections). Fixo IS
-    # consumption (Aluguel, Energia, Plano de Saúde all hit a category).
+    # ── 2. Active categories (exclude system buckets only) ───────────
+    # Category is the source of truth for "is this consumption?". We don't look
+    # at recurring mapping types — those are a separate axis (expected/recorrente)
+    # and shouldn't influence what's displayed here. If the user categorized
+    # a tx to a non-system cat, it counts.
+    #
+    # System buckets:
+    #   Transferencias — account movements (CC bill payments land here)
+    #   Renda — income inflows (also filtered by amount__lt=0 anyway)
+    #   Investimentos — pure investments tracked in InvestmentSection
+    #   Não categorizado — uncategorized triage
     all_months = [month_str] + [_month_str_add(month_str, -i) for i in range(1, 7)]
     lookback_months = all_months[1:]
 
-    excluded_txn_ids = set()
-    fixo_txn_ids = set()  # metadata: which spent came from fixo (not displayed)
-    # Income (inflows) and Cartao bill payments are NEVER per-category consumption.
-    # Investimento is NOT in the filter: a tx mapped as Investimento (e.g.
-    # consórcio de apartamento) may still be categorized to "Consórcios e
-    # Financiamentos" — user wants to see it in that card. Pure investments
-    # (Aplic Auto, etc) end up in the system "Investimentos" category which
-    # is filtered via EXCLUDE_NAMES below.
-    NON_CONSUMPTION_TYPES = {'Income', 'Cartao'}
-    for mapping in RecurringMapping.objects.filter(
-        month_str__in=all_months, profile=profile,
-    ).exclude(status='skipped').select_related('template').prefetch_related(
-        'transactions', 'cross_month_transactions'
-    ):
-        ttype = mapping.template.template_type if mapping.template else (mapping.custom_type or '')
-        if ttype in NON_CONSUMPTION_TYPES:
-            for t in mapping.transactions.all():
-                excluded_txn_ids.add(t.id)
-            for t in mapping.cross_month_transactions.all():
-                excluded_txn_ids.add(t.id)
-            if mapping.transaction_id:
-                excluded_txn_ids.add(mapping.transaction_id)
-        elif ttype == 'Fixo':
-            for t in mapping.transactions.all():
-                fixo_txn_ids.add(t.id)
-            for t in mapping.cross_month_transactions.all():
-                fixo_txn_ids.add(t.id)
-            if mapping.transaction_id:
-                fixo_txn_ids.add(mapping.transaction_id)
-
-    # ── 3. Active categories (exclude system buckets only) ───────────
-    # Transferencias = account movements; Renda = income; Investimentos = invest
-    # outflows tracked elsewhere; Não categorizado = uncategorized triage.
     EXCLUDE_NAMES = {'Transferencias', 'Renda', 'Investimentos', 'Não categorizado'}
     all_cats = list(Category.objects.filter(
         is_active=True, profile=profile,
     ).exclude(name__in=EXCLUDE_NAMES).order_by('name'))
     cat_ids = [c.id for c in all_cats]
 
-    # ── 4. Consumption query: any negative txn in an active category ─
+    # ── 3. Consumption query: any negative txn in an active category ─
     def _consumption_qs(**extra):
-        qs = Transaction.objects.filter(
+        return Transaction.objects.filter(
             amount__lt=0, is_internal_transfer=False,
             category_id__in=cat_ids, profile=profile, **extra,
         )
-        if excluded_txn_ids:
-            qs = qs.exclude(id__in=excluded_txn_ids)
-        return qs
 
-    # ── 5. Current month spending (total: fixo + variable + cc) ──────
+    # ── 4. Current month spending ────────────────────────────────────
     current_spending = dict(
         _consumption_qs(month_str=month_str)
         .values('category_id').annotate(total=Sum('amount'))
@@ -3890,18 +3861,7 @@ def get_orcamento(month_str, profile=None):
     ).annotate(total=Sum('amount')):
         sub_spending.setdefault(row['category_id'], {})[row['subcategory_id']] = row['total']
 
-    # Fixo portion (metadata; folded into spent for display)
-    fixo_spending = {}
-    if fixo_txn_ids:
-        fixo_spending = dict(
-            Transaction.objects.filter(
-                id__in=fixo_txn_ids, amount__lt=0, month_str=month_str,
-                category_id__in=cat_ids,
-            ).values('category_id').annotate(total=Sum('amount'))
-            .values_list('category_id', 'total')
-        )
-
-    # ── 6. 6-month lookback (same total-consumption basis) ───────────
+    # ── 5. 6-month lookback (same total-consumption basis) ───────────
     lookback_spending = dict(
         _consumption_qs(month_str__in=lookback_months)
         .values('category_id').annotate(total=Sum('amount'))
@@ -3949,8 +3909,6 @@ def get_orcamento(month_str, profile=None):
 
         spent = float(abs(current_spending.get(cat.id, Decimal('0.00'))))
         avg_6m = avg_by_cat.get(cat.id, 0.0)
-        fixo_in_cat = float(abs(fixo_spending.get(cat.id, Decimal('0.00'))))
-        variable_in_cat = max(0.0, spent - fixo_in_cat)
 
         # Reference: manual override > 6m average. Used for status + delta.
         if cat.id in budget_overrides and budget_overrides[cat.id] > 0:
@@ -3995,8 +3953,6 @@ def get_orcamento(month_str, profile=None):
             'id': str(cat.id),
             'name': cat.name,
             'spent': round(spent, 2),
-            'fixed_spent': round(fixo_in_cat, 2),
-            'variable_spent': round(variable_in_cat, 2),
             'avg_6m': round(avg_6m, 2),
             'reference_amount': round(reference_amount, 2),
             'reference_source': reference_source,
