@@ -5202,6 +5202,13 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     for cat in cats_with_defaults:
         budget_map[cat.id] = float(cat.default_limit)
 
+    # Name lookup for categories in budget_map (for fallback when actuals empty)
+    budget_cat_names = {
+        c.id: c.name for c in Category.objects.filter(
+            id__in=budget_map.keys(), profile=profile,
+        )
+    }
+
     if budget_map:
         # Actual spending for the budget month by category
         actual_qs = (
@@ -5228,10 +5235,7 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     budget_adherence = []
     for cat_id, budgeted in budget_map.items():
         info = actual_map.get(cat_id)
-        cat_name = info['name'] if info else (
-            next((bc.category.name for bc in budget_configs if bc.category_id == cat_id), None)
-            or next((c.name for c in cats_with_defaults if c.id == cat_id), '?')
-        )
+        cat_name = info['name'] if info else budget_cat_names.get(cat_id, '?')
         actual = info['actual'] if info else 0.0
         budget_adherence.append({
             'category_id': str(cat_id),
