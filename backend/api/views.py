@@ -630,10 +630,17 @@ class CategoryBulkReassignView(APIView):
             to_cat = Category.objects.get(id=to_cat_id, profile=profile)
             to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile) if to_sub_id else None
 
-            # Normalize description for matching (non-installment transactions)
+            # Normalize description for matching (non-installment transactions).
+            # Filter by same SIGN to avoid mixing purchases with refunds/estornos
+            # that happen to share the same merchant description.
             from django.db.models.functions import Lower, Trim
             desc_norm = txn.description.strip().lower()
-            matching = Transaction.objects.filter(profile=profile).annotate(
+            sign_filter = {}
+            if txn.amount > 0:
+                sign_filter = {'amount__gt': 0}
+            elif txn.amount < 0:
+                sign_filter = {'amount__lt': 0}
+            matching = Transaction.objects.filter(profile=profile, **sign_filter).annotate(
                 desc_norm=Trim(Lower('description'))
             ).filter(desc_norm=desc_norm)
             count = matching.update(category=to_cat, subcategory=to_sub)
@@ -670,16 +677,22 @@ class CategoryBulkReassignView(APIView):
 
         elif action == 'uncategorize_transaction':
             # Remove category from a transaction + all matching descriptions
-            # For installments, also clear all sibling positions
+            # (same sign only — purchases vs refunds stay separate).
+            # For installments, also clear all sibling positions.
             txn_id = request.data.get('transaction_id')
             if not txn_id:
                 return Response({'error': 'transaction_id required'}, status=400)
 
             txn = Transaction.objects.get(id=txn_id, profile=profile)
             desc_norm = txn.description.strip().lower()
+            sign_filter = {}
+            if txn.amount > 0:
+                sign_filter = {'amount__gt': 0}
+            elif txn.amount < 0:
+                sign_filter = {'amount__lt': 0}
 
             from django.db.models.functions import Lower, Trim
-            matching = Transaction.objects.filter(profile=profile).annotate(
+            matching = Transaction.objects.filter(profile=profile, **sign_filter).annotate(
                 desc_norm=Trim(Lower('description'))
             ).filter(desc_norm=desc_norm)
 
