@@ -1,3 +1,5 @@
+> ⚠️ **VPS-only runtime — see [RUNTIME.md](./RUNTIME.md).** Do not `docker compose up` in this dir.
+
 # Vault — Project Rules
 
 ## Idioma / Language
