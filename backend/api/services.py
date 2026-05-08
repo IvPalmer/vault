@@ -3831,7 +3831,13 @@ def get_orcamento(month_str, profile=None):
 
     excluded_txn_ids = set()
     fixo_txn_ids = set()  # metadata: which spent came from fixo (not displayed)
-    NON_CONSUMPTION_TYPES = {'Income', 'Investimento', 'Cartao'}
+    # Income (inflows) and Cartao bill payments are NEVER per-category consumption.
+    # Investimento is NOT in the filter: a tx mapped as Investimento (e.g.
+    # consórcio de apartamento) may still be categorized to "Consórcios e
+    # Financiamentos" — user wants to see it in that card. Pure investments
+    # (Aplic Auto, etc) end up in the system "Investimentos" category which
+    # is filtered via EXCLUDE_NAMES below.
+    NON_CONSUMPTION_TYPES = {'Income', 'Cartao'}
     for mapping in RecurringMapping.objects.filter(
         month_str__in=all_months, profile=profile,
     ).exclude(status='skipped').select_related('template').prefetch_related(
