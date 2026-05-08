@@ -3796,29 +3796,28 @@ def get_orcamento(month_str, profile=None):
     from django.db.models import Count
 
     # ── 1. Available budget from metricas ────────────────────────────
+    # Source of truth is metricas['orcamento_variavel'] — same formula, no drift.
     metricas = get_metricas(month_str, profile=profile)
     entradas = metricas['entradas_projetadas']
-    fixo = metricas.get('fixo_for_budget', metricas['fixo_expected_total'])
+    fixo = metricas['fixo_for_budget'] if metricas.get('fixo_for_budget') is not None else metricas['fixo_expected_total']
     invest = metricas['invest_expected_total']
     cartao = metricas['fatura_total']
 
-    # Starting balance: carry-over from previous month
-    # Current month: prev month's real EOM balance (fixed at month start)
-    # Future months: projected balance from cascade
-    # Closed months: prev month's EOM balance
     starting_balance = 0.0
     if metricas.get('is_future') and metricas.get('projected_balance') is not None:
         starting_balance = metricas['projected_balance']
     elif metricas.get('prev_month_saldo') is not None:
         starting_balance = metricas['prev_month_saldo']
-
-    # Deduct carryover debt: if previous month's CC bill was paid late (from
-    # this month's checking), that cost is hidden in prev_month_saldo but the
-    # payment already hit this month's bank balance.
     carryover_debt = metricas.get('carryover_debt', 0.0)
     starting_balance -= carryover_debt
 
-    total_available = round(starting_balance + entradas - fixo - invest - cartao, 2)
+    _orc_metric = metricas.get('orcamento_variavel')
+    if _orc_metric is None:
+        total_available = round(starting_balance + entradas - fixo - invest - cartao, 2)
+    else:
+        total_available = float(_orc_metric)
+    has_envelope = total_available > 0
+    display_mode = 'budget' if has_envelope else 'tracking'
 
     # ── 2. Identify committed (fixo/invest/income) transaction IDs ───
     all_months = [month_str] + [_month_str_add(month_str, -i) for i in range(1, 7)]
@@ -3826,6 +3825,7 @@ def get_orcamento(month_str, profile=None):
 
     committed_txn_ids = set()
     committed_cat_ids = set()
+    fixo_txn_ids = set()  # Subset of committed: just Fixo (for per-cat fixo display)
     for mapping in RecurringMapping.objects.filter(
         month_str__in=all_months, profile=profile,
     ).exclude(status='skipped').select_related('template').prefetch_related(
@@ -3838,10 +3838,16 @@ def get_orcamento(month_str, profile=None):
             committed_cat_ids.add(mapping.category_id)
         for t in mapping.transactions.all():
             committed_txn_ids.add(t.id)
+            if ttype == 'Fixo':
+                fixo_txn_ids.add(t.id)
         for t in mapping.cross_month_transactions.all():
             committed_txn_ids.add(t.id)
+            if ttype == 'Fixo':
+                fixo_txn_ids.add(t.id)
         if mapping.transaction_id:
             committed_txn_ids.add(mapping.transaction_id)
+            if ttype == 'Fixo':
+                fixo_txn_ids.add(mapping.transaction_id)
 
     # ── 3. Active categories (exclude system + committed-only) ───────
     EXCLUDE_NAMES = {'Transferencias', 'Renda', 'Investimentos', 'Não categorizado'}
@@ -3868,6 +3874,18 @@ def get_orcamento(month_str, profile=None):
         .values('category_id').annotate(total=Sum('amount'))
         .values_list('category_id', 'total')
     )
+    # Fixo spending per category for current month — shown as context on cards
+    # (e.g. Moradia: R$220 variável + R$5015 fixo = aluguel). Kept separate so
+    # the variable budget math stays correct.
+    fixo_spending = {}
+    if fixo_txn_ids:
+        fixo_spending = dict(
+            Transaction.objects.filter(
+                id__in=fixo_txn_ids, amount__lt=0, month_str=month_str,
+                category_id__in=cat_ids,
+            ).values('category_id').annotate(total=Sum('amount'))
+            .values_list('category_id', 'total')
+        )
     sub_spending = {}
     for row in _var_qs(month_str=month_str).values(
         'category_id', 'subcategory_id'
@@ -3923,18 +3941,48 @@ def get_orcamento(month_str, profile=None):
 
         avg_6m = avg_by_cat.get(cat.id, 0.0)
 
-        # Limit: manual override > proportional allocation from available budget
-        if cat.id in budget_overrides:
+        # Limit: manual override > proportional allocation. Only applies in
+        # budget mode; in tracking mode (no envelope) limits stay 0 and the
+        # reference is avg_6m. Overrides are paused until envelope returns.
+        if has_envelope and cat.id in budget_overrides:
             limit = budget_overrides[cat.id]
-        elif total_avg > 0 and total_available > 0:
+        elif has_envelope and total_avg > 0:
             limit = total_available * (avg_6m / total_avg)
         else:
             limit = 0.0
 
         spent = float(abs(current_spending.get(cat.id, Decimal('0.00'))))
         remaining = max(0, limit - spent)
+
+        # Reference for display + status. Budget mode uses limit; tracking mode
+        # falls back to avg_6m so cards still convey "above/below normal pace".
+        if has_envelope and limit > 0:
+            reference_amount = limit
+            reference_label = 'limite'
+        elif avg_6m > 0:
+            reference_amount = avg_6m
+            reference_label = 'media'
+        else:
+            reference_amount = 0.0
+            reference_label = 'none'
+
+        pct_of_reference = (spent / reference_amount * 100) if reference_amount > 0 else (
+            100.0 if spent > 0 else 0.0
+        )
+        delta_vs_reference = spent - reference_amount if reference_amount > 0 else 0.0
+
+        # Status thresholds differ by mode. Budget mode: %>100 over, >80 warning.
+        # Tracking mode: %>120 over (significantly above normal), >100 warning,
+        # else ok. Categories with no spend land 'ok'.
+        if reference_label == 'limite':
+            status = 'over' if pct_of_reference > 100 else ('warning' if pct_of_reference > 80 else 'ok')
+        elif reference_label == 'media':
+            status = 'over' if pct_of_reference > 120 else ('warning' if pct_of_reference > 100 else 'ok')
+        else:
+            status = 'over' if spent > 0 else 'ok'
+
+        # Backwards-compatible pct field (still % of limit; meaningless in tracking).
         pct = (spent / limit * 100) if limit > 0 else (100.0 if spent > 0 else 0.0)
-        status = 'over' if pct > 100 else ('warning' if pct > 80 else 'ok')
 
         total_limit += limit
         total_spent += spent
@@ -3953,6 +4001,8 @@ def get_orcamento(month_str, profile=None):
         subcategories_data.sort(key=lambda s: -s['spent'])
         uncategorized_spent = float(abs(cat_sub_spending.get(None, Decimal('0.00'))))
 
+        fixo_in_cat = float(abs(fixo_spending.get(cat.id, Decimal('0.00'))))
+
         categories.append({
             'id': str(cat.id),
             'name': cat.name,
@@ -3963,11 +4013,25 @@ def get_orcamento(month_str, profile=None):
             'avg_6m': round(avg_6m, 2),
             'share_pct': round((avg_6m / total_avg * 100) if total_avg > 0 else 0, 1),
             'status': status,
+            'has_current_spend': has_current,
+            'reference_amount': round(reference_amount, 2),
+            'reference_label': reference_label,
+            'pct_of_reference': round(pct_of_reference, 1),
+            'delta_vs_reference': round(delta_vs_reference, 2),
+            'fixo_spent': round(fixo_in_cat, 2),
             'subcategories': subcategories_data,
             'uncategorized_spent': round(uncategorized_spent, 2),
         })
 
-    categories.sort(key=lambda c: -c['limit'])
+    if display_mode == 'budget':
+        categories.sort(key=lambda c: -c['limit'])
+    else:
+        # Tracking mode: current-spend cards first, ordered by overspend vs avg.
+        # History-only cards trail, sorted by avg_6m for predictability.
+        categories.sort(key=lambda c: (
+            not c['has_current_spend'],
+            -c['delta_vs_reference'] if c['has_current_spend'] else -c['avg_6m'],
+        ))
     total_pct = (total_spent / total_limit * 100) if total_limit > 0 else 0
 
     return {
@@ -3979,6 +4043,9 @@ def get_orcamento(month_str, profile=None):
         'total_spent': round(total_spent, 2),
         'total_remaining': round(max(0, total_limit - total_spent), 2),
         'total_pct': round(total_pct, 1),
+        'display_mode': display_mode,
+        'has_envelope': has_envelope,
+        'deficit': round(-total_available, 2) if total_available < 0 else 0.0,
     }
 
 # ---------------------------------------------------------------------------
