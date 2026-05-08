@@ -415,16 +415,21 @@ class CategoryBulkReassignView(APIView):
 
         if action == 'reassign_subcategory':
             # Move transactions from one subcategory to another (can be cross-category)
+            # Or to a bare category (no subcategory) when to_category_id is provided.
             from_sub_id = request.data.get('from_subcategory_id')
             to_sub_id = request.data.get('to_subcategory_id')
             to_cat_id = request.data.get('to_category_id')
 
-            if not from_sub_id or not to_sub_id:
-                return Response({'error': 'from_subcategory_id and to_subcategory_id required'}, status=400)
+            if not from_sub_id or (not to_sub_id and not to_cat_id):
+                return Response({'error': 'from_subcategory_id and (to_subcategory_id or to_category_id) required'}, status=400)
 
             from_sub = Subcategory.objects.get(id=from_sub_id, profile=profile)
-            to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile)
-            to_cat = to_sub.category
+            if to_sub_id:
+                to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile)
+                to_cat = to_sub.category
+            else:
+                to_sub = None
+                to_cat = Category.objects.get(id=to_cat_id, profile=profile)
 
             count = Transaction.objects.filter(
                 profile=profile, subcategory=from_sub
@@ -526,16 +531,23 @@ class CategoryBulkReassignView(APIView):
             return Response({'updated': count, 'action': action})
 
         elif action == 'set_subcategory':
-            # Assign subcategory to transactions that have category but no subcategory
+            # Assign subcategory to transactions that have category but no subcategory.
+            # Or move them to a different bare category when to_category_id is provided.
             cat_id = request.data.get('category_id')
             to_sub_id = request.data.get('to_subcategory_id')
-            if not cat_id or not to_sub_id:
-                return Response({'error': 'category_id and to_subcategory_id required'}, status=400)
+            to_cat_id = request.data.get('to_category_id')
+            if not cat_id or (not to_sub_id and not to_cat_id):
+                return Response({'error': 'category_id and (to_subcategory_id or to_category_id) required'}, status=400)
             cat = Category.objects.get(id=cat_id, profile=profile)
-            to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile)
-            count = Transaction.objects.filter(
+            qs = Transaction.objects.filter(
                 profile=profile, category=cat, subcategory__isnull=True
-            ).update(subcategory=to_sub)
+            )
+            if to_sub_id:
+                to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile)
+                count = qs.update(subcategory=to_sub)
+            else:
+                to_cat = Category.objects.get(id=to_cat_id, profile=profile)
+                count = qs.update(category=to_cat)
             return Response({'updated': count, 'action': action})
 
         elif action == 'get_sample_transactions':

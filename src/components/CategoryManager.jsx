@@ -202,16 +202,22 @@ function CategoryManager() {
           ...qs,
         })
       } else if (selection.type === 'sub') {
+        const isCatTarget = moveTarget.startsWith('cat:')
         await api.post('/categories/bulk/', {
           action: 'reassign_subcategory',
           from_subcategory_id: selection.subId,
-          to_subcategory_id: moveTarget,
+          ...(isCatTarget
+            ? { to_category_id: moveTarget.slice(4) }
+            : { to_subcategory_id: moveTarget }),
         })
       } else if (selection.type === 'cat_nosub') {
+        const isCatTarget = moveTarget.startsWith('cat:')
         await api.post('/categories/bulk/', {
           action: 'set_subcategory',
           category_id: selection.catId,
-          to_subcategory_id: moveTarget,
+          ...(isCatTarget
+            ? { to_category_id: moveTarget.slice(4) }
+            : { to_subcategory_id: moveTarget }),
         })
       } else if (selection.type === 'uncat') {
         const [catId, subId] = moveTarget.split(':')
@@ -359,12 +365,19 @@ function CategoryManager() {
   const allTargets = useMemo(() => {
     const targets = [{ value: 'uncategorize:', label: 'Nao categorizado' }]
     for (const cat of categories) {
-      for (const sub of cat.subcategories) {
-        if (selection?.type === 'sub' && sub.id === selection.subId) continue
-        targets.push({
-          value: sub.id,
-          label: `${cat.name} > ${sub.name}`,
-        })
+      const isCurrentCat = selection?.type === 'cat_nosub' && cat.id === selection.catId
+      if (cat.subcategories.length === 0) {
+        if (!isCurrentCat) {
+          targets.push({ value: `cat:${cat.id}`, label: cat.name })
+        }
+      } else {
+        for (const sub of cat.subcategories) {
+          if (selection?.type === 'sub' && sub.id === selection.subId) continue
+          targets.push({
+            value: sub.id,
+            label: `${cat.name} > ${sub.name}`,
+          })
+        }
       }
     }
     targets.sort((a, b) => a.label.localeCompare(b.label))

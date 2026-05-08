@@ -2719,7 +2719,7 @@ def categorize_installment_siblings(transaction_id, category_id, subcategory_id=
     total_installments = int(m_match.group(2))
     base_desc = _extract_base_desc(txn.description)
     acct_id = txn.account_id
-    amt_group = round(float(abs(txn.amount)), 0)
+    amt_group = round(float(abs(txn.amount)), 1)
 
     # Find all siblings: same base description, same account, similar |amount|,
     # is_installment=True, and installment count matches total
