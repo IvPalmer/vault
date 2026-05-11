@@ -60,3 +60,10 @@ postgres_data/
 # TLS certs
 certs/
 chat-sidecar/memory/
+
+# Cleanup 2026-05-11
+backups/
+.claude/worktrees/
+.claude/
+test-screenshots/
+test-results/
