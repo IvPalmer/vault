@@ -1947,3 +1947,95 @@
 }
 
 .addBtn:hover { opacity: 0.92; }
+
+/* ─── Meal Plan Card ─── */
+.mealPlanCard {
+  background: var(--bg-card, #fafafa);
+  border: 1px solid var(--border, #e3e3e3);
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 20px;
+}
+.mealPlanHeader { margin-bottom: 12px; }
+.mealPlanNutri {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text, #2a2a2a);
+  margin-top: 4px;
+}
+.mealPlanNutriContact {
+  font-size: 12px;
+  color: var(--text-muted, #6b6b6b);
+  margin-top: 2px;
+}
+.mealPlanObs {
+  list-style: none;
+  padding: 12px 14px;
+  margin: 12px 0;
+  background: #fff8e6;
+  border-left: 3px solid #d9a441;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #5b4720;
+}
+.mealPlanObs li { margin: 4px 0; }
+.mealGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.mealCard {
+  background: #fff;
+  border: 1px solid var(--border, #e3e3e3);
+  border-radius: 10px;
+  padding: 14px;
+}
+.mealHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed #e3e3e3;
+}
+.mealTime {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: #5fa67a;
+}
+.mealTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text, #2a2a2a);
+}
+.mealList { list-style: none; padding: 0; margin: 0; }
+.mealItem { padding: 4px 0; font-size: 13px; }
+.mealItemMain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+.mealFood { color: var(--text, #2a2a2a); font-weight: 500; }
+.mealQty { color: var(--text-muted, #6b6b6b); font-size: 12px; }
+.mealSubToggle {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid #d3d3d3;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: #6b6b6b;
+  cursor: pointer;
+}
+.mealSubToggle:hover { background: #f0f0f0; color: var(--text, #2a2a2a); }
+.mealSubList {
+  margin: 6px 0 0 12px;
+  padding: 0;
+  list-style: disc;
+  font-size: 12px;
+  color: var(--text-muted, #6b6b6b);
+}
+.mealSubList li { margin: 2px 0; }
