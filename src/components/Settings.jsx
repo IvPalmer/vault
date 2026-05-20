@@ -647,6 +647,57 @@ function Settings({ onOpenWizard }) {
     }
   }
 
+  // Drag-and-drop state for reordering Itens Recorrentes.
+  // Reorder is scoped per template_type group so dropping a Fixo item onto
+  // an Income row doesn't cross categories. Backend accepts display_order
+  // via the existing PATCH /analytics/recurring/templates/ endpoint.
+  const [dragTplId, setDragTplId] = useState(null)
+  const [dragOverTplId, setDragOverTplId] = useState(null)
+  const [dragTplGroup, setDragTplGroup] = useState(null)
+
+  const handleTplDragStart = (e, id, groupType) => {
+    setDragTplId(id)
+    setDragTplGroup(groupType)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(id))
+  }
+  const handleTplDragEnd = () => {
+    setDragTplId(null)
+    setDragOverTplId(null)
+    setDragTplGroup(null)
+  }
+  const handleTplDragOver = (e, id, groupType) => {
+    if (dragTplGroup && dragTplGroup !== groupType) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (dragOverTplId !== id) setDragOverTplId(id)
+  }
+  const handleTplDragLeave = () => setDragOverTplId(null)
+  const handleTplDrop = async (e, targetId, groupType, items) => {
+    e.preventDefault()
+    const srcId = dragTplId
+    setDragTplId(null)
+    setDragOverTplId(null)
+    setDragTplGroup(null)
+    if (!srcId || srcId === targetId) return
+    if (groupType !== dragTplGroup) return
+    const srcIdx = items.findIndex(t => t.id === srcId)
+    const tgtIdx = items.findIndex(t => t.id === targetId)
+    if (srcIdx < 0 || tgtIdx < 0) return
+    const reordered = [...items]
+    const [moved] = reordered.splice(srcIdx, 1)
+    reordered.splice(tgtIdx, 0, moved)
+    // Patch display_order sequentially (0, 1, 2, ...)
+    try {
+      await Promise.all(reordered.map((tpl, idx) =>
+        api.patch('/analytics/recurring/templates/', { id: tpl.id, display_order: idx })
+      ))
+      refetchTemplates()
+    } catch (err) {
+      console.error('Failed to reorder templates:', err)
+    }
+  }
+
   // Template management handlers
   const handleUpdateTemplate = async (id, field, value) => {
     try {
@@ -1197,9 +1248,42 @@ function Settings({ onOpenWizard }) {
                     R$ {Math.abs(groupTotal).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
                   </span>
                 </div>
+                <div className={styles.tplHeaderRow} aria-hidden="true">
+                  <span className={styles.tplDragCol} />
+                  <span className={styles.tplDueDay}>Dia</span>
+                  <span className={styles.tplName}>Item</span>
+                  <span className={styles.tplType}>Tipo</span>
+                  <span className={styles.tplAmount}>Valor</span>
+                  <span className={styles.tplDateCol}>In\u00edcio</span>
+                  <span className={styles.tplDateCol}>Fim</span>
+                  <span className={styles.tplDelCol} />
+                </div>
                 <div className={styles.itemList}>
-                  {items.map((tpl) => (
-                    <div key={tpl.id} className={styles.tplRow}>
+                  {items.map((tpl, idx) => (
+                    <div
+                      key={tpl.id}
+                      className={`${styles.tplRow} ${dragTplId === tpl.id ? styles.tplRowDragging : ''} ${dragOverTplId === tpl.id && dragTplId !== tpl.id ? styles.tplRowDragOver : ''}`}
+                      onDragOver={(e) => handleTplDragOver(e, tpl.id, groupType)}
+                      onDragLeave={handleTplDragLeave}
+                      onDrop={(e) => handleTplDrop(e, tpl.id, groupType, items)}
+                    >
+                      <span
+                        className={styles.tplDragHandle}
+                        draggable
+                        onDragStart={(e) => handleTplDragStart(e, tpl.id, groupType)}
+                        onDragEnd={handleTplDragEnd}
+                        title="Arrastar para reordenar"
+                        aria-label="Arrastar para reordenar"
+                      >
+                        <svg width="12" height="14" viewBox="0 0 12 14" aria-hidden="true">
+                          <circle cx="3" cy="3" r="1.2" fill="currentColor" />
+                          <circle cx="9" cy="3" r="1.2" fill="currentColor" />
+                          <circle cx="3" cy="7" r="1.2" fill="currentColor" />
+                          <circle cx="9" cy="7" r="1.2" fill="currentColor" />
+                          <circle cx="3" cy="11" r="1.2" fill="currentColor" />
+                          <circle cx="9" cy="11" r="1.2" fill="currentColor" />
+                        </svg>
+                      </span>
                       <span className={styles.tplDueDay}>
                         {tpl.due_day == null ? (
                           <span style={{ color: 'var(--color-text-secondary)' }}>{'\u2014'}</span>
@@ -1236,24 +1320,20 @@ function Settings({ onOpenWizard }) {
                           color="var(--color-text)"
                         />
                       </span>
-                      <span
-                        title="In\u00edcio (YYYY-MM)"
-                        style={{ minWidth: 70, fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}
-                      >
+                      <span className={styles.tplDateCol} title="In\u00edcio do contrato (YYYY-MM)">
                         <InlineEdit
                           value={tpl.contract_start || ''}
-                          placeholder="in\u00edcio"
+                          placeholder="\u2014"
+                          format="text"
                           onSave={(val) => handleUpdateTemplate(tpl.id, 'contract_start', val)}
                           color="var(--color-text-secondary)"
                         />
                       </span>
-                      <span
-                        title="Fim do contrato (YYYY-MM)"
-                        style={{ minWidth: 70, fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}
-                      >
+                      <span className={styles.tplDateCol} title="Fim do contrato (YYYY-MM)">
                         <InlineEdit
                           value={tpl.end_month || ''}
-                          placeholder="fim"
+                          placeholder="\u2014"
+                          format="text"
                           onSave={(val) => handleUpdateTemplate(tpl.id, 'end_month', val)}
                           color="var(--color-text-secondary)"
                         />

@@ -336,6 +336,54 @@ html { scroll-behavior: smooth; }
   color: var(--color-text-secondary);
 }
 
+/* Column header row — explains what each value means.
+   Mirrors .tplRow widths so labels align with the data cells below. */
+.tplHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px var(--space-sm);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  background: rgba(0, 0, 0, 0.015);
+}
+
+.tplDragCol {
+  width: 18px;
+  flex-shrink: 0;
+}
+
+.tplDateCol {
+  width: 70px;
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+}
+
+.tplDelCol {
+  width: 24px;
+  flex-shrink: 0;
+}
+
+.tplDragHandle {
+  width: 18px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  color: var(--color-text-secondary);
+  opacity: 0.4;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+.tplRow:hover .tplDragHandle { opacity: 0.85; }
+.tplDragHandle:active { cursor: grabbing; }
+
 .tplRow {
   display: flex;
   align-items: center;
@@ -343,6 +391,14 @@ html { scroll-behavior: smooth; }
   padding: 4px var(--space-sm);
   border-bottom: 1px solid rgba(226, 217, 208, 0.4);
   font-size: 0.8rem;
+}
+
+.tplRowDragging {
+  opacity: 0.4;
+}
+.tplRowDragOver {
+  background: var(--color-accent-light);
+  border-top: 2px solid var(--color-accent);
 }
 
 .tplRow:last-child {
