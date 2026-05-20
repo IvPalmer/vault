@@ -1330,12 +1330,12 @@ function Settings({ onOpenWizard }) {
           </span>
 
           {/* Flat alphabetical list of taxonomy categories */}
-          <div className={styles.itemList}>
+          <div className={styles.catGridList}>
             {taxonomyCategories.map((cat) => {
               const isExpanded = expandedCat === cat.id
               const subCount = cat.subcategories?.length || 0
               return (
-                <div key={cat.id}>
+                <div key={cat.id} className={isExpanded ? styles.catGridItemExpanded : styles.catGridItem}>
                   <div className={styles.catRow}>
                     <button
                       className={styles.catExpandBtn}

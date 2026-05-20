@@ -136,6 +136,10 @@ function ExamRow({ exam }) {
  */
 function PersonalView({ profileId, profileName }) {
   const [adding, setAdding] = useState(false)
+  // Sub-tab inside the profile view. Default = Resumo (clinical narrative).
+  // Painel = full lab panel only. Histórico = full exam list.
+  const [subTab, setSubTab] = useState('resumo')
+
   const { data: exams = [], isLoading: examsLoading } = useQuery({
     queryKey: ['health-exams', profileId],
     queryFn: () => api.get(`/saude/exams/${profileId ? `?profile_id=${profileId}` : ''}`),
@@ -166,77 +170,112 @@ function PersonalView({ profileId, profileName }) {
 
   return (
     <div className={styles.tabContent}>
-      <div className={styles.gridTwoCol}>
-        <ExamsRecentWidget exams={exams} title={`${profileName} · últimos exames`} limit={5} />
-        <div className={widgetStyles.examsWidget}>
-          <div className={widgetStyles.widgetLabel}>Vitais recentes</div>
-          {vitals.length === 0 ? (
-            <div className={widgetStyles.examsEmpty}>Nenhuma leitura de vitais ainda.</div>
-          ) : (
-            <div className={widgetStyles.examsList}>
-              {vitals.slice(0, 8).map(v => (
-                <div key={v.id} className={widgetStyles.examMini}>
-                  <span className={widgetStyles.examMiniChip} style={{ background: '#5b8bc4' }}>
-                    {v.tipo_label || v.tipo}
-                  </span>
-                  <div className={widgetStyles.examMiniBody}>
-                    <div className={widgetStyles.examMiniName}>{v.valor}</div>
-                  </div>
-                  <span className={widgetStyles.examMiniDate}>{formatDate(v.data)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+      <div className={styles.subTabs} role="tablist" aria-label="Seções de saúde">
+        <button
+          role="tab"
+          aria-selected={subTab === 'resumo'}
+          className={subTab === 'resumo' ? styles.subTabActive : styles.subTab}
+          onClick={() => setSubTab('resumo')}
+        >
+          Resumo
+        </button>
+        <button
+          role="tab"
+          aria-selected={subTab === 'painel'}
+          className={subTab === 'painel' ? styles.subTabActive : styles.subTab}
+          onClick={() => setSubTab('painel')}
+        >
+          Painel laboratorial
+        </button>
+        <button
+          role="tab"
+          aria-selected={subTab === 'historico'}
+          className={subTab === 'historico' ? styles.subTabActive : styles.subTab}
+          onClick={() => setSubTab('historico')}
+        >
+          Histórico <span className={styles.subTabCount}>{exams.length}</span>
+        </button>
       </div>
 
-      {isPalmer && (
+      {subTab === 'resumo' && (
         <>
-          <div className={widgetStyles.relatorioBanner}>
-            <div>
-              <div className={widgetStyles.relatorioBannerTitle}>Relatório médico completo</div>
-              <div className={widgetStyles.relatorioBannerDesc}>Síntese de imagem + laboratório + hipóteses diagnósticas para encaminhamento. Print-ready (A4).</div>
+          <div className={styles.gridTwoCol}>
+            <ExamsRecentWidget exams={exams} title={`${profileName} · últimos exames`} limit={5} />
+            <div className={widgetStyles.examsWidget}>
+              <div className={widgetStyles.widgetLabel}>Vitais recentes</div>
+              {vitals.length === 0 ? (
+                <div className={widgetStyles.examsEmpty}>Nenhuma leitura de vitais ainda.</div>
+              ) : (
+                <div className={widgetStyles.examsList}>
+                  {vitals.slice(0, 8).map(v => (
+                    <div key={v.id} className={widgetStyles.examMini}>
+                      <span className={widgetStyles.examMiniChip} style={{ background: '#5b8bc4' }}>
+                        {v.tipo_label || v.tipo}
+                      </span>
+                      <div className={widgetStyles.examMiniBody}>
+                        <div className={widgetStyles.examMiniName}>{v.valor}</div>
+                      </div>
+                      <span className={widgetStyles.examMiniDate}>{formatDate(v.data)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <a href="/relatorio-palmer.html" target="_blank" rel="noopener" className={widgetStyles.relatorioBannerBtn}>
-              Abrir relatório →
-            </a>
           </div>
-          <ClinicalReportCard report={PALMER_CLINICAL_REPORT} observations={PALMER_OBSERVATIONS} />
-          <HipImagingCard />
-          <LabPanelDashboard panel={livePanel} source={panelSource} />
-        </>
-      )}
-      {isRafa && (
-        <>
-          <ClinicalReportCard report={RAFA_PREGNANCY_REPORT} observations={RAFA_OBSERVATIONS} />
-          <LabPanelDashboard panel={livePanel} source={panelSource} />
-          <MealPlanCard plan={RAFA_MEAL_PLAN} />
+
+          {isPalmer && (
+            <>
+              <div className={widgetStyles.relatorioBanner}>
+                <div>
+                  <div className={widgetStyles.relatorioBannerTitle}>Relatório médico completo</div>
+                  <div className={widgetStyles.relatorioBannerDesc}>Síntese de imagem + laboratório + hipóteses diagnósticas para encaminhamento. Print-ready (A4).</div>
+                </div>
+                <a href="/relatorio-palmer.html" target="_blank" rel="noopener" className={widgetStyles.relatorioBannerBtn}>
+                  Abrir relatório →
+                </a>
+              </div>
+              <ClinicalReportCard report={PALMER_CLINICAL_REPORT} observations={PALMER_OBSERVATIONS} />
+              <HipImagingCard />
+            </>
+          )}
+          {isRafa && (
+            <>
+              <ClinicalReportCard report={RAFA_PREGNANCY_REPORT} observations={RAFA_OBSERVATIONS} />
+              <MealPlanCard plan={RAFA_MEAL_PLAN} />
+            </>
+          )}
         </>
       )}
 
-      <section className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <h2 className={styles.sectionTitle}>Histórico completo · exames</h2>
-          <span className={styles.sectionCount}>{exams.length}</span>
-          <button className={widgetStyles.addBtn} onClick={() => setAdding(true)}>+ Adicionar exame</button>
-        </div>
-        {examsLoading ? (
-          <div className={styles.empty}>Carregando…</div>
-        ) : exams.length === 0 ? (
-          <div className={styles.empty}>
-            Nenhum exame cadastrado para {profileName}. Use o admin Django.
+      {subTab === 'painel' && (
+        <LabPanelDashboard panel={livePanel} source={panelSource} />
+      )}
+
+      {subTab === 'historico' && (
+        <section className={styles.section}>
+          <div className={styles.sectionHeader}>
+            <h2 className={styles.sectionTitle}>Histórico completo · exames</h2>
+            <span className={styles.sectionCount}>{exams.length}</span>
+            <button className={widgetStyles.addBtn} onClick={() => setAdding(true)}>+ Adicionar exame</button>
           </div>
-        ) : (
-          examsByYear.map(([year, list]) => (
-            <div key={year} className={styles.yearGroup}>
-              <h3 className={styles.yearTitle}>{year}</h3>
-              <div className={styles.examList}>
-                {list.map(e => <ExamRow key={e.id} exam={e} />)}
-              </div>
+          {examsLoading ? (
+            <div className={styles.empty}>Carregando…</div>
+          ) : exams.length === 0 ? (
+            <div className={styles.empty}>
+              Nenhum exame cadastrado para {profileName}. Use o admin Django.
             </div>
-          ))
-        )}
-      </section>
+          ) : (
+            examsByYear.map(([year, list]) => (
+              <div key={year} className={styles.yearGroup}>
+                <h3 className={styles.yearTitle}>{year}</h3>
+                <div className={styles.examList}>
+                  {list.map(e => <ExamRow key={e.id} exam={e} />)}
+                </div>
+              </div>
+            ))
+          )}
+        </section>
+      )}
 
       {adding && (
         <AddExamForm profileId={profileId} profileName={profileName} onClose={() => setAdding(false)} />
