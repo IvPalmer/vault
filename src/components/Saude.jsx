@@ -17,7 +17,7 @@
  *   - Vitals sparklines
  *   - Full exam history grouped by year
  */
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useProfile } from '../context/ProfileContext'
 import api from '../api/client'
@@ -170,6 +170,12 @@ function PersonalView({ profileId, profileName }) {
   const fallback = isPalmer ? PALMER_LAB_PANEL : (isRafa ? RAFA_LAB_PANEL : null)
   const { panel: livePanel, source: panelSource } = useLabPanel(profileId, fallback)
 
+  // Nutrição tab only exists for Rafa. If user switches profile while on it,
+  // fall back to Resumo so the panel doesn't render empty.
+  useEffect(() => {
+    if (subTab === 'nutricao' && !isRafa) setSubTab('resumo')
+  }, [isRafa, subTab])
+
   return (
     <div className={styles.tabContent}>
       <div className={styles.subTabs} role="tablist" aria-label="Seções de saúde">
@@ -195,6 +201,19 @@ function PersonalView({ profileId, profileName }) {
         >
           Painel laboratorial
         </button>
+        {isRafa && (
+          <button
+            id="saude-subtab-nutricao"
+            role="tab"
+            aria-selected={subTab === 'nutricao'}
+            aria-controls="saude-subpanel-nutricao"
+            tabIndex={subTab === 'nutricao' ? 0 : -1}
+            className={subTab === 'nutricao' ? styles.subTabActive : styles.subTab}
+            onClick={() => setSubTab('nutricao')}
+          >
+            Nutrição
+          </button>
+        )}
         <button
           id="saude-subtab-historico"
           role="tab"
@@ -254,12 +273,20 @@ function PersonalView({ profileId, profileName }) {
             </>
           )}
           {isRafa && (
-            <>
-              <ClinicalReportCard report={RAFA_PREGNANCY_REPORT} observations={RAFA_OBSERVATIONS} />
-              <MealPlanCard plan={RAFA_MEAL_PLAN} />
-              <ShoppingListCard list={RAFA_SHOPPING_LIST} />
-            </>
+            <ClinicalReportCard report={RAFA_PREGNANCY_REPORT} observations={RAFA_OBSERVATIONS} />
           )}
+        </div>
+      )}
+
+      {subTab === 'nutricao' && isRafa && (
+        <div
+          id="saude-subpanel-nutricao"
+          role="tabpanel"
+          aria-labelledby="saude-subtab-nutricao"
+          className={styles.tabContent}
+        >
+          <MealPlanCard plan={RAFA_MEAL_PLAN} />
+          <ShoppingListCard list={RAFA_SHOPPING_LIST} />
         </div>
       )}
 
