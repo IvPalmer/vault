@@ -2148,6 +2148,15 @@ function DashboardGrid({ widgets, profileId, tabId, renderWidgetContent, removeW
       animate: true,
       draggable: { handle: `.${styles.widgetHeader}, .${styles.catalogDragHandle}` },
       resizable: { handles: 'se' },
+      // Mobile: collapse to a single column under 768px
+      columnOpts: {
+        breakpointForWindow: true,
+        breakpoints: [
+          { w: 768, c: 1 },
+          { w: 1100, c: 6 },
+        ],
+        layout: 'moveScale',
+      },
     }, gridRef.current)
 
     // Positions come from the widgets prop (canonical source = tabs state)

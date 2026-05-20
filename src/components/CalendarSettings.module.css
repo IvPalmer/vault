@@ -32,11 +32,27 @@
   gap: 1rem;
 }
 
+@media (max-width: 768px) {
+  .accountHeader {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+  .accountActions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .accountActions > button {
+    flex: 1;
+  }
+}
+
 .accountInfo {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .serviceBadges {

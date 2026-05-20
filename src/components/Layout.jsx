@@ -31,7 +31,7 @@ function UserMenu() {
 
   return (
     <div ref={ref} className={styles.userMenu}>
-      <button className={styles.userBtn} onClick={() => setOpen(!open)}>
+      <button className={styles.userBtn} onClick={() => setOpen(!open)} aria-label="Menu do usuário">
         {user.picture ? (
           <img src={user.picture} alt="" className={styles.avatar} referrerPolicy="no-referrer" />
         ) : (
@@ -56,6 +56,7 @@ function UserMenu() {
 function Layout({ children }) {
   const { pathname } = useLocation()
   const { profileSlug } = useProfile()
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const isHome = pathname === '/home' || pathname.startsWith('/home/')
   const isPessoal = pathname.endsWith('/pessoal')
@@ -64,23 +65,61 @@ function Layout({ children }) {
   const isSaude = pathname.endsWith('/saude')
   const showMonthPicker = !isHome && !isPessoal && !isSettings && !isAnalytics && !isSaude
 
+  useEffect(() => { setMenuOpen(false) }, [pathname])
+
+  useEffect(() => {
+    if (!menuOpen) return
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [menuOpen])
+
+  const navLink = ({ isActive }) => isActive ? styles.activeTab : styles.navTab
+
   return (
     <div className={styles.layout}>
       <header className={styles.header}>
         <div className={styles.topRow}>
+          <button
+            className={styles.menuToggle}
+            onClick={() => setMenuOpen(true)}
+            aria-label="Abrir menu"
+            aria-expanded={menuOpen}
+          >
+            <span /><span /><span />
+          </button>
           <h1 className={styles.title}>vault</h1>
-          <nav className={styles.nav}>
-            <NavLink to="/home" className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}>Home</NavLink>
-            <NavLink to={`/${profileSlug}/pessoal`} className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}>Pessoal</NavLink>
-            <NavLink to={`/${profileSlug}/overview`} className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}>Financeiro</NavLink>
-            <NavLink to={`/${profileSlug}/saude`} className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}>Saúde</NavLink>
-            <NavLink to={`/${profileSlug}/analytics`} className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}>Analytics</NavLink>
-            <NavLink to={`/${profileSlug}/settings`} className={({ isActive }) => isActive ? styles.activeTab : styles.navTab}>Config</NavLink>
+          <nav className={styles.nav} aria-label="Navegação principal">
+            <NavLink to="/home" className={navLink}>Home</NavLink>
+            <NavLink to={`/${profileSlug}/pessoal`} className={navLink}>Pessoal</NavLink>
+            <NavLink to={`/${profileSlug}/overview`} className={navLink}>Financeiro</NavLink>
+            <NavLink to={`/${profileSlug}/saude`} className={navLink}>Saúde</NavLink>
+            <NavLink to={`/${profileSlug}/analytics`} className={navLink}>Analytics</NavLink>
+            <NavLink to={`/${profileSlug}/settings`} className={navLink}>Config</NavLink>
           </nav>
           <UserMenu />
         </div>
         {showMonthPicker && <MonthPicker />}
       </header>
+
+      {menuOpen && (
+        <>
+          <button
+            className={styles.mobileBackdrop}
+            onClick={() => setMenuOpen(false)}
+            aria-label="Fechar menu"
+          />
+          <nav className={styles.mobileNav} aria-label="Navegação mobile">
+            <button className={styles.mobileNavClose} onClick={() => setMenuOpen(false)} aria-label="Fechar menu">×</button>
+            <NavLink to="/home" className={navLink}>Home</NavLink>
+            <NavLink to={`/${profileSlug}/pessoal`} className={navLink}>Pessoal</NavLink>
+            <NavLink to={`/${profileSlug}/overview`} className={navLink}>Financeiro</NavLink>
+            <NavLink to={`/${profileSlug}/saude`} className={navLink}>Saúde</NavLink>
+            <NavLink to={`/${profileSlug}/analytics`} className={navLink}>Analytics</NavLink>
+            <NavLink to={`/${profileSlug}/settings`} className={navLink}>Config</NavLink>
+          </nav>
+        </>
+      )}
+
       <main className={(isHome || isPessoal || isAnalytics || isSaude) ? styles.mainWide : styles.main}>
         {children}
       </main>

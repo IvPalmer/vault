@@ -33,8 +33,16 @@ const FALLBACK_ORDER = [
   'parcelas', 'saldo_projetado', 'saude', 'meta_poupanca',
 ]
 
-// Group definitions — cards are visually grouped under these headings
+// Group definitions — cards are visually grouped under these headings.
+// First group ('resumo') renders as a hero band — the critical KPIs of the month.
 const CARD_GROUPS = [
+  {
+    key: 'resumo',
+    label: 'RESUMO',
+    color: 'var(--color-accent)',
+    cards: ['saldo_projetado', 'orcamento_variavel', 'saude'],
+    hero: true,
+  },
   {
     key: 'receitas',
     label: 'RECEITAS',
@@ -55,15 +63,9 @@ const CARD_GROUPS = [
     dynamic: true,
   },
   {
-    key: 'resumo',
-    label: 'RESUMO',
-    color: '#6366f1',
-    cards: ['saldo_projetado', 'orcamento_variavel', 'saude'],
-  },
-  {
     key: 'metas',
     label: 'METAS',
-    color: 'var(--color-green)',
+    color: 'var(--color-text-secondary)',
     cards: ['meta_poupanca', 'diario_max', 'dias_fechamento'],
   },
 ]
@@ -750,12 +752,12 @@ function MetricasSection() {
       {groupedCards.map((group) => {
         if (group.visibleCards.length === 0) return null
         return (
-          <div key={group.key} className={styles.cardGroup}>
+          <div key={group.key} className={`${styles.cardGroup} ${group.hero ? styles.cardGroupHero : ''}`}>
             <div className={styles.groupHeader}>
               <span className={styles.groupDot} style={{ background: group.color }} />
               <span className={styles.groupLabel}>{group.label}</span>
             </div>
-            <div className={styles.grid}>
+            <div className={`${styles.grid} ${group.hero ? styles.gridHero : ''}`}>
               {group.visibleCards.map((id) => {
                 const c = cards[id]
                 if (!c) return null
@@ -796,6 +798,7 @@ function MetricasSection() {
                       color={c.color}
                       tooltip={c.tooltip}
                       progress={c.progress}
+                      size={group.hero ? 'lg' : 'md'}
                     />
                   </div>
                 )

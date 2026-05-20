@@ -25,7 +25,7 @@
 .title {
   font-size: 1.05rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
   color: var(--color-accent);
   text-transform: lowercase;
   margin-right: var(--space-sm);
@@ -71,6 +71,13 @@
   text-decoration: none;
 }
 
+.navTab:focus-visible,
+.activeTab:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+
 .main {
   flex: 1;
   padding: var(--space-lg) clamp(var(--space-md), 3vw, var(--space-xl));
@@ -85,6 +92,106 @@
   max-width: 100%;
   width: 100%;
   margin: 0 auto;
+}
+
+/* Mobile hamburger trigger */
+.menuToggle {
+  display: none;
+  width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 6px;
+  margin-left: -8px;
+}
+
+.menuToggle span {
+  display: block;
+  width: 20px;
+  height: 2px;
+  background: var(--color-text);
+  border-radius: 2px;
+  transition: transform 0.2s;
+}
+
+.menuToggle:hover { background: var(--color-surface-hover); }
+.menuToggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Mobile drawer */
+.mobileBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(44, 36, 32, 0.4);
+  backdrop-filter: blur(2px);
+  border: none;
+  cursor: pointer;
+  z-index: 200;
+  animation: fadeIn 0.18s ease-out;
+}
+
+.mobileNav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: min(82vw, 320px);
+  background: var(--color-surface);
+  z-index: 201;
+  padding: var(--space-xl) var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: var(--shadow-lg);
+  animation: slideIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.mobileNav .navTab,
+.mobileNav .activeTab {
+  height: 44px;
+  padding: 0 12px;
+  font-size: 0.95rem;
+  border-bottom: none;
+  border-left: 3px solid transparent;
+  margin-bottom: 0;
+  border-radius: 4px;
+}
+
+.mobileNav .activeTab {
+  background: var(--color-accent-light);
+  border-left-color: var(--color-accent);
+}
+
+.mobileNavClose {
+  align-self: flex-end;
+  width: 36px;
+  height: 36px;
+  background: none;
+  border: none;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  margin-bottom: var(--space-md);
+  border-radius: 6px;
+}
+.mobileNavClose:hover { background: var(--color-surface-hover); color: var(--color-text); }
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slideIn {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
 }
 
 /* User menu */
@@ -106,7 +213,11 @@
 }
 
 .userBtn:hover {
-  background: var(--color-surface-hover, rgba(255,255,255,0.06));
+  background: var(--color-surface-hover);
+}
+.userBtn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .avatar {
@@ -120,6 +231,7 @@
   height: 28px;
   border-radius: 50%;
   background: var(--color-accent);
+  color: var(--color-surface);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -129,7 +241,7 @@
 
 .userName {
   font-size: 0.85rem;
-  color: var(--color-text-muted);
+  color: var(--color-text);
 }
 
 .userDropdown {
@@ -137,22 +249,23 @@
   right: 0;
   top: 100%;
   margin-top: 4px;
-  background: var(--color-surface, #1a1a1a);
-  border: 1px solid var(--color-border, #333);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  min-width: 180px;
+  min-width: 200px;
   padding: 0.5rem 0;
-  z-index: 100;
+  z-index: 110;
+  box-shadow: var(--shadow-md);
 }
 
 .userInfo {
   padding: 0.5rem 1rem;
-  border-bottom: 1px solid var(--color-border, #333);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .userEmail {
   font-size: 0.8rem;
-  color: var(--color-text-muted);
+  color: var(--color-text-secondary);
 }
 
 .logoutBtn {
@@ -162,11 +275,43 @@
   padding: 0.5rem 1rem;
   background: none;
   border: none;
-  color: var(--color-red, #ef4444);
+  color: var(--color-red);
   cursor: pointer;
   font-size: 0.85rem;
 }
 
 .logoutBtn:hover {
-  background: rgba(255,255,255,0.04);
+  background: var(--color-surface-hover);
+}
+
+/* Mobile breakpoint */
+@media (max-width: 768px) {
+  .header {
+    padding: 0 var(--space-md);
+  }
+  .topRow {
+    height: 48px;
+    gap: var(--space-sm);
+  }
+  .menuToggle {
+    display: flex;
+  }
+  .nav {
+    display: none;
+  }
+  .title {
+    font-size: 0.95rem;
+    margin-right: 0;
+  }
+  .userName {
+    display: none;
+  }
+  .main, .mainWide {
+    padding: var(--space-md) var(--space-md);
+  }
+}
+
+@media (max-width: 480px) {
+  .header { padding: 0 var(--space-sm); }
+  .main, .mainWide { padding: var(--space-sm) var(--space-sm); }
 }

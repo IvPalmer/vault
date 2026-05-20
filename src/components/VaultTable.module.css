@@ -8,11 +8,33 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 
 .tableContainer {
   overflow: auto;
   flex: 1;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Mobile scroll affordance: fade gradient on the right edge to hint horizontal scroll */
+@media (max-width: 768px) {
+  .wrapper::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 28px;
+    background: linear-gradient(to right, transparent, var(--color-surface));
+    pointer-events: none;
+    opacity: 0.95;
+    z-index: 1;
+  }
+  .tableContainer {
+    scrollbar-width: thin;
+  }
 }
 
 .searchBar {

@@ -1620,7 +1620,10 @@
   gap: 0;
   padding: 0 var(--space-lg);
   flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.tabBar::-webkit-scrollbar { display: none; }
 
 .saveIndicator {
   font-size: 0.7rem;
@@ -1908,6 +1911,16 @@
 }
 
 /* ─── Responsive (dashboard cards only — grid layout handles widget breakpoints) ─── */
+
+@media (max-width: 768px) {
+  .tabBarRow {
+    padding-right: var(--space-md);
+  }
+  .tabBar {
+    padding: 0 var(--space-md);
+    flex-wrap: nowrap;
+  }
+}
 
 @media (max-width: 500px) {
   .dashboardCards {
