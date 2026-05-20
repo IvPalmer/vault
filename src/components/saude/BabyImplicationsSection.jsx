@@ -133,9 +133,10 @@ function ImplicationCard({ item, expanded, onToggle, markerMap }) {
 }
 
 export default function BabyImplicationsSection() {
-  // Default-expanded items: high-priority ones
-  const defaultExpanded = new Set(BABY_IMPLICATIONS.filter(i => i.prioridade === 'alta').map(i => i.id))
-  const [expanded, setExpanded] = useState(defaultExpanded)
+  // All items collapsed by default. User opens only what they need.
+  // Previously expanded all `alta` items, producing 9 simultaneously-open
+  // verbose cards that made the page impossible to scan.
+  const [expanded, setExpanded] = useState(new Set())
 
   // Fetch profiles to map names -> ids.
   // Note: api.get() returns parsed JSON directly (no .data wrapper).
@@ -210,13 +211,19 @@ export default function BabyImplicationsSection() {
     i.marker_refs && i.marker_refs.some(r => markerMap.get(`${r.profile}/${r.category}.${r.key}`))
   ).length
 
+  // Render strategy:
+  //  - "Alta" priority: visible by default, cards collapsed
+  //  - "Média" + "Baixa": wrapped in <details> so they don't dominate scroll
+  const altaItems = grouped.alta || []
+  const mediaItems = grouped.media || []
+  const baixaItems = grouped.baixa || []
+
   return (
     <div className={styles.implSection}>
       <div className={styles.implSectionHeader}>
         <h2 className={styles.implSectionTitle}>Implicações para o bebê — síntese cruzada</h2>
         <div className={styles.implSectionDesc}>
           Achados de ambos os perfis (Palmer + Rafa) com impacto direto ou potencial na gestação ou no neonato.
-          Itens de alta prioridade abertos por padrão.
           {linkedCount > 0 && (
             <span className={styles.implSectionDescBadge}>
               {' · '}{linkedCount} {linkedCount === 1 ? 'item' : 'itens'} com valores ao vivo do banco
@@ -225,13 +232,13 @@ export default function BabyImplicationsSection() {
         </div>
       </div>
 
-      {order.map(prio => grouped[prio] && (
-        <div key={prio} className={styles.implPrioGroup}>
+      {altaItems.length > 0 && (
+        <div className={styles.implPrioGroup}>
           <div className={styles.implPrioHeader}>
-            {PRIORIDADE_LABEL[prio]} ({grouped[prio].length})
+            {PRIORIDADE_LABEL.alta} ({altaItems.length})
           </div>
           <div className={styles.implList}>
-            {grouped[prio].map(item => (
+            {altaItems.map(item => (
               <ImplicationCard
                 key={item.id}
                 item={item}
@@ -242,7 +249,54 @@ export default function BabyImplicationsSection() {
             ))}
           </div>
         </div>
-      ))}
+      )}
+
+      {(mediaItems.length > 0 || baixaItems.length > 0) && (
+        <details className={styles.implSecondaryAccordion}>
+          <summary>
+            Resolvidos e baixa prioridade · {mediaItems.length + baixaItems.length}
+            <span className={styles.implAccordionHint}>ver detalhes</span>
+          </summary>
+          <div className={styles.implSecondaryBody}>
+            {mediaItems.length > 0 && (
+              <div className={styles.implPrioGroup}>
+                <div className={styles.implPrioHeader}>
+                  {PRIORIDADE_LABEL.media} ({mediaItems.length})
+                </div>
+                <div className={styles.implList}>
+                  {mediaItems.map(item => (
+                    <ImplicationCard
+                      key={item.id}
+                      item={item}
+                      expanded={expanded.has(item.id)}
+                      onToggle={() => toggle(item.id)}
+                      markerMap={markerMap}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+            {baixaItems.length > 0 && (
+              <div className={styles.implPrioGroup}>
+                <div className={styles.implPrioHeader}>
+                  {PRIORIDADE_LABEL.baixa} ({baixaItems.length})
+                </div>
+                <div className={styles.implList}>
+                  {baixaItems.map(item => (
+                    <ImplicationCard
+                      key={item.id}
+                      item={item}
+                      expanded={expanded.has(item.id)}
+                      onToggle={() => toggle(item.id)}
+                      markerMap={markerMap}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </details>
+      )}
     </div>
   )
 }

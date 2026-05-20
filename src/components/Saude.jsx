@@ -367,11 +367,16 @@ function FamiliaView() {
         </div>
       </div>
 
-      <PregnancyTimeline pregnancy={ativa} completedIds={completedSet} />
-
       <CarenciaExamConflictWidget pregnancy={ativa} />
 
       <BabyImplicationsSection />
+
+      {/* Linha do tempo horizontal recolhida — duplica conteúdo dos
+         checkpoints abaixo. Disponível sob demanda. */}
+      <details className={styles.timelineAccordion}>
+        <summary>Linha do tempo gestacional · 0–40 semanas</summary>
+        <PregnancyTimeline pregnancy={ativa} completedIds={completedSet} />
+      </details>
 
       <div className={styles.gridTwoCol}>
         <MobilogramaWidget pregnancy={ativa} profileId={ativa.gestante} />

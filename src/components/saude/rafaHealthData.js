@@ -222,17 +222,17 @@ export const RAFA_LAB_PANEL_PREGESTACIONAL = {
 
 export const RAFA_OBSERVATIONS = [
   {
-    titulo: '⚠️ Hepatite B — sem proteção vacinal',
+    titulo: 'Hepatite B — sem proteção vacinal',
     texto: 'Anti-HBs <2,0 mUI/mL (precisa ≥10 para proteção). HBsAg negativo confirma ausência de infecção. Discutir esquema acelerado de vacinação durante a gestação na 2ª consulta — Engerix-B 0/1/2 ou 0/1/6 meses. Vacina considerada segura pela SBIM/CDC durante gestação.',
     prioridade: 'alta',
   },
   {
-    titulo: '⚠️ Toxoplasmose — suscetível (sem imunidade)',
+    titulo: 'Toxoplasmose — suscetível (sem imunidade)',
     texto: 'IgG <0,2 UI/mL (não reagente), IgM negativo. Sem imunidade prévia. Repetir IgG/IgM trimestralmente (~ago/2026 e ~nov/2026). Reforçar prevenção: carne MUITO bem passada, lavar verduras com hipoclorito, congelar carnes >24h a −12°C antes de cozinhar, luvas em jardinagem, evitar contato direto com fezes de gato (caixa de areia delega para Palmer ou com luvas+lavagem).',
     prioridade: 'alta',
   },
   {
-    titulo: '📋 Vitamina D pendente',
+    titulo: 'Vitamina D pendente',
     texto: 'Não consta no laudo de 06/05/2026 — estava no painel solicitado mas aguardava autorização Amil. Em 2025 estava 40,8 ng/mL (ótimo). Coletar avulsa para confirmar status atual. Deficiência de vit D associada a pré-eclâmpsia e DMG.',
     prioridade: 'media',
   },
@@ -242,27 +242,27 @@ export const RAFA_OBSERVATIONS = [
     prioridade: 'media',
   },
   {
-    titulo: '✅ Imunidades confirmadas: rubéola e CMV',
+    titulo: 'Imunidades confirmadas: rubéola e CMV',
     texto: 'Rubéola IgG 90,5 UI/mL (imune). CMV IgG 147 UA/mL + IgM negativo (infecção passada, imune). Riscos verticais para esses dois agentes reduzidos drasticamente.',
     prioridade: 'baixa',
   },
   {
-    titulo: '✅ Tipagem O Rh Positivo — sem necessidade de anti-D',
+    titulo: 'Tipagem O Rh Positivo — sem necessidade de anti-D',
     texto: 'Coombs indireto negativo, fator Rh positivo. Sem necessidade de imunoglobulina anti-D na 28ª semana nem pós-parto. Risco de DHRN nulo.',
     prioridade: 'baixa',
   },
   {
-    titulo: '✅ Plaquetas normalizaram (464k → 396k)',
+    titulo: 'Plaquetas normalizaram (464k → 396k)',
     texto: 'Trombocitose leve de 2025 era reativa — agora dentro da referência. Não exige mais monitoramento específico.',
     prioridade: 'baixa',
   },
   {
-    titulo: '✅ Sem ITU/bacteriúria atual',
+    titulo: 'Sem ITU/bacteriúria atual',
     texto: 'Urocultura negativa, urina I normal. Histórico de 2024 sugeria ITU/contaminação. Repetir urocultura a cada trimestre como rotina pré-natal. Se tratar futuramente: evitar nitrofurantoína (Palmer G6PD deficiente).',
     prioridade: 'baixa',
   },
   {
-    titulo: '✅ Reservas de ferro/B12 adequadas e em alta',
+    titulo: 'Reservas de ferro/B12 adequadas e em alta',
     texto: 'Ferritina 33,8 → 58,4 ng/mL (↑), ferro 110 → 143 µg/dL (↑), B12 453 pg/mL. Boa base para a expansão de volume sanguíneo do 2º/3º trimestre. Manter Ogestan-Pré ou Regenesis-Pré.',
     prioridade: 'baixa',
   },
@@ -328,12 +328,12 @@ export const RAFA_PREGNANCY_REPORT = {
       titulo: 'Ações necessárias (decorrentes do painel)',
       cor: '#b43c3c',
       achados: [
-        '⚠️ VACINAÇÃO HEPATITE B: Anti-HBs <2,0 mUI/mL (sem proteção). Discutir esquema acelerado durante gestação na 2ª consulta — Engerix-B 0/1/2 ou 0/1/6 meses (segura SBIM).',
-        '⚠️ PREVENÇÃO TOXOPLASMOSE: IgG não reagente — Rafa é suscetível. Carne MUITO bem passada, lavar verduras com hipoclorito, congelar carnes >24h a −12°C, luvas em jardinagem, Palmer cuida da caixa de areia do gato.',
-        '⚠️ REPETIR SOROLOGIA TOXOPLASMOSE: IgG/IgM em ~agosto/2026 (2º T) e ~novembro/2026 (3º T).',
-        '📋 Coletar VITAMINA D (25-OH) — não veio no painel (autorização Amil pendente). Em 2025 estava 40,8 (ótimo) — confirmar manutenção.',
-        '🗓️ TSH reflexo ~12 sem (~junho/2026) — confirmar estabilização pós-pico hCG.',
-        '🗓️ TOTG 75g entre 24-28 sem — HbA1c 5,1 → 5,4 reforça a importância do rastreio DMG.',
+        'VACINAÇÃO HEPATITE B: Anti-HBs <2,0 mUI/mL (sem proteção). Discutir esquema acelerado durante gestação na 2ª consulta — Engerix-B 0/1/2 ou 0/1/6 meses (segura SBIM).',
+        'PREVENÇÃO TOXOPLASMOSE: IgG não reagente — Rafa é suscetível. Carne MUITO bem passada, lavar verduras com hipoclorito, congelar carnes >24h a −12°C, luvas em jardinagem, Palmer cuida da caixa de areia do gato.',
+        'REPETIR SOROLOGIA TOXOPLASMOSE: IgG/IgM em ~agosto/2026 (2º T) e ~novembro/2026 (3º T).',
+        'Coletar VITAMINA D (25-OH) — não veio no painel (autorização Amil pendente). Em 2025 estava 40,8 (ótimo) — confirmar manutenção.',
+        'TSH reflexo ~12 sem (~junho/2026) — confirmar estabilização pós-pico hCG.',
+        'TOTG 75g entre 24-28 sem — HbA1c 5,1 → 5,4 reforça a importância do rastreio DMG.',
       ],
     },
     {

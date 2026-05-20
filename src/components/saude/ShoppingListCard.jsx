@@ -16,7 +16,6 @@ function CategoryCard({ cat }) {
         onClick={() => setOpen(o => !o)}
         aria-expanded={open}
       >
-        <span className={styles.shopCategoryIcon}>{cat.icone}</span>
         <span className={styles.shopCategoryTitle}>{cat.titulo}</span>
         <span className={styles.shopCategoryCount}>{cat.itens.length}</span>
         <span className={styles.shopCategoryToggle}>{open ? '−' : '+'}</span>
@@ -25,11 +24,17 @@ function CategoryCard({ cat }) {
         <div className={styles.shopCategoryBody}>
           {cat.alerta && (
             <div className={cat.alerta.tipo === 'danger' ? styles.shopAlertDanger : styles.shopAlertInfo}>
-              ⚠ {cat.alerta.texto}
+              <span className={styles.shopAlertLabel}>
+                {cat.alerta.tipo === 'danger' ? 'Atenção' : 'Nota'}
+              </span>
+              {cat.alerta.texto}
             </div>
           )}
           {cat.tip && (
-            <div className={styles.shopAlertInfo}>💡 {cat.tip}</div>
+            <div className={styles.shopAlertInfo}>
+              <span className={styles.shopAlertLabel}>Dica</span>
+              {cat.tip}
+            </div>
           )}
           <ul className={styles.shopItemList}>
             {cat.itens.map((it, i) => (

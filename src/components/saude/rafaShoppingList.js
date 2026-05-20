@@ -14,7 +14,6 @@ export const RAFA_SHOPPING_LIST = {
     {
       id: 'proteina',
       titulo: 'Proteína animal',
-      icone: '🥩',
       alerta: { tipo: 'danger', texto: 'Toxoplasmose: TODAS as carnes muito bem passadas. Sem carne crua, embutidos crus, defumados artesanais. Congelar >24h a -12°C antes de cozinhar reduz risco residual.' },
       itens: [
         { item: 'Peito de frango (sem pele)', qty: '1,5 kg', uso: 'Almoço + jantar (4-5×/sem)' },
@@ -27,7 +26,6 @@ export const RAFA_SHOPPING_LIST = {
     {
       id: 'laticinios',
       titulo: 'Laticínios',
-      icone: '🥛',
       alerta: { tipo: 'danger', texto: 'Evitar versões "zero/light/diet" com ciclamato + aspartame. Ler rótulo: ingrediente único deve ser leite + fermento lácteo (eventual creme de leite).' },
       itens: [
         { item: 'Leite de vaca desnatado UHT', qty: '2 L', uso: '200ml/dia no café' },
@@ -37,7 +35,6 @@ export const RAFA_SHOPPING_LIST = {
     {
       id: 'cereais',
       titulo: 'Cereais e grãos',
-      icone: '🌾',
       itens: [
         { item: 'Flocão de milho (cuscuz)', qty: '500 g', uso: 'Café 60g/dia' },
         { item: 'Arroz integral', qty: '500 g', uso: 'Almoço 80g/dia' },
@@ -47,7 +44,6 @@ export const RAFA_SHOPPING_LIST = {
     {
       id: 'leguminosas',
       titulo: 'Leguminosas',
-      icone: '🫘',
       tip: 'Prep: cozinhar 500g de cada cru de uma vez → rende a semana. Congelar em porções de 70g.',
       itens: [
         { item: 'Feijão carioca seco', qty: '500 g (~1kg cozido)', uso: 'Almoço + jantar' },
@@ -59,7 +55,6 @@ export const RAFA_SHOPPING_LIST = {
     {
       id: 'hortalicas',
       titulo: 'Hortaliças (folhas e legumes)',
-      icone: '🥦',
       alerta: { tipo: 'danger', texto: 'Toxoplasmose: lavar TODAS folhas/verduras em água corrente + 15min de molho em hipoclorito 2,5% (1 colher sopa/L) → enxaguar. Mesmo orgânicos.' },
       itens: [
         { item: 'Couve manteiga', qty: '2 maços', uso: 'Almoço + jantar à vontade' },
@@ -78,7 +73,6 @@ export const RAFA_SHOPPING_LIST = {
     {
       id: 'tuberculos',
       titulo: 'Tubérculos e raízes',
-      icone: '🎃',
       itens: [
         { item: 'Abóbora (cabotiá ou japonesa)', qty: '1 pedaço (~1 kg)', uso: 'Purê 100g/dia jantar' },
         { item: 'Batata inglesa', qty: '500 g', uso: 'Substituição purê' },
@@ -87,7 +81,6 @@ export const RAFA_SHOPPING_LIST = {
     {
       id: 'frutas',
       titulo: 'Frutas',
-      icone: '🍓',
       itens: [
         { item: 'Mamão papaia (formosa pequeno)', qty: '1 médio (~700g)', uso: 'Café 100g/dia' },
         { item: 'Morango', qty: '2 bandejas 250g', uso: 'Colação 48g/dia' },
@@ -100,7 +93,6 @@ export const RAFA_SHOPPING_LIST = {
     {
       id: 'sementes',
       titulo: 'Sementes, oleaginosas e pastas',
-      icone: '🥜',
       tip: 'Pasta de amendoim: preferir industrializada (controle aflatoxina). Marcas ok: Vitao, Mãe Terra, Madhu, Dr. Peanut natural. Ingrediente único "amendoim", sem óleo hidrogenado.',
       itens: [
         { item: 'Castanha de caju (sem sal)', qty: '100 g', uso: 'Lanche escape 10g/dia' },
@@ -114,7 +106,6 @@ export const RAFA_SHOPPING_LIST = {
     {
       id: 'chas',
       titulo: 'Chás (gestação-safe)',
-      icone: '🍵',
       alerta: { tipo: 'danger', texto: 'Evitar na gestação: hibisco, sálvia, alecrim em chá, boldo, carqueja, sene, espinheira-santa, canela em quantidade, gengibre >1g/dia.' },
       itens: [
         { item: 'Camomila (saquinhos)', qty: '1 caixa', uso: 'Ceia 200ml' },
@@ -125,7 +116,6 @@ export const RAFA_SHOPPING_LIST = {
     {
       id: 'despensa',
       titulo: 'Despensa (itens permanentes — repor quando acabar)',
-      icone: '🧂',
       itens: [
         { item: 'Sal, alho, cebola, azeite extra virgem, vinagre de maçã', qty: '—', uso: 'Cozimento' },
         { item: 'Limão', qty: '3-4/sem', uso: 'Saladas' },

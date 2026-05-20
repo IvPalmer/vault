@@ -1936,6 +1936,49 @@
   font-weight: 600;
 }
 
+/* Accordion that wraps lower-priority impl items so they don't dominate
+   scroll. Style mirrors .reasoningAccordion in ClinicalReportCard. */
+.implSecondaryAccordion {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  padding-top: 14px;
+  margin-top: 18px;
+}
+.implSecondaryAccordion > summary {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #6b6660);
+  padding: 4px 0;
+}
+.implSecondaryAccordion > summary::-webkit-details-marker { display: none; }
+.implSecondaryAccordion > summary::after {
+  content: '+';
+  font-size: 18px;
+  font-weight: 400;
+  margin-left: auto;
+  color: var(--text-secondary, #6b6660);
+}
+.implSecondaryAccordion[open] > summary::after { content: '−'; }
+.implSecondaryBody {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.implAccordionHint {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.7;
+  margin-left: 12px;
+}
+
 .implMarkersBlock {
   background: rgba(70, 140, 90, 0.04);
   border: 1px solid rgba(70, 140, 90, 0.15);
@@ -2496,6 +2539,14 @@
   font-size: 12px;
   color: #1f3f5b;
   border-radius: 4px;
+}
+.shopAlertLabel {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  margin-right: 8px;
+  opacity: 0.85;
 }
 .shopItemList { list-style: none; padding: 0; margin: 0; }
 .shopItem {
