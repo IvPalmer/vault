@@ -212,8 +212,8 @@ export const PALMER_CLINICAL_REPORT = {
   // High-signal headline + subtitle for the dashboard hero. Avoids forcing
   // the user to read 5 verbose layer cards before grasping the situation.
   sintese: {
-    headline: 'Quadro principalmente estrutural',
-    subtitle: 'Inflamatório descartado em mai/2026 (PCR/VHS/HLA-B27). Foco agora em manejo ortopédico (FAI/CAM), medicina da dor e dislipidemia.',
+    headline: 'Dor estrutural — ortopedia + cortisol agora',
+    subtitle: 'Inflamatório descartado em mai/2026 (PCR/VHS/HLA-B27). Foco em FAI/CAM, medicina da dor e dislipidemia. 3 ações ALTA pendentes.',
     cta: { label: 'Abrir relatório médico', href: '/relatorio-palmer.html' },
   },
 

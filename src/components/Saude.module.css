@@ -137,8 +137,20 @@
   margin: -8px 0 8px;
   overflow-x: auto;
   scrollbar-width: none;
+  /* Trailing space so the last tab can scroll fully into view, plus a fade
+     hint on the right edge in mobile. */
+  padding-right: 16px;
 }
 .subTabs::-webkit-scrollbar { display: none; }
+
+@media (max-width: 768px) {
+  .subTabs {
+    margin-left: calc(-1 * var(--space-md));
+    margin-right: calc(-1 * var(--space-md));
+    padding-left: var(--space-md);
+    padding-right: var(--space-md);
+  }
+}
 
 .subTab,
 .subTabActive {

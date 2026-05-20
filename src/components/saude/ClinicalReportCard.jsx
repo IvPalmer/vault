@@ -54,10 +54,13 @@ function AcaoRow({ acao }) {
 }
 
 function MudancaRow({ m }) {
+  const direcao = m.direcao || 'positivo'
   return (
-    <li className={styles.mudancaRow}>
+    <li className={styles.mudancaRow} data-direcao={direcao}>
       <span className={styles.mudancaIcon} aria-hidden="true">
-        <CheckIcon />
+        {direcao === 'positivo' && <CheckIcon />}
+        {direcao === 'negativo' && <ArrowIcon direction="down" />}
+        {direcao === 'neutro' && <ArrowIcon direction="right" />}
       </span>
       <div className={styles.mudancaBody}>
         <span className={styles.mudancaTitulo}>{m.titulo}</span>
@@ -150,27 +153,9 @@ export default function ClinicalReportCard({ report, observations }) {
         </details>
       )}
 
-      {observations && observations.length > 0 && (
-        <details className={styles.reasoningAccordion}>
-          <summary>
-            <span>Pontos adicionais · {observations.length}</span>
-            <span className={styles.accordionHint}>ver detalhes</span>
-          </summary>
-          <div className={styles.observationsList}>
-            {observations.map((o, i) => (
-              <div key={i} className={styles.observationRow} data-priority={o.prioridade}>
-                <div className={styles.observationHeader}>
-                  <span className={styles.observationTitle}>{o.titulo}</span>
-                  <span className={styles.observationPriority} data-priority={o.prioridade}>
-                    {o.prioridade}
-                  </span>
-                </div>
-                <div className={styles.observationText}>{o.texto}</div>
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
+      {/* "Pontos adicionais" (observations) removed from Resumo — content
+         overlaps with acoes/mudancas. Kept as data export for the printable
+         report (relatorio-palmer.html) and the full audit trail. */}
     </section>
   )
 }

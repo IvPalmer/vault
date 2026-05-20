@@ -1210,14 +1210,26 @@
   gap: 22px;
 }
 
-/* Status hero — headline + subtitle + primary CTA */
+/* Status hero — headline + subtitle + primary CTA.
+   Desktop: side-by-side. Mobile (<560px): stack with full-width CTA below. */
 .statusHero {
   display: flex;
   gap: 24px;
   align-items: flex-start;
-  flex-wrap: wrap;
   padding-bottom: 18px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+@media (max-width: 560px) {
+  .statusHero {
+    flex-direction: column;
+    gap: 14px;
+  }
+  .statusHero .statusCta {
+    align-self: stretch;
+    justify-content: center;
+    width: 100%;
+  }
 }
 .statusHeroMain {
   flex: 1;
@@ -1356,6 +1368,21 @@
   flex-shrink: 0;
   text-align: right;
 }
+
+@media (max-width: 560px) {
+  /* On narrow screens the right meta column truncates ("curto p..."); flow
+     prazo+badge under the title instead. */
+  .acaoRow {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .acaoMeta {
+    flex-direction: row;
+    align-items: center;
+    text-align: left;
+    margin-left: 36px;
+  }
+}
 .acaoPrazo {
   font-size: 11px;
   color: var(--text-secondary, #6b6660);
@@ -1410,6 +1437,14 @@
   background: rgba(70, 140, 90, 0.14);
   color: #468c5a;
   margin-top: 1px;
+}
+.mudancaRow[data-direcao="negativo"] .mudancaIcon {
+  background: rgba(180, 60, 60, 0.14);
+  color: #b43c3c;
+}
+.mudancaRow[data-direcao="neutro"] .mudancaIcon {
+  background: rgba(107, 102, 96, 0.14);
+  color: #6b6660;
 }
 .mudancaBody {
   flex: 1;
