@@ -283,19 +283,20 @@ export const RAFA_PREGNANCY_REPORT = {
 
   sintese: {
     headline: 'Gestação 1º trimestre — 2 pendências críticas',
-    subtitle: 'Hepatite B sem proteção vacinal + suscetibilidade à toxoplasmose. Vitamina D pendente. Cobertura: gap de ~50 dias entre DPP e fim de carência Amil.',
+    subtitle: 'Hepatite B sem proteção vacinal + suscetibilidade à toxoplasmose. Vit D insuficiente (19 ng/mL — em tratamento). Cobertura do parto resolvida.',
   },
 
   acoes: [
     { titulo: 'Vacinar Hepatite B (esquema acelerado 0/1/2 ou 0/1/6)', prazo: '2ª consulta', prioridade: 'alta', porque: 'Anti-HBs <2,0 mUI/mL (sem proteção). Vacina segura na gestação (SBIM).' },
     { titulo: 'Prevenção toxoplasmose ativa', prazo: 'contínuo', prioridade: 'alta', porque: 'IgG não reagente — Rafa suscetível. Carne bem passada, hipoclorito em verduras, Palmer cuida da caixa de areia.' },
-    { titulo: 'Coletar Vitamina D (25-OH) avulsa', prazo: 'curto prazo', prioridade: 'media', porque: 'Não saiu no painel (autorização Amil). Em 2025 estava 40,8 (ótimo).' },
-    { titulo: 'Resolver gap de cobertura assistencial', prazo: 'imediato', prioridade: 'alta', porque: 'Fim carência ~21/02/2027 vs DPP ~02/01/2027 → ~50 dias descobertos para parto.' },
+    { titulo: 'Suplementar Vit D (insuficiência detectada)', prazo: 'em tratamento', prioridade: 'media', porque: '25-OH 19 ng/mL (13/05/2026) — abaixo de 30 ng/mL. Risco de pré-eclâmpsia/DMG. Repetir em ~8-12 semanas.' },
     { titulo: 'TOTG 75g entre 24-28 semanas', prazo: 'ago–set/2026', prioridade: 'media', porque: 'HbA1c em tendência leve de alta (5,1 → 5,4).' },
     { titulo: 'Repetir sorologia toxoplasmose IgG/IgM', prazo: '2º T (ago) e 3º T (nov)', prioridade: 'media', porque: 'Vigilância de seroconversão.' },
   ],
 
   mudancas: [
+    { titulo: 'Cobertura do parto resolvida — segunda cobertura/parto privado contratado', direcao: 'positivo', data: 'mai/2026' },
+    { titulo: 'Vit D coletada (13/05) — 19 ng/mL, insuficiência detectada e em tratamento', direcao: 'neutro', data: 'mai/2026' },
     { titulo: 'Tipagem O Rh+ confirmada — sem necessidade de anti-D', direcao: 'positivo', data: 'mai/2026' },
     { titulo: 'Imunidade à rubéola e CMV confirmadas', direcao: 'positivo', data: 'mai/2026' },
     { titulo: 'HIV, HCV, HBV, HTLV, sífilis: todos não reagentes', direcao: 'positivo', data: 'mai/2026' },
