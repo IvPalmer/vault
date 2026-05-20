@@ -463,10 +463,12 @@ html { scroll-behavior: smooth; }
 /* ============================================================ */
 /* Category list as a responsive grid — 1 col mobile, 2 col tablet, 3+ col
    desktop. When a row is expanded (sub-categories visible), span full width
-   so the children don't get cramped. */
+   so the children don't get cramped. `grid-auto-flow: dense` backfills any
+   cells skipped above the expanded full-width row. */
 .catGridList {
   display: grid;
   grid-template-columns: 1fr;
+  grid-auto-flow: dense;
   gap: 0;
 }
 

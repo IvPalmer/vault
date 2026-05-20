@@ -172,24 +172,33 @@ function PersonalView({ profileId, profileName }) {
     <div className={styles.tabContent}>
       <div className={styles.subTabs} role="tablist" aria-label="Seções de saúde">
         <button
+          id="saude-subtab-resumo"
           role="tab"
           aria-selected={subTab === 'resumo'}
+          aria-controls="saude-subpanel-resumo"
+          tabIndex={subTab === 'resumo' ? 0 : -1}
           className={subTab === 'resumo' ? styles.subTabActive : styles.subTab}
           onClick={() => setSubTab('resumo')}
         >
           Resumo
         </button>
         <button
+          id="saude-subtab-painel"
           role="tab"
           aria-selected={subTab === 'painel'}
+          aria-controls="saude-subpanel-painel"
+          tabIndex={subTab === 'painel' ? 0 : -1}
           className={subTab === 'painel' ? styles.subTabActive : styles.subTab}
           onClick={() => setSubTab('painel')}
         >
           Painel laboratorial
         </button>
         <button
+          id="saude-subtab-historico"
           role="tab"
           aria-selected={subTab === 'historico'}
+          aria-controls="saude-subpanel-historico"
+          tabIndex={subTab === 'historico' ? 0 : -1}
           className={subTab === 'historico' ? styles.subTabActive : styles.subTab}
           onClick={() => setSubTab('historico')}
         >
@@ -198,7 +207,11 @@ function PersonalView({ profileId, profileName }) {
       </div>
 
       {subTab === 'resumo' && (
-        <>
+        <div
+          id="saude-subpanel-resumo"
+          role="tabpanel"
+          aria-labelledby="saude-subtab-resumo"
+        >
           <div className={styles.gridTwoCol}>
             <ExamsRecentWidget exams={exams} title={`${profileName} · últimos exames`} limit={5} />
             <div className={widgetStyles.examsWidget}>
@@ -244,15 +257,26 @@ function PersonalView({ profileId, profileName }) {
               <MealPlanCard plan={RAFA_MEAL_PLAN} />
             </>
           )}
-        </>
+        </div>
       )}
 
       {subTab === 'painel' && (
-        <LabPanelDashboard panel={livePanel} source={panelSource} />
+        <div
+          id="saude-subpanel-painel"
+          role="tabpanel"
+          aria-labelledby="saude-subtab-painel"
+        >
+          <LabPanelDashboard panel={livePanel} source={panelSource} />
+        </div>
       )}
 
       {subTab === 'historico' && (
-        <section className={styles.section}>
+        <section
+          id="saude-subpanel-historico"
+          role="tabpanel"
+          aria-labelledby="saude-subtab-historico"
+          className={styles.section}
+        >
           <div className={styles.sectionHeader}>
             <h2 className={styles.sectionTitle}>Histórico completo · exames</h2>
             <span className={styles.sectionCount}>{exams.length}</span>
