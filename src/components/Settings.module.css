@@ -1,3 +1,40 @@
+/* Jump nav for Settings sections — sticky horizontal scroll list */
+.sectionNav {
+  position: sticky;
+  top: var(--space-md);
+  z-index: 5;
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  margin: 0 calc(-1 * var(--space-md)) var(--space-md);
+  background: color-mix(in srgb, var(--color-bg) 92%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.sectionNav::-webkit-scrollbar { display: none; }
+
+.sectionNavLink {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  border-radius: 5px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.sectionNavLink:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+html { scroll-behavior: smooth; }
+[id] { scroll-margin-top: 80px; }
+
 .container {
   display: flex;
   flex-direction: column;
@@ -26,20 +63,16 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 6px;
   background: var(--color-accent-light);
   color: var(--color-accent);
-  font-size: 1rem;
-  font-family: var(--font-mono);
-  font-weight: 600;
   flex-shrink: 0;
   margin-top: 2px;
 }
-
-@media (max-width: 480px) {
-  .sectionIcon { display: none; }
+.sectionIcon svg {
+  display: block;
 }
 
 .sectionHeader > div:nth-child(2) {

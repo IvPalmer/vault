@@ -1956,11 +1956,14 @@
 .kanbanBoard {
   display: flex;
   flex: 1;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   min-height: 0;
+  scrollbar-width: thin;
 }
 .kanbanCol {
-  flex: 1;
+  flex: 1 0 160px;
+  min-width: 160px;
   display: flex;
   flex-direction: column;
   overflow: hidden;

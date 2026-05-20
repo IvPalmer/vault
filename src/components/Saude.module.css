@@ -275,6 +275,15 @@
   background: rgba(0, 0, 0, 0.06);
 }
 
+.examFileDisabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: auto;
+}
+.examFileDisabled:hover {
+  background: transparent;
+}
+
 /* ── Vitals ──────────────────────────────────────── */
 
 .vitalsList {

@@ -44,6 +44,13 @@
   line-height: 1.2;
 }
 
+.valueIcon {
+  display: inline-flex;
+  vertical-align: -3px;
+  margin-right: 6px;
+  opacity: 0.85;
+}
+
 .label {
   font-size: 0.65rem;
   color: var(--color-text-secondary);

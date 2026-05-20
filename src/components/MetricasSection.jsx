@@ -6,6 +6,7 @@ import api from '../api/client'
 import MetricCard from './MetricCard'
 import InlineEdit from './InlineEdit'
 import Skeleton from './Skeleton'
+import { IconAlert } from './SettingsIcons'
 import styles from './MetricasSection.module.css'
 
 function fmt(n) {
@@ -228,6 +229,9 @@ function buildCards(data) {
       label: 'SAUDE DO MES',
       value: data.saude,
       color: SAUDE_COLORS[data.saude_level] || 'var(--color-text)',
+      icon: (data.saude_level === 'danger' || data.saude_level === 'warning')
+        ? <IconAlert size={16} />
+        : null,
       tooltip: `${SAUDE_EXPLANATIONS[data.saude_level] || 'Sem dados suficientes.'} Baseado em gastos vs projetado e saldo.`,
     },
     meta_poupanca: (() => {
@@ -798,6 +802,7 @@ function MetricasSection() {
                       color={c.color}
                       tooltip={c.tooltip}
                       progress={c.progress}
+                      icon={c.icon}
                       size={group.hero ? 'lg' : 'md'}
                     />
                   </div>

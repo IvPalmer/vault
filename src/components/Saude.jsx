@@ -88,17 +88,35 @@ function ExamRow({ exam }) {
         )}
         {exam.notes && <div className={styles.examNotes}>{exam.notes}</div>}
       </div>
-      {exam.arquivo_path && (
-        <a
-          className={styles.examFile}
-          href={`file://${exam.arquivo_path.startsWith('/') ? exam.arquivo_path : '/Users/palmer/Documents/' + exam.arquivo_path}`}
-          target="_blank"
-          rel="noreferrer"
-          title="Abrir arquivo local"
-        >
-          PDF
-        </a>
-      )}
+      {exam.arquivo_path && (() => {
+        // file:// links only resolve on the Mac that has the PDFs locally.
+        // Detect by user-agent + platform: show disabled style elsewhere.
+        const isLocalMac = typeof navigator !== 'undefined'
+          && /Mac/i.test(navigator.platform || '')
+          && window.location.hostname !== 'vault.grooveops.dev'
+        if (!isLocalMac) {
+          return (
+            <span
+              className={`${styles.examFile} ${styles.examFileDisabled}`}
+              title="PDF disponível apenas no Mac do Palmer (arquivo local)"
+              aria-disabled="true"
+            >
+              PDF
+            </span>
+          )
+        }
+        return (
+          <a
+            className={styles.examFile}
+            href={`file://${exam.arquivo_path.startsWith('/') ? exam.arquivo_path : '/Users/palmer/Documents/' + exam.arquivo_path}`}
+            target="_blank"
+            rel="noreferrer"
+            title="Abrir arquivo local"
+          >
+            PDF
+          </a>
+        )
+      })()}
     </div>
   )
 }

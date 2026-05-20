@@ -6,6 +6,10 @@ import { useProfile } from '../context/ProfileContext'
 import InlineEdit from './InlineEdit'
 import CalendarSettings from './CalendarSettings'
 import RemindersSettings from './RemindersSettings'
+import {
+  IconGear, IconSync, IconUser, IconBank, IconList,
+  IconTag, IconMoney, IconPencil, IconDownload, IconChart,
+} from './SettingsIcons'
 import styles from './Settings.module.css'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
@@ -84,7 +88,7 @@ function SalarySection({ config, projection, templates, editing, setEditing, syn
   return (
     <div className={styles.section}>
       <div className={styles.sectionHeader}>
-        <div className={styles.sectionIcon}>💰</div>
+        <div className={styles.sectionIcon}><IconMoney /></div>
         <div>
           <h2 className={styles.sectionTitle}>Projecao Salarial</h2>
           <p className={styles.sectionDesc}>
@@ -828,16 +832,37 @@ function Settings({ onOpenWizard }) {
     return taxonomyCategories.reduce((s, c) => s + parseFloat(c.default_limit || 0), 0)
   }, [taxonomyCategories])
 
+  const SECTION_NAV = [
+    { id: 'wizard', label: 'Wizard' },
+    { id: 'pluggy', label: 'Pluggy' },
+    { id: 'google', label: 'Google' },
+    { id: 'reminders', label: 'Lembretes' },
+    { id: 'profile', label: 'Perfil' },
+    { id: 'contas', label: 'Contas' },
+    { id: 'recorrentes', label: 'Recorrentes' },
+    { id: 'categorias', label: 'Categorias' },
+    { id: 'orcamento', label: 'Orçamento' },
+    { id: 'regras', label: 'Regras' },
+    { id: 'importar', label: 'Importar' },
+    { id: 'salario', label: 'Salário' },
+    { id: 'status', label: 'Status' },
+  ]
+
   return (
     <div className={styles.container}>
+      <nav className={styles.sectionNav} aria-label="Seções de configuração">
+        {SECTION_NAV.map(s => (
+          <a key={s.id} href={`#${s.id}`} className={styles.sectionNavLink}>{s.label}</a>
+        ))}
+      </nav>
 
       {/* ============================================================ */}
       {/* SETUP WIZARD BUTTON                                          */}
       {/* ============================================================ */}
       {onOpenWizard && (
-        <div className={styles.section}>
+        <div id="wizard" className={styles.section}>
           <div className={styles.sectionHeader}>
-            <div className={styles.sectionIcon}>&#9881;</div>
+            <div className={styles.sectionIcon}><IconGear /></div>
             <div style={{ flex: 1 }}>
               <h2 className={styles.sectionTitle}>Assistente de Configuracao</h2>
               <p className={styles.sectionDesc}>
@@ -857,9 +882,9 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* PLUGGY SYNC                                                   */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="pluggy" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>🔄</div>
+          <div className={styles.sectionIcon}><IconSync /></div>
           <div style={{ flex: 1 }}>
             <h2 className={styles.sectionTitle}>Sincronizacao Pluggy</h2>
             <p className={styles.sectionDesc}>
@@ -898,15 +923,15 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* CALENDAR SETTINGS                                             */}
       {/* ============================================================ */}
-      <CalendarSettings />
-      <RemindersSettings />
+      <div id="google"><CalendarSettings /></div>
+      <div id="reminders"><RemindersSettings /></div>
 
       {/* ============================================================ */}
       {/* SECTION 1: PROFILE SETTINGS (PERFIL)                         */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="profile" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>👤</div>
+          <div className={styles.sectionIcon}><IconUser /></div>
           <div>
             <h2 className={styles.sectionTitle}>Perfil</h2>
             <p className={styles.sectionDesc}>
@@ -962,9 +987,9 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* SECTION 2: ACCOUNT MANAGEMENT (CONTAS BANCÁRIAS)             */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="contas" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>🏦</div>
+          <div className={styles.sectionIcon}><IconBank /></div>
           <div>
             <h2 className={styles.sectionTitle}>Contas Bancárias</h2>
             <p className={styles.sectionDesc}>
@@ -1085,9 +1110,9 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* SECTION 3: RECURRING TEMPLATES                               */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="recorrentes" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>📋</div>
+          <div className={styles.sectionIcon}><IconList /></div>
           <div>
             <h2 className={styles.sectionTitle}>Itens Recorrentes</h2>
             <p className={styles.sectionDesc}>
@@ -1252,9 +1277,9 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* SECTION 4: CATEGORIES & SUBCATEGORIES (taxonomy only)        */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="categorias" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>🏷️</div>
+          <div className={styles.sectionIcon}><IconTag /></div>
           <div>
             <h2 className={styles.sectionTitle}>Categorias & Subcategorias</h2>
             <p className={styles.sectionDesc}>
@@ -1392,9 +1417,9 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* SECTION 5: BUDGET & INVESTMENTS (ORÇAMENTO & INVESTIMENTOS)  */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="orcamento" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>💰</div>
+          <div className={styles.sectionIcon}><IconMoney /></div>
           <div>
             <h2 className={styles.sectionTitle}>Orçamento & Investimentos</h2>
             <p className={styles.sectionDesc}>
@@ -1489,9 +1514,9 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* SECTION 6: RENAME RULES (REGRAS DE RENOMEAÇÃO)               */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="regras" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>✏️</div>
+          <div className={styles.sectionIcon}><IconPencil /></div>
           <div>
             <h2 className={styles.sectionTitle}>Regras de Renomeação</h2>
             <p className={styles.sectionDesc}>
@@ -1593,9 +1618,9 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* SECTION 7: IMPORT                                            */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="importar" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>📥</div>
+          <div className={styles.sectionIcon}><IconDownload /></div>
           <div>
             <h2 className={styles.sectionTitle}>Importar Extratos</h2>
             <p className={styles.sectionDesc}>
@@ -1756,7 +1781,7 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* SECTION 8: SALARY PROJECTION                                 */}
       {/* ============================================================ */}
-      <SalarySection
+      <div id="salario"><SalarySection
         config={salaryConfig}
         projection={salaryProjection}
         templates={templatesData?.templates || []}
@@ -1766,15 +1791,15 @@ function Settings({ onOpenWizard }) {
         syncResult={salarySyncResult}
         onSync={handleSalarySync}
         onSave={handleSalaryConfigSave}
-      />
+      /></div>
 
       {/* ============================================================ */}
       {/* SECTION 9: STATUS                                            */}
       {/* ============================================================ */}
       {status && (
-        <div className={styles.section}>
+        <div id="status" className={styles.section}>
           <div className={styles.sectionHeader}>
-            <div className={styles.sectionIcon}>📊</div>
+            <div className={styles.sectionIcon}><IconChart /></div>
             <div>
               <h2 className={styles.sectionTitle}>Status do Banco</h2>
               <p className={styles.sectionDesc}>
