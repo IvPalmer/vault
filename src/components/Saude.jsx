@@ -233,13 +233,20 @@ function PersonalView({ profileId, profileName }) {
           role="tabpanel"
           aria-labelledby="saude-subtab-resumo"
         >
-          <div className={styles.gridTwoCol}>
-            <ExamsRecentWidget exams={exams} title={`${profileName} · últimos exames`} limit={5} />
-            <div className={widgetStyles.examsWidget}>
-              <div className={widgetStyles.widgetLabel}>Vitais recentes</div>
-              {vitals.length === 0 ? (
-                <div className={widgetStyles.examsEmpty}>Nenhuma leitura de vitais ainda.</div>
-              ) : (
+          {/* Clinical synthesis dashboard — primary focus of the page. */}
+          {isPalmer && (
+            <ClinicalReportCard report={PALMER_CLINICAL_REPORT} observations={PALMER_OBSERVATIONS} />
+          )}
+          {isRafa && (
+            <ClinicalReportCard report={RAFA_PREGNANCY_REPORT} observations={RAFA_OBSERVATIONS} />
+          )}
+
+          {/* Secondary row: recent exams + vitals (vitals only if present) */}
+          <div className={vitals.length > 0 ? styles.gridTwoCol : styles.gridOneCol}>
+            <ExamsRecentWidget exams={exams} title={`Últimos exames de ${profileName}`} limit={3} />
+            {vitals.length > 0 && (
+              <div className={widgetStyles.examsWidget}>
+                <div className={widgetStyles.widgetLabel}>Vitais recentes</div>
                 <div className={widgetStyles.examsList}>
                   {vitals.slice(0, 8).map(v => (
                     <div key={v.id} className={widgetStyles.examMini}>
@@ -253,28 +260,11 @@ function PersonalView({ profileId, profileName }) {
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
-          {isPalmer && (
-            <>
-              <div className={widgetStyles.relatorioBanner}>
-                <div>
-                  <div className={widgetStyles.relatorioBannerTitle}>Relatório médico completo</div>
-                  <div className={widgetStyles.relatorioBannerDesc}>Síntese de imagem + laboratório + hipóteses diagnósticas para encaminhamento. Print-ready (A4).</div>
-                </div>
-                <a href="/relatorio-palmer.html" target="_blank" rel="noopener" className={widgetStyles.relatorioBannerBtn}>
-                  Abrir relatório →
-                </a>
-              </div>
-              <ClinicalReportCard report={PALMER_CLINICAL_REPORT} observations={PALMER_OBSERVATIONS} />
-              <HipImagingCard />
-            </>
-          )}
-          {isRafa && (
-            <ClinicalReportCard report={RAFA_PREGNANCY_REPORT} observations={RAFA_OBSERVATIONS} />
-          )}
+          {isPalmer && <HipImagingCard />}
         </div>
       )}
 

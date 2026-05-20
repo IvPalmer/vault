@@ -281,6 +281,28 @@ export const RAFA_PREGNANCY_REPORT = {
   modelo: 'Mapa de risco / proteção gestacional',
   data: '2026-05-10',
 
+  sintese: {
+    headline: 'Gestação 1º trimestre — 2 pendências críticas',
+    subtitle: 'Hepatite B sem proteção vacinal + suscetibilidade à toxoplasmose. Vitamina D pendente. Cobertura: gap de ~50 dias entre DPP e fim de carência Amil.',
+  },
+
+  acoes: [
+    { titulo: 'Vacinar Hepatite B (esquema acelerado 0/1/2 ou 0/1/6)', prazo: '2ª consulta', prioridade: 'alta', porque: 'Anti-HBs <2,0 mUI/mL (sem proteção). Vacina segura na gestação (SBIM).' },
+    { titulo: 'Prevenção toxoplasmose ativa', prazo: 'contínuo', prioridade: 'alta', porque: 'IgG não reagente — Rafa suscetível. Carne bem passada, hipoclorito em verduras, Palmer cuida da caixa de areia.' },
+    { titulo: 'Coletar Vitamina D (25-OH) avulsa', prazo: 'curto prazo', prioridade: 'media', porque: 'Não saiu no painel (autorização Amil). Em 2025 estava 40,8 (ótimo).' },
+    { titulo: 'Resolver gap de cobertura assistencial', prazo: 'imediato', prioridade: 'alta', porque: 'Fim carência ~21/02/2027 vs DPP ~02/01/2027 → ~50 dias descobertos para parto.' },
+    { titulo: 'TOTG 75g entre 24-28 semanas', prazo: 'ago–set/2026', prioridade: 'media', porque: 'HbA1c em tendência leve de alta (5,1 → 5,4).' },
+    { titulo: 'Repetir sorologia toxoplasmose IgG/IgM', prazo: '2º T (ago) e 3º T (nov)', prioridade: 'media', porque: 'Vigilância de seroconversão.' },
+  ],
+
+  mudancas: [
+    { titulo: 'Tipagem O Rh+ confirmada — sem necessidade de anti-D', direcao: 'positivo', data: 'mai/2026' },
+    { titulo: 'Imunidade à rubéola e CMV confirmadas', direcao: 'positivo', data: 'mai/2026' },
+    { titulo: 'HIV, HCV, HBV, HTLV, sífilis: todos não reagentes', direcao: 'positivo', data: 'mai/2026' },
+    { titulo: 'Plaquetas normalizaram (464k → 396k)', direcao: 'positivo', data: 'mai/2026' },
+    { titulo: 'Reservas de ferro e ferritina em alta', direcao: 'positivo', data: 'mai/2026' },
+  ],
+
   camadas: [
     {
       id: 'protecao_atual',

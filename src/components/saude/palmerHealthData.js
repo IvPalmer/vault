@@ -209,6 +209,33 @@ export const PALMER_CLINICAL_REPORT = {
   modelo: 'Diagnóstico em 5 camadas',
   data: '2025-09-15',
 
+  // High-signal headline + subtitle for the dashboard hero. Avoids forcing
+  // the user to read 5 verbose layer cards before grasping the situation.
+  sintese: {
+    headline: 'Quadro principalmente estrutural',
+    subtitle: 'Inflamatório descartado em mai/2026 (PCR/VHS/HLA-B27). Foco agora em manejo ortopédico (FAI/CAM), medicina da dor e dislipidemia.',
+    cta: { label: 'Abrir relatório médico', href: '/relatorio-palmer.html' },
+  },
+
+  // Up to ~5 concrete next steps. Pull from old "PONTOS DE OBSERVAÇÃO"
+  // (prioridade alta/media) — these are decisions, not commentary.
+  acoes: [
+    { titulo: 'Repetir cortisol matinal em jejum 8h', prazo: 'agora', prioridade: 'alta', porque: 'Cortisol 5.0 µg/dL abaixo da ref (6.2–18.0). Investigar insuficiência adrenal.' },
+    { titulo: 'Avaliação ortopédica — IFA cam bilateral', prazo: 'curto prazo', prioridade: 'alta', porque: 'α-angle 68° lateral E + LCEA 19.3°/15.7° + protrusão acetabular bilateral.' },
+    { titulo: 'Intervenção dietética para LDL/ApoB', prazo: '3 meses', prioridade: 'media', porque: 'LDL 176 e Apo B 135 acima do alvo. Se persistir, considerar estatina.' },
+    { titulo: 'Eletroneuromiografia se dor persistir', prazo: 'condicional', prioridade: 'media', porque: 'Componente neuropático em avaliação especializada.' },
+    { titulo: 'Aconselhamento genético G6PD para gestação', prazo: 'durante gestação', prioridade: 'alta', porque: 'Padrão X-recessivo — 50% chance se feto masculino. Lista de fármacos a evitar no neonato.' },
+  ],
+
+  // Recent improvements / resolutions — what got better. Keeps the user
+  // anchored on progress instead of only on outstanding worries.
+  mudancas: [
+    { titulo: 'PCR normalizou (3.24 → 0.25 mg/dL, queda de 13×)', direcao: 'positivo', data: 'abr/2026' },
+    { titulo: 'VHS normalizou (17 → 14 mm/h)', direcao: 'positivo', data: 'abr/2026' },
+    { titulo: 'HLA-B27 não detectado — EpA descartada', direcao: 'positivo', data: 'mai/2026' },
+    { titulo: 'Investigação reumatológica encerrada', direcao: 'positivo', data: 'mai/2026' },
+  ],
+
   camadas: [
     {
       id: 'estrutural',

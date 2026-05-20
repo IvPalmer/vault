@@ -64,6 +64,13 @@
   margin-bottom: 24px;
 }
 
+.gridOneCol {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
 @media (max-width: 800px) {
   .gridTwoCol { grid-template-columns: 1fr; }
 }
