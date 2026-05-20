@@ -2188,6 +2188,10 @@ function DashboardGrid({ widgets, profileId, tabId, renderWidgetContent, removeW
     grid.on('change', () => {
       if (!userInteracting) return
       userInteracting = false
+      // Do not persist layout when we're in mobile/tablet collapsed columns —
+      // saving 1- or 6-column positions would clobber the canonical 12-column
+      // desktop layout stored in dashboard_state.
+      if (grid.getColumn() < 12) return
       if (onLayoutChangeRef.current) onLayoutChangeRef.current(readLayout())
     })
 

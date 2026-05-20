@@ -1,8 +1,11 @@
-/* Jump nav for Settings sections — sticky horizontal scroll list */
+/* Jump nav for Settings sections — sticky horizontal scroll list.
+   `top` matches the app header height (52px desktop / 48px mobile via
+   Layout.module.css). z-index sits just below the header (100) so the
+   header always wins on overlap. */
 .sectionNav {
   position: sticky;
-  top: var(--space-md);
-  z-index: 5;
+  top: 52px;
+  z-index: 80;
   display: flex;
   gap: 4px;
   padding: 6px 8px;
@@ -12,6 +15,9 @@
   border-bottom: 1px solid var(--color-border);
   overflow-x: auto;
   scrollbar-width: none;
+}
+@media (max-width: 768px) {
+  .sectionNav { top: 48px; }
 }
 .sectionNav::-webkit-scrollbar { display: none; }
 

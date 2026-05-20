@@ -130,19 +130,14 @@
   gap: var(--space-sm);
 }
 
-/* Hero grid — fewer, larger cards */
+/* Hero grid — fewer, larger cards. Actual value sizing happens via
+   MetricCard's `size="lg"` variant in MetricCard.module.css. */
 .gridHero {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: var(--space-md);
 }
 .gridHero > * {
   min-height: 110px;
-}
-.gridHero :global(.metric-value),
-.gridHero :global([class*="metricValue"]) {
-  font-size: clamp(1.6rem, 3vw, 2.1rem);
-  font-weight: 700;
-  letter-spacing: -0.02em;
 }
 
 .loading,

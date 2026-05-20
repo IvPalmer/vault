@@ -89,11 +89,20 @@ function ExamRow({ exam }) {
         {exam.notes && <div className={styles.examNotes}>{exam.notes}</div>}
       </div>
       {exam.arquivo_path && (() => {
-        // file:// links only resolve on the Mac that has the PDFs locally.
-        // Detect by user-agent + platform: show disabled style elsewhere.
-        const isLocalMac = typeof navigator !== 'undefined'
-          && /Mac/i.test(navigator.platform || '')
-          && window.location.hostname !== 'vault.grooveops.dev'
+        // file:// links only resolve when (a) we're on the actual Mac that
+        // holds the PDFs (mac platform string AND mac UA — iPad Safari can
+        // report MacIntel) AND (b) the browser is on a local origin where
+        // file:// is reachable (localhost / 127.0.0.1 / Tailscale .ts.net).
+        // Any other origin → disabled.
+        const host = (typeof window !== 'undefined' && window.location.hostname) || ''
+        const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || ''
+        const plat = (typeof navigator !== 'undefined' && navigator.platform) || ''
+        const isMacUA = /Macintosh/.test(ua) && !/iPad|iPhone|iPod/.test(ua)
+        const isMacPlat = /Mac/i.test(plat) && (navigator.maxTouchPoints || 0) < 2
+        const isLocalHost = host === 'localhost'
+          || host === '127.0.0.1'
+          || host.endsWith('.ts.net')
+        const isLocalMac = isMacUA && isMacPlat && isLocalHost
         if (!isLocalMac) {
           return (
             <span
