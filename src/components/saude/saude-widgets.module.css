@@ -2051,3 +2051,157 @@
   color: var(--text-muted, #6b6b6b);
 }
 .mealSubList li { margin: 2px 0; }
+
+/* ─── Shopping List Card ─── */
+.shopCard {
+  background: var(--bg-card, #fafafa);
+  border: 1px solid var(--border, #e3e3e3);
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 20px;
+}
+.shopHeader {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.shopCost {
+  font-size: 13px;
+  font-weight: 700;
+  color: #2a5a3d;
+  background: #eaf3ee;
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+.shopGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+.shopCategory {
+  background: #fff;
+  border: 1px solid var(--border, #e3e3e3);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.shopCategoryHeader {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  background: #f4f8f5;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text, #2a2a2a);
+}
+.shopCategoryHeader:hover { background: #eaf3ee; }
+.shopCategoryIcon { font-size: 16px; }
+.shopCategoryTitle { flex: 1; }
+.shopCategoryCount {
+  background: #5fa67a;
+  color: #fff;
+  border-radius: 10px;
+  font-size: 11px;
+  padding: 2px 8px;
+  font-weight: 700;
+}
+.shopCategoryToggle {
+  font-size: 16px;
+  color: #6b6b6b;
+  width: 18px;
+  text-align: center;
+}
+.shopCategoryBody { padding: 10px 14px 12px; }
+.shopAlertDanger {
+  background: #fdecec;
+  border-left: 3px solid #c44545;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #5b1a1a;
+  border-radius: 4px;
+}
+.shopAlertInfo {
+  background: #eef5fb;
+  border-left: 3px solid #4a8fc7;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #1f3f5b;
+  border-radius: 4px;
+}
+.shopItemList { list-style: none; padding: 0; margin: 0; }
+.shopItem {
+  display: grid;
+  grid-template-columns: 1fr;
+  padding: 6px 0;
+  border-bottom: 1px dashed #ececec;
+  font-size: 12.5px;
+}
+.shopItem:last-child { border-bottom: none; }
+.shopItemLabel { display: flex; align-items: baseline; gap: 8px; cursor: pointer; }
+.shopItemCheck { margin: 0; }
+.shopItemCheck:checked + .shopItemName { text-decoration: line-through; color: #999; }
+.shopItemName { font-weight: 500; color: var(--text, #2a2a2a); flex: 1; }
+.shopItemQty {
+  margin-left: 22px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #2a5a3d;
+}
+.shopItemUse {
+  margin-left: 22px;
+  font-size: 11px;
+  color: var(--text-muted, #6b6b6b);
+}
+.shopDetails {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: #fff;
+  border: 1px solid var(--border, #e3e3e3);
+  border-radius: 8px;
+}
+.shopDetails summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text, #2a2a2a);
+}
+.shopCostTable {
+  width: 100%;
+  margin-top: 10px;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.shopCostTable td { padding: 5px 8px; border-bottom: 1px solid #f0f0f0; }
+.shopCostTable td:last-child {
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-weight: 600;
+  color: #2a5a3d;
+}
+.shopCostTotal td { border-top: 2px solid #5fa67a; border-bottom: none; padding-top: 8px; }
+.shopEconomyTip {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  background: #eef5fb;
+  border-left: 3px solid #4a8fc7;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #1f3f5b;
+}
+.shopReposicao {
+  margin: 10px 0 0 18px;
+  padding: 0;
+  font-size: 12.5px;
+  color: var(--text, #2a2a2a);
+}
+.shopReposicao li { margin: 3px 0; }

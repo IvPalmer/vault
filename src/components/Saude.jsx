@@ -38,9 +38,11 @@ import LabPanelDashboard from './saude/LabPanelDashboard'
 import HipImagingCard from './saude/HipImagingCard'
 import ClinicalReportCard from './saude/ClinicalReportCard'
 import MealPlanCard from './saude/MealPlanCard'
+import ShoppingListCard from './saude/ShoppingListCard'
 import { PALMER_LAB_PANEL, PALMER_CLINICAL_REPORT, PALMER_OBSERVATIONS } from './saude/palmerHealthData'
 import { RAFA_LAB_PANEL, RAFA_PREGNANCY_REPORT, RAFA_OBSERVATIONS } from './saude/rafaHealthData'
 import { RAFA_MEAL_PLAN } from './saude/rafaMealPlan'
+import { RAFA_SHOPPING_LIST } from './saude/rafaShoppingList'
 import { useLabPanel } from './saude/useLabPanel'
 
 const EXAM_TYPE_LABELS = {
@@ -255,6 +257,7 @@ function PersonalView({ profileId, profileName }) {
             <>
               <ClinicalReportCard report={RAFA_PREGNANCY_REPORT} observations={RAFA_OBSERVATIONS} />
               <MealPlanCard plan={RAFA_MEAL_PLAN} />
+              <ShoppingListCard list={RAFA_SHOPPING_LIST} />
             </>
           )}
         </div>
