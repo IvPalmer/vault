@@ -215,7 +215,7 @@ function RecurringSection() {
             disabled={item.is_skipped}
             format="currency"
             prefix=""
-            placeholder="\u2014"
+            placeholder={'\u2014'}
             color="var(--color-text-secondary)"
           />
         )

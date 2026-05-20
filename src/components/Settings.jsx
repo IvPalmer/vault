@@ -1126,7 +1126,7 @@ function Settings({ onOpenWizard }) {
                       onSave={(val) => handleUpdateAccount(acct.id, 'closing_day', val)}
                       format="currency"
                       prefix=""
-                      placeholder={'\u2014'}
+                      placeholder={"—"}
                       color="var(--color-text-secondary)"
                     />
                   </span>
@@ -1137,7 +1137,7 @@ function Settings({ onOpenWizard }) {
                       onSave={(val) => handleUpdateAccount(acct.id, 'due_day', val)}
                       format="currency"
                       prefix=""
-                      placeholder={'\u2014'}
+                      placeholder={"—"}
                       color="var(--color-text-secondary)"
                     />
                   </span>
@@ -1146,7 +1146,7 @@ function Settings({ onOpenWizard }) {
                     onClick={() => handleDeleteAccount(acct.id, acct.name)}
                     title="Excluir conta"
                   >
-                    {'\u00d7'}
+                    {'×'}
                   </button>
                 </div>
               )
@@ -1254,7 +1254,7 @@ function Settings({ onOpenWizard }) {
                   <span className={styles.tplName}>Item</span>
                   <span className={styles.tplType}>Tipo</span>
                   <span className={styles.tplAmount}>Valor</span>
-                  <span className={styles.tplDateCol}>In\u00edcio</span>
+                  <span className={styles.tplDateCol}>Início</span>
                   <span className={styles.tplDateCol}>Fim</span>
                   <span className={styles.tplDelCol} />
                 </div>
@@ -1286,14 +1286,14 @@ function Settings({ onOpenWizard }) {
                       </span>
                       <span className={styles.tplDueDay}>
                         {tpl.due_day == null ? (
-                          <span style={{ color: 'var(--color-text-secondary)' }}>{'\u2014'}</span>
+                          <span style={{ color: 'var(--color-text-secondary)' }}>{"—"}</span>
                         ) : (
                           <InlineEdit
                             value={tpl.due_day}
                             onSave={(val) => handleUpdateTemplate(tpl.id, 'due_day', val)}
                             format="currency"
                             prefix=""
-                            placeholder="\u2014"
+                            placeholder="—"
                             color="var(--color-text-secondary)"
                           />
                         )}
@@ -1320,10 +1320,10 @@ function Settings({ onOpenWizard }) {
                           color="var(--color-text)"
                         />
                       </span>
-                      <span className={styles.tplDateCol} title="In\u00edcio do contrato (YYYY-MM)">
+                      <span className={styles.tplDateCol} title="Início do contrato (YYYY-MM)">
                         <InlineEdit
                           value={tpl.contract_start || ''}
-                          placeholder="\u2014"
+                          placeholder="—"
                           format="text"
                           onSave={(val) => handleUpdateTemplate(tpl.id, 'contract_start', val)}
                           color="var(--color-text-secondary)"
@@ -1332,7 +1332,7 @@ function Settings({ onOpenWizard }) {
                       <span className={styles.tplDateCol} title="Fim do contrato (YYYY-MM)">
                         <InlineEdit
                           value={tpl.end_month || ''}
-                          placeholder="\u2014"
+                          placeholder="—"
                           format="text"
                           onSave={(val) => handleUpdateTemplate(tpl.id, 'end_month', val)}
                           color="var(--color-text-secondary)"
@@ -1343,7 +1343,7 @@ function Settings({ onOpenWizard }) {
                         onClick={() => handleDeleteTemplate(tpl.id, tpl.name)}
                         title="Desativar template"
                       >
-                        {'\u00d7'}
+                        {'×'}
                       </button>
                     </div>
                   ))}
@@ -1441,7 +1441,7 @@ function Settings({ onOpenWizard }) {
                       onClick={() => handleDeleteCategory(cat.id, cat.name)}
                       title="Desativar categoria"
                     >
-                      {'\u00d7'}
+                      {'×'}
                     </button>
                   </div>
 
@@ -1457,7 +1457,7 @@ function Settings({ onOpenWizard }) {
                             onClick={() => handleDeleteSubcategory(sub.id, sub.name)}
                             title="Excluir subcategoria"
                           >
-                            {'\u00d7'}
+                            {'×'}
                           </button>
                         </div>
                       ))}
@@ -1682,7 +1682,7 @@ function Settings({ onOpenWizard }) {
                   onClick={() => handleDeleteRename(rule.id, rule.keyword)}
                   title="Desativar regra"
                 >
-                  {'\u00d7'}
+                  {'×'}
                 </button>
               </div>
             ))}
