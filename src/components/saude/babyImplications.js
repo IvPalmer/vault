@@ -205,10 +205,10 @@ export const BABY_IMPLICATIONS = [
   },
   {
     id: 'proasa-rafa-ativo',
-    titulo: 'Rafa reativada Proasa ADV 300 DF — carências aproveitadas ✓',
+    titulo: 'Rafa reativada Proasa ADV 300 DF — carências aproveitadas',
     origem: 'Adesão confirmada 06/05/2026 via Easyplan · family/finance/proposta_proasa_easyplan.md',
     categoria: 'Cobertura assistencial',
-    prioridade: 'alta',
+    prioridade: 'baixa',
     resumo: 'Rafa adesão confirmada Proasa ADV 300 DF (enfermaria, R$ 503,67/mês) com TODAS as carências cumpridas aproveitadas — incluindo internação obstétrica. Upgrade pra ADV 400 DF (apartamento) só viável a partir de outubro/2026. Maternidades particulares Brasília só têm apartamento pra parto, então: (a) sobe pra ADV 400 em outubro (se sem nova carência) → parto em apto coberto, OU (b) fica no ADV 300 e paga upgrade direto ao hospital ~R$ 1.500-4.500.',
     acoes: [
       'IMEDIATO: Salvar em PDF a carta de aproveitamento de carências + contrato/condições gerais ADV 300 DF',
@@ -222,11 +222,11 @@ export const BABY_IMPLICATIONS = [
   },
   {
     id: 'orcamento-parto',
-    titulo: 'Orçamento total real — R$ 17,8-21,8k (com Proasa) vs R$ 31-38k (só Amil)',
+    titulo: 'Orçamento total real — R$ 17,8–21,8k (Proasa ativo)',
     origem: 'NFS-e 10500 (consulta R$450 confirmado) + Proasa adesão 06/05',
     categoria: 'Financeiro',
     prioridade: 'alta',
-    resumo: 'Dra. Nahara fora da rede Proasa — honorários (R$ 5,85k consultas R$450/cada × 13 + R$ 10k parto = R$ 15,85k) são out-of-pocket sempre. Proasa cobre HOSPITAL: internação, sala de parto, equipe plantonista, UTI neonatal eventual. Total realista com Proasa: R$ 17,8-21,8k esperado (vs R$ 31-38k só Amil). Economia real R$ 13-16k esperado, R$ 50-65k se UTI necessária.',
+    resumo: 'Com Proasa ADV 300 DF ativo (carências aproveitadas), o orçamento de referência é R$ 17,8–21,8k. Dra. Nahara fora da rede — honorários (R$ 5,85k consultas R$450/cada × 13 + R$ 10k parto = R$ 15,85k) são out-of-pocket sempre. Proasa cobre HOSPITAL: internação, sala de parto, equipe plantonista, UTI neonatal eventual. Economia real ~R$ 13–16k vs cenário só-Amil; até R$ 50–65k se UTI necessária.',
     acoes: [
       'Out-of-pocket Dra. Nahara: 13 consultas × R$450 = R$5,85k + R$10k parto = R$15,85k total (fora rede Proasa)',
       'Plano Proasa cobre: hospital + internação + equipe plantão + UTI neonatal eventual',
@@ -240,10 +240,10 @@ export const BABY_IMPLICATIONS = [
   },
   {
     id: 'pedidos-1tri-2026-05-05',
-    titulo: '1ª consulta + painel 1º T concluídos ✓ · USG 18/05 · Vit D pendente',
-    origem: 'Dra. Nahara A. G. Torres (CRM-DF 18529, Grupo Elas) · consulta 05/05/2026 · labs 06/05/2026 · laudo 10/05/2026',
+    titulo: '1ª consulta + painel 1º T + USG datação concluídos',
+    origem: 'Dra. Nahara A. G. Torres (CRM-DF 18529, Grupo Elas) · consulta 05/05/2026 · labs 06/05/2026 · laudo 10/05/2026 · USG 18/05/2026',
     categoria: 'Pré-natal · 1º trimestre',
-    prioridade: 'alta',
+    prioridade: 'baixa',
     resumo: 'Painel 1º T concluído com 21/22 exames coletados (Vit D pendente por autorização Amil). Resultados: 12/13 categorias dentro da referência. 3 ações decorrentes: vacinar Hep B (Anti-HBs <2), reforçar prevenção toxoplasmose (suscetível, IgG negativa), coletar Vit D. USG transvaginal datação agendada 18/05/2026 (~IG 7+4).',
     acoes: [
       'Painel 1º T coletado 06/05/2026, laudo entregue 10/05/2026',
