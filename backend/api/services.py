@@ -5800,12 +5800,13 @@ def get_subscriptions_control(profile=None):
         days_since = (today - last_charge).days
 
         # Status by expected-next-charge date (matches what the user sees).
-        # If the predicted next charge already passed by more than 2 days
-        # without a charge landing, treat as expiring. Cancelled at 2×.
+        # If the predicted next charge already passed by more than 1 day
+        # without a charge landing, treat as expiring. Cancelled past 1
+        # full additional cycle.
         expected_next = last_charge + timedelta(days=cadence_days)
         overdue_days = (today - expected_next).days
 
-        if overdue_days <= 2:
+        if overdue_days <= 1:
             status = 'active'
         elif overdue_days <= cadence_days:
             status = 'expiring'
