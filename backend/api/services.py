@@ -2423,6 +2423,127 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
     }
 
 
+def _project_installment_complement(month_str, profile=None, exclude_purchase_ids=None):
+    """
+    Project missing installments for `month_str` from older bills.
+
+    Mirrors `_compute_installment_schedule`'s Step 2 logic so that
+    `get_installment_details` can include the same projected positions that
+    metricas['parcelas'] counts. Each returned item carries `projected=True`.
+
+    Args:
+        month_str: target month.
+        exclude_purchase_ids: set of (base_desc, account, amt_group, total_inst)
+            tuples already present in real data for this month — skipped.
+
+    Returns: list of item dicts (same shape as get_installment_details items,
+    with `projected: True`).
+    """
+    import calendar as _cal
+    from dateutil.relativedelta import relativedelta as _rdelta
+
+    exclude = exclude_purchase_ids or set()
+    projected = []
+    seen = set()
+
+    lookback_months_list = [_month_str_add(month_str, -i) for i in range(1, 13)]
+    _lb_invoice_txns = list(Transaction.objects.filter(
+        invoice_month__in=lookback_months_list,
+        is_installment=True,
+        amount__lt=0,
+        profile=profile,
+    ).select_related('account', 'category', 'subcategory'))
+    _lb_by_invoice = {}
+    for txn in _lb_invoice_txns:
+        _lb_by_invoice.setdefault(txn.invoice_month, []).append(txn)
+
+    _lb_months_with_invoice = set(_lb_by_invoice.keys())
+    _lb_months_needing_fallback = set(lookback_months_list) - _lb_months_with_invoice
+    _lb_by_fallback = {}
+    if _lb_months_needing_fallback:
+        _lb_fallback_txns = list(Transaction.objects.filter(
+            month_str__in=_lb_months_needing_fallback,
+            invoice_month='',
+            is_installment=True,
+            amount__lt=0,
+            profile=profile,
+        ).select_related('account', 'category', 'subcategory'))
+        for txn in _lb_fallback_txns:
+            _lb_by_fallback.setdefault(txn.month_str, []).append(txn)
+
+    target_dt = _parse_month(month_str)
+
+    for lookback in range(1, 13):
+        source_month = lookback_months_list[lookback - 1]
+        inst_txns = _lb_by_invoice.get(source_month) or _lb_by_fallback.get(source_month) or []
+        if not inst_txns:
+            continue
+
+        purchase_groups = {}  # key -> (current_pos, total_inst, txn, amt)
+        purchase_max_pos = {}
+        for txn in inst_txns:
+            info = txn.installment_info or ''
+            m_match = re.match(r'(\d+)/(\d+)', info)
+            if not m_match:
+                dm = re.search(r'(\d{1,2})/(\d{1,2})', txn.description)
+                if dm:
+                    m_match = dm
+            if not m_match:
+                continue
+            current = int(m_match.group(1))
+            total_inst = int(m_match.group(2))
+            base_desc = _extract_base_desc(txn.description)
+            acct = txn.account.name if txn.account else ''
+            amt = round(float(abs(txn.amount)), 2)
+            amt_group = round(float(abs(txn.amount)), 0)
+            group_key = (base_desc, acct, amt_group, total_inst)
+            if group_key not in purchase_groups or current < purchase_groups[group_key][0]:
+                purchase_groups[group_key] = (current, total_inst, txn, amt)
+            purchase_max_pos[group_key] = max(purchase_max_pos.get(group_key, 0), current)
+
+        for group_key, (current, total_inst, txn, amt) in purchase_groups.items():
+            base_desc, acct, amt_group, _ = group_key
+            # Source-side Itaú-style: if all positions appeared on the source
+            # bill, the purchase was fully charged there. No projection needed.
+            if purchase_max_pos.get(group_key, current) >= total_inst:
+                continue
+            position = current + lookback
+            if position > total_inst:
+                continue
+            if group_key in exclude:
+                continue
+            if group_key in seen:
+                continue
+            seen.add(group_key)
+
+            try:
+                projected_date = txn.date.replace(year=target_dt.year, month=target_dt.month)
+            except ValueError:
+                last_day = _cal.monthrange(target_dt.year, target_dt.month)[1]
+                projected_date = txn.date.replace(
+                    year=target_dt.year, month=target_dt.month, day=last_day
+                )
+
+            parcela_str = f'{position}/{total_inst}'
+            display_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', txn.description).strip()
+            projected.append({
+                'id': str(txn.id),
+                'date': projected_date.strftime('%Y-%m-%d'),
+                'description': f'{display_desc} {parcela_str}',
+                'amount': amt,
+                'account': acct,
+                'category': txn.category.name if txn.category else 'Não categorizado',
+                'category_id': str(txn.category.id) if txn.category else None,
+                'subcategory': txn.subcategory.name if txn.subcategory else '',
+                'subcategory_id': str(txn.subcategory.id) if txn.subcategory else None,
+                'parcela': parcela_str,
+                'source_month': source_month,
+                'projected': True,
+            })
+
+    return projected
+
+
 def get_installment_details(month_str, profile=None):
     """
     INSTALLMENT BREAKDOWN — installments being charged on this month's bill.
@@ -2500,6 +2621,7 @@ def get_installment_details(month_str, profile=None):
 
         # Build items from deduplicated purchase groups (lowest position only)
         items = []
+        real_purchase_ids = set()
         for (base_desc, acct, amt_group, total_inst), (current, _, txn, amt) in purchase_groups.items():
             parcela_str = f'{current}/{total_inst}'
             # Use original description for display (base_desc is lowered for dedup)
@@ -2516,164 +2638,33 @@ def get_installment_details(month_str, profile=None):
                 'subcategory_id': str(txn.subcategory.id) if txn.subcategory else None,
                 'parcela': parcela_str,
                 'source_month': month_str,
+                'projected': False,
             })
+            real_purchase_ids.add((base_desc, acct, amt_group, total_inst))
 
         items.extend(non_parseable_items)
+
+        # Complement with projected installments from older bills.
+        # Matches _compute_installment_schedule Step 2 so the total agrees with
+        # metricas['parcelas']. Items get projected=True so the UI can flag them.
+        projected_items = _project_installment_complement(
+            month_str, profile=profile, exclude_purchase_ids=real_purchase_ids,
+        )
+        items.extend(projected_items)
+
         items.sort(key=lambda x: (x['account'], x['date']))
 
         total = sum(i['amount'] for i in items)
         return {
             'month_str': month_str,
-            'source': 'real',
+            'source': 'mixed' if projected_items else 'real',
             'items': items,
             'count': len(items),
             'total': round(total, 2),
         }
 
-    # No real data — project from previous CC statements.
-    #
-    # CC statements list ALL installment positions for a purchase on every
-    # bill (01/06, 02/06, 03/06 etc. all on the same statement).  Only the
-    # LOWEST position per purchase per source month represents the "current"
-    # installment actually charged that month.  Higher positions are
-    # informational and represent future months.
-    #
-    # Strategy:
-    #   1. For each source month, group installments by (base_desc, account,
-    #      amount, total) and keep only the lowest-position entry per group.
-    #      That entry represents the real charge for that source month.
-    #   2. Project the lowest position forward by lookback to get the
-    #      target-month position.
-    #   3. Deduplicate across source months: the same purchase projected from
-    #      different source months yields the same target position; keep only
-    #      the most recent source (lowest lookback).
-    import calendar as _cal
-    from dateutil.relativedelta import relativedelta as _rdelta
-
-    items = []
-    seen = set()  # (base_desc, account, amount, total_inst) — one entry per purchase
-
-    # Pre-load CC account billing cycle info for invoice_month calculation.
-    _cc_accounts = {
-        a.name: a for a in Account.objects.filter(
-            profile=profile, account_type='credit_card'
-        )
-    }
-
-    def _projected_invoice_month(projected_date, acct_name):
-        """Compute invoice_month for a projected installment date."""
-        acct = _cc_accounts.get(acct_name)
-        closing_day = (acct.closing_day if acct and acct.closing_day else 30)
-        due_day = acct.due_day if acct else None
-        due_offset = 0 if (due_day and closing_day and due_day > closing_day) else 1
-
-        if projected_date.day <= closing_day:
-            cycle = date(projected_date.year, projected_date.month, 1)
-        else:
-            cycle = date(projected_date.year, projected_date.month, 1) + _rdelta(months=1)
-        payment = cycle + _rdelta(months=due_offset)
-        return payment.strftime('%Y-%m')
-
-    # Batch fetch all lookback months' installment transactions.
-    # Always use invoice_month (matches _compute_installment_schedule).
-    lookback_months_list = [_month_str_add(month_str, -i) for i in range(1, 13)]
-    _lb_invoice_txns = list(Transaction.objects.filter(
-        invoice_month__in=lookback_months_list,
-        is_installment=True,
-        amount__lt=0,
-        profile=profile,
-    ).select_related('account', 'category', 'subcategory'))
-    _lb_by_invoice = {}
-    for txn in _lb_invoice_txns:
-        _lb_by_invoice.setdefault(txn.invoice_month, []).append(txn)
-
-    _lb_months_with_invoice = set(_lb_by_invoice.keys())
-    _lb_months_needing_fallback = set(lookback_months_list) - _lb_months_with_invoice
-    _lb_by_fallback = {}
-    if _lb_months_needing_fallback:
-        _lb_fallback_txns = list(Transaction.objects.filter(
-            month_str__in=_lb_months_needing_fallback,
-            invoice_month='',
-            is_installment=True,
-            amount__lt=0,
-            profile=profile,
-        ).select_related('account', 'category', 'subcategory'))
-        for txn in _lb_fallback_txns:
-            _lb_by_fallback.setdefault(txn.month_str, []).append(txn)
-
-    for lookback in range(1, 13):
-        source_month = lookback_months_list[lookback - 1]
-        inst_txns = _lb_by_invoice.get(source_month) or _lb_by_fallback.get(source_month) or []
-        if not inst_txns:
-            continue
-
-        # Step 1: Group by purchase, keep only the lowest position per group
-        purchase_groups = {}  # key -> (current_pos, total, txn)
-        for txn in inst_txns:
-            info = txn.installment_info or ''
-            m_match = re.match(r'(\d+)/(\d+)', info)
-            if not m_match:
-                dm = re.search(r'(\d{1,2})/(\d{1,2})', txn.description)
-                if dm:
-                    m_match = dm
-            if not m_match:
-                continue
-
-            current = int(m_match.group(1))
-            total_inst = int(m_match.group(2))
-            base_desc = _extract_base_desc(txn.description)
-            acct = txn.account.name if txn.account else ''
-            amt = round(float(abs(txn.amount)), 2)
-            amt_group = round(float(abs(txn.amount)), 0)
-
-            group_key = (base_desc, acct, amt_group, total_inst)
-
-            if group_key not in purchase_groups or current < purchase_groups[group_key][0]:
-                purchase_groups[group_key] = (current, total_inst, txn, amt)
-
-        # Step 2: Project each purchase's lowest position to the target month
-        for group_key, (current, total_inst, txn, amt) in purchase_groups.items():
-            base_desc, acct, amt_group, _ = group_key
-            position = current + lookback
-
-            if position > total_inst:
-                continue  # This purchase is fully paid off by target month
-
-            # Step 3: Deduplicate across source months
-            purchase_id = (base_desc, acct, amt_group, total_inst)
-            if purchase_id in seen:
-                continue  # Already projected from a more recent source month
-            seen.add(purchase_id)
-
-            parcela_str = f'{position}/{total_inst}'
-
-            # Project the date into the target month
-            target_dt = _parse_month(month_str)
-            try:
-                projected_date = txn.date.replace(year=target_dt.year, month=target_dt.month)
-            except ValueError:
-                last_day = _cal.monthrange(target_dt.year, target_dt.month)[1]
-                projected_date = txn.date.replace(year=target_dt.year, month=target_dt.month, day=last_day)
-
-            # Use original description for display (base_desc is lowered for dedup)
-            display_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', txn.description).strip()
-            projected_desc = f'{display_desc} {parcela_str}'
-
-            items.append({
-                'id': str(txn.id),
-                'date': projected_date.strftime('%Y-%m-%d'),
-                'description': projected_desc,
-                'amount': amt,
-                'account': acct,
-                'category': txn.category.name if txn.category else 'Não categorizado',
-                'category_id': str(txn.category.id) if txn.category else None,
-                'subcategory': txn.subcategory.name if txn.subcategory else '',
-                'subcategory_id': str(txn.subcategory.id) if txn.subcategory else None,
-                'parcela': parcela_str,
-                'source_month': source_month,
-            })
-
-    # Sort by account then date
+    # No real data — project from older CC statements via the shared helper.
+    items = _project_installment_complement(month_str, profile=profile)
     items.sort(key=lambda x: (x['account'], x['date']))
     total = sum(i['amount'] for i in items)
     return {
