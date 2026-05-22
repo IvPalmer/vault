@@ -5701,7 +5701,7 @@ def get_subscriptions_control(profile=None):
         (r'\bhostinger\b',              'Hostinger'),
         (r'1 ?password',                 '1Password'),
         (r'lc music',                    'Patreon — LC Music'),
-        (r'patreon',                     'Patreon (outros)'),
+        (r'patreon',                     'Patreon'),
         (r'rocinante',                   'Rocinante'),
         (r'bloopradioshow',              'Bloop Radio Show'),
     ]
@@ -5799,11 +5799,15 @@ def get_subscriptions_control(profile=None):
         last_charge = sorted_items[-1].date
         days_since = (today - last_charge).days
 
-        # Tight thresholds: a sub that should have charged but didn't is
-        # flagged 'expiring' the moment it misses its window (+5d grace).
-        if days_since <= cadence_days + 5:
+        # Status by expected-next-charge date (matches what the user sees).
+        # If the predicted next charge already passed by more than 2 days
+        # without a charge landing, treat as expiring. Cancelled at 2×.
+        expected_next = last_charge + timedelta(days=cadence_days)
+        overdue_days = (today - expected_next).days
+
+        if overdue_days <= 2:
             status = 'active'
-        elif days_since <= cadence_days * 2:
+        elif overdue_days <= cadence_days:
             status = 'expiring'
         else:
             status = 'cancelled'
