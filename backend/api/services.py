@@ -5721,19 +5721,57 @@ def get_subscriptions_control(profile=None):
             return desc or '?'
         return ' '.join(words[:2])
 
-    groups = {}
+    # Group by canonical label, then sub-group by (day-of-month bucket,
+    # amount band) so a merchant with multiple billing patterns (Amazon
+    # Prime on 3 separate days, Apple Services with mixed amounts) is
+    # split into the real underlying subscriptions instead of being
+    # collapsed into one weekly-looking blob.
+    def _dom_bucket(day):
+        # 3 buckets: early/mid/late month
+        if day <= 10: return 'e'
+        if day <= 20: return 'm'
+        return 'l'
+
+    def _amt_band(amount):
+        # Round to nearest R$5 to allow exchange-rate jitter, then group
+        # everything within ±20% of the band representative.
+        a = abs(float(amount))
+        return round(a / 5) * 5
+
+    primary = {}
     for t in txns:
-        key = _merchant_label(t.description)
-        groups.setdefault(key, []).append(t)
+        primary.setdefault(_merchant_label(t.description), []).append(t)
+
+    # Second pass: split each primary group into sub-groups when distinct
+    # (day-bucket, amount-band) clusters exist.
+    groups = {}
+    for label, items in primary.items():
+        if len(items) < 3:
+            # Single-cluster check still applies, no need to split.
+            groups[label] = items
+            continue
+        sub = {}
+        for t in items:
+            sub_key = (_dom_bucket(t.date.day), _amt_band(t.amount))
+            sub.setdefault(sub_key, []).append(t)
+        if len(sub) == 1:
+            groups[label] = items
+        else:
+            # Distinct clusters — emit each with a disambiguating suffix.
+            for (dom, band), sub_items in sub.items():
+                if len(sub_items) < 2:
+                    continue
+                # Suffix: "dia X" using median day, "≈R$Y" using median amount.
+                med_day = int(median([t.date.day for t in sub_items]))
+                med_amt = median([abs(float(t.amount)) for t in sub_items])
+                suffix = f' (dia {med_day:02d}, ~R${med_amt:.0f})'
+                groups[f'{label}{suffix}'] = sub_items
 
     results = []
     total_monthly = 0.0
     MIN_CHARGES = 3
     for key, items in groups.items():
         if len(items) < MIN_CHARGES:
-            # Not enough charges to call it a subscription. One-offs and
-            # annuals on their first cycle get filtered out — they'll appear
-            # naturally on the second charge.
             continue
 
         sorted_items = sorted(items, key=lambda x: x.date)
