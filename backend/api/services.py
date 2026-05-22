@@ -5658,13 +5658,25 @@ def get_subscriptions_control(profile=None):
         category__name__in=['Assinaturas', 'Musica'],
     ).select_related('category', 'subcategory'))
 
-    # Group key: (first_word_lowercased)
-    # Amount band intentionally ignored at first — we surface the range to the user
-    # so price changes (e.g. Patreon downgrade) are visible instead of split.
+    # Group key: first two meaningful words.
+    # Single-word (Adobe, Netflix) → use the one word.
+    # Two-word brands (Apple One, Apple Music) → keep distinct.
+    # Amount range is surfaced to the user so price changes stay visible
+    # (e.g. Patreon downgrade R$329 → R$133).
     import re as _re
     def _merchant_key(desc):
         cleaned = _re.sub(r'^[^A-Za-z]+', '', desc or '')
-        first = cleaned.split(' ')[0].lower()
+        words = [w.lower() for w in cleaned.split() if w]
+        if not words:
+            return (desc or '').lower()[:12]
+        # Skip noise prefixes like 'paypal *', 'paddle.net*', 'ebn *' when present.
+        if words[0] in {'paypal', 'paddle.net*', 'ebn', 'pb*rocinantetres', 'asa*oinc', 'apl*itunes'} and len(words) > 1:
+            words = words[1:]
+        first = words[0]
+        if len(words) >= 2 and len(first) <= 6:
+            # Combine when first word is short/generic to disambiguate
+            # (Apple One vs Apple Music, etc.)
+            return f'{first} {words[1]}'
         return first if len(first) >= 4 else (desc or '').lower()[:12]
 
     groups = {}
