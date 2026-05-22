@@ -5631,19 +5631,19 @@ def get_subscriptions_control(profile=None):
     """
     Detect active subscriptions from the last 9 months of transactions.
 
-    Strict mode (avoid false positives like Bandcamp one-off purchases):
-    - Source: Assinaturas + Musica (Patreon/Rocinante recurring) categories ONLY.
-    - Exclude subcategories that hold one-off purchases not subscriptions:
-        Musica > Discos (album buys), Musica > Digital (Bandcamp).
+    Strict mode (respect the user's own curation):
+    - Source: Assinaturas category ONLY. The user created that category
+      deliberately for subscriptions — anything tagged elsewhere (Musica,
+      Compras Gerais, etc.) is intentionally not a subscription.
     - Require >= 3 charges in the 9-month window to qualify as recurring.
       A single charge is never enough — annuals show on the second cycle.
     - Normalize merchant key against a curated map of known services to
       collapse variants (Netflix*, Amazon Prime*, Adobe variants, etc.).
     - Detect cadence from median gap between charges:
         weekly (<14d), monthly (14-45d), quarterly (45-120d), annual (120-400d).
-    - Status:
-        active   — last charge within 1.5 × cadence_days from today
-        expiring — last charge within 2.5 × cadence (probable cancellation)
+    - Status (tight — a missed billing cycle flags immediately):
+        active   — last charge within 1.0 × cadence_days + 5d grace
+        expiring — within 2.0 × cadence (likely cancelled)
         cancelled — older than that
 
     Returns dict with subscriptions[], totals, breakdown.
@@ -5654,15 +5654,12 @@ def get_subscriptions_control(profile=None):
     today = date.today()
     cutoff = today - timedelta(days=270)
 
-    # Subcategories that hold one-off purchases, not subscriptions.
-    EXCLUDE_SUBCATS = {'Discos', 'Digital', 'Gravadoras'}
-
     txns = list(Transaction.objects.filter(
         profile=profile, amount__lt=0,
         is_internal_transfer=False,
         date__gte=cutoff,
-        category__name__in=['Assinaturas', 'Musica'],
-    ).exclude(subcategory__name__in=EXCLUDE_SUBCATS).select_related('category', 'subcategory'))
+        category__name='Assinaturas',
+    ).select_related('category', 'subcategory'))
 
     # Canonical merchant patterns. Each (regex, label) collapses variants.
     # Order matters — more specific first.
@@ -5802,9 +5799,11 @@ def get_subscriptions_control(profile=None):
         last_charge = sorted_items[-1].date
         days_since = (today - last_charge).days
 
-        if days_since <= cadence_days * 1.5:
+        # Tight thresholds: a sub that should have charged but didn't is
+        # flagged 'expiring' the moment it misses its window (+5d grace).
+        if days_since <= cadence_days + 5:
             status = 'active'
-        elif days_since <= cadence_days * 2.5:
+        elif days_since <= cadence_days * 2:
             status = 'expiring'
         else:
             status = 'cancelled'
