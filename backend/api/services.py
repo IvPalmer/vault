@@ -5730,9 +5730,18 @@ def get_subscriptions_control(profile=None):
         if day <= 20: return 'm'
         return 'l'
 
+    # Skip merchants where we can't tell what they actually are — these
+    # produce noisy entries (mixed amounts, irregular cadence) that
+    # confuse the report more than they inform. User decodes them
+    # manually via Apple Pay / billing history.
+    UNIDENTIFIED_PREFIXES = ('Apple Services',)
+
     primary = {}
     for t in txns:
-        primary.setdefault(_merchant_label(t.description), []).append(t)
+        label = _merchant_label(t.description)
+        if label.startswith(UNIDENTIFIED_PREFIXES):
+            continue
+        primary.setdefault(label, []).append(t)
 
     groups = {}
     for label, items in primary.items():
