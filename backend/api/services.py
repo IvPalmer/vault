@@ -5739,18 +5739,25 @@ def get_subscriptions_control(profile=None):
         if len(items) < 3:
             groups[label] = items
             continue
+        # Split by (day-of-month bucket, account). Account splits e.g.
+        # Patreon Visa R$329 from Patreon MC R$18 even when both bill day 1.
         sub = {}
         for t in items:
-            sub.setdefault(_dom_bucket(t.date.day), []).append(t)
-        # Only split if each cluster has at least 3 charges of its own.
+            sub.setdefault((_dom_bucket(t.date.day), t.account_id), []).append(t)
         viable = {k: v for k, v in sub.items() if len(v) >= 3}
         if len(viable) <= 1:
             groups[label] = items
         else:
-            for bucket, sub_items in viable.items():
+            for key, sub_items in viable.items():
                 med_day = int(median([t.date.day for t in sub_items]))
                 med_amt = median([abs(float(t.amount)) for t in sub_items])
-                groups[f'{label} (dia {med_day:02d}, ~R${med_amt:.0f})'] = sub_items
+                acct_name = sub_items[0].account.name if sub_items[0].account else ''
+                acct_short = (acct_name.split()[0] if acct_name else '').lower()
+                suffix = f' (dia {med_day:02d}'
+                if acct_short:
+                    suffix += f' {acct_short}'
+                suffix += f', ~R${med_amt:.0f})'
+                groups[f'{label}{suffix}'] = sub_items
 
     results = []
     total_monthly = 0.0
@@ -5762,7 +5769,15 @@ def get_subscriptions_control(profile=None):
         sorted_items = sorted(items, key=lambda x: x.date)
         dates = [t.date for t in sorted_items]
         gaps = [(dates[i+1] - dates[i]).days for i in range(len(dates) - 1)]
-        med_gap = median(gaps) if gaps else 30
+        # Filter out same-week bursts (likely duplicates or billing retries
+        # that survived dedup) before taking the median. A real weekly sub
+        # has consistent gaps; a monthly sub poisoned by a burst of 6
+        # same-week charges would otherwise look weekly.
+        meaningful_gaps = [g for g in gaps if g >= 5]
+        if len(meaningful_gaps) >= 2:
+            med_gap = median(meaningful_gaps)
+        else:
+            med_gap = median(gaps) if gaps else 30
 
         if med_gap < 14:
             cadence, cadence_days = 'weekly', 7
