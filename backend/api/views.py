@@ -617,11 +617,17 @@ class CategoryBulkReassignView(APIView):
             })
 
         elif action == 'recategorize_transaction':
-            # Move a single transaction + all matching descriptions to a new category/subcategory
-            # For installments, also propagate to all sibling positions
+            # Move transactions to a new category/subcategory.
+            # scope='single' (default): only the selected transaction
+            # scope='future': selected + same-description on/after its date
+            # scope='all': all transactions with same description (legacy bulk)
+            # Installment siblings always follow regardless of scope.
             txn_id = request.data.get('transaction_id')
             to_cat_id = request.data.get('to_category_id')
             to_sub_id = request.data.get('to_subcategory_id')
+            scope = request.data.get('scope', 'single')
+            if scope not in ('single', 'future', 'all'):
+                scope = 'single'
 
             if not txn_id or not to_cat_id:
                 return Response({'error': 'transaction_id and to_category_id required'}, status=400)
@@ -630,20 +636,26 @@ class CategoryBulkReassignView(APIView):
             to_cat = Category.objects.get(id=to_cat_id, profile=profile)
             to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile) if to_sub_id else None
 
-            # Normalize description for matching (non-installment transactions).
-            # Filter by same SIGN to avoid mixing purchases with refunds/estornos
-            # that happen to share the same merchant description.
-            from django.db.models.functions import Lower, Trim
-            desc_norm = txn.description.strip().lower()
-            sign_filter = {}
-            if txn.amount > 0:
-                sign_filter = {'amount__gt': 0}
-            elif txn.amount < 0:
-                sign_filter = {'amount__lt': 0}
-            matching = Transaction.objects.filter(profile=profile, **sign_filter).annotate(
-                desc_norm=Trim(Lower('description'))
-            ).filter(desc_norm=desc_norm)
-            count = matching.update(category=to_cat, subcategory=to_sub)
+            if scope == 'single':
+                count = Transaction.objects.filter(profile=profile, id=txn.id).update(
+                    category=to_cat, subcategory=to_sub
+                )
+            else:
+                # Filter by same SIGN to avoid mixing purchases with refunds/estornos
+                # that happen to share the same merchant description.
+                from django.db.models.functions import Lower, Trim
+                desc_norm = txn.description.strip().lower()
+                sign_filter = {}
+                if txn.amount > 0:
+                    sign_filter = {'amount__gt': 0}
+                elif txn.amount < 0:
+                    sign_filter = {'amount__lt': 0}
+                matching = Transaction.objects.filter(profile=profile, **sign_filter).annotate(
+                    desc_norm=Trim(Lower('description'))
+                ).filter(desc_norm=desc_norm)
+                if scope == 'future':
+                    matching = matching.filter(date__gte=txn.date)
+                count = matching.update(category=to_cat, subcategory=to_sub)
 
             # For installments, also update all sibling positions
             sibling_count = 0
@@ -676,27 +688,37 @@ class CategoryBulkReassignView(APIView):
             return Response({'updated': count, 'action': action})
 
         elif action == 'uncategorize_transaction':
-            # Remove category from a transaction + all matching descriptions
-            # (same sign only — purchases vs refunds stay separate).
-            # For installments, also clear all sibling positions.
+            # Remove category. Honors `scope` param: 'single' (default), 'future', 'all'.
+            # Installment siblings always cleared regardless of scope.
             txn_id = request.data.get('transaction_id')
+            scope = request.data.get('scope', 'single')
+            if scope not in ('single', 'future', 'all'):
+                scope = 'single'
             if not txn_id:
                 return Response({'error': 'transaction_id required'}, status=400)
 
             txn = Transaction.objects.get(id=txn_id, profile=profile)
-            desc_norm = txn.description.strip().lower()
-            sign_filter = {}
-            if txn.amount > 0:
-                sign_filter = {'amount__gt': 0}
-            elif txn.amount < 0:
-                sign_filter = {'amount__lt': 0}
 
-            from django.db.models.functions import Lower, Trim
-            matching = Transaction.objects.filter(profile=profile, **sign_filter).annotate(
-                desc_norm=Trim(Lower('description'))
-            ).filter(desc_norm=desc_norm)
+            if scope == 'single':
+                count = Transaction.objects.filter(profile=profile, id=txn.id).update(
+                    category=None, subcategory=None
+                )
+            else:
+                desc_norm = txn.description.strip().lower()
+                sign_filter = {}
+                if txn.amount > 0:
+                    sign_filter = {'amount__gt': 0}
+                elif txn.amount < 0:
+                    sign_filter = {'amount__lt': 0}
 
-            count = matching.update(category=None, subcategory=None)
+                from django.db.models.functions import Lower, Trim
+                matching = Transaction.objects.filter(profile=profile, **sign_filter).annotate(
+                    desc_norm=Trim(Lower('description'))
+                ).filter(desc_norm=desc_norm)
+                if scope == 'future':
+                    matching = matching.filter(date__gte=txn.date)
+
+                count = matching.update(category=None, subcategory=None)
 
             # For installments, also clear siblings
             if txn.is_installment:

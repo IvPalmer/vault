@@ -16,6 +16,53 @@ function useDebounce(value, delay) {
   return debounced
 }
 
+const SCOPE_STORAGE_KEY = 'vault.categorizeScope'
+
+function useCategorizeScope() {
+  const [scope, setScope] = useState(() => {
+    try {
+      const v = localStorage.getItem(SCOPE_STORAGE_KEY)
+      return v === 'future' || v === 'all' ? v : 'single'
+    } catch {
+      return 'single'
+    }
+  })
+  const update = useCallback((v) => {
+    setScope(v)
+    try { localStorage.setItem(SCOPE_STORAGE_KEY, v) } catch { /* ignore */ }
+  }, [])
+  return [scope, update]
+}
+
+const SCOPE_HINTS = {
+  single: 'Apenas as transações selecionadas',
+  future: 'Selecionadas + futuras com mesma descrição',
+  all: 'Todas com mesma descrição (passadas + futuras)',
+}
+
+function ScopePicker({ scope, onChange }) {
+  return (
+    <div className={styles.scopePicker} role="radiogroup" aria-label="Escopo da categorização">
+      {[
+        { value: 'single', label: 'Só esta' },
+        { value: 'future', label: 'Futuras' },
+        { value: 'all', label: 'Todas' },
+      ].map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          role="radio"
+          aria-checked={scope === opt.value}
+          className={`${styles.scopeBtn} ${scope === opt.value ? styles.scopeBtnActive : ''}`}
+          onClick={() => onChange(opt.value)}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function CategoryManager() {
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
@@ -36,6 +83,7 @@ function CategoryManager() {
   const [newSubName, setNewSubName] = useState('')
   const [selectedTxns, setSelectedTxns] = useState(new Set()) // txn ids
   const [txnMoveTarget, setTxnMoveTarget] = useState('')
+  const [scope, setScope] = useCategorizeScope()
 
   const { data: treeData, isLoading } = useQuery({
     queryKey: ['category-tree'],
@@ -262,7 +310,8 @@ function CategoryManager() {
     }
   }, [selection, moveTarget, showToast, invalidate])
 
-  // Recategorize individual transaction(s) — auto-matches all same descriptions
+  // Recategorize individual transaction(s). Scope controls fan-out:
+  // 'single' = only selected rows, 'future' = + same-desc on/after date, 'all' = all same-desc.
   const handleRecategorizeTxns = useCallback(async () => {
     if (selectedTxns.size === 0 || !txnMoveTarget) return
     setSaving(true)
@@ -275,6 +324,7 @@ function CategoryManager() {
         const res = await api.post('/categories/bulk/', {
           action: isUncategorize ? 'uncategorize_transaction' : 'recategorize_transaction',
           transaction_id: txnId,
+          scope,
           ...(isUncategorize ? {} : { to_category_id: catId, to_subcategory_id: subId || undefined }),
         })
         totalUpdated += res.updated || 0
@@ -291,7 +341,7 @@ function CategoryManager() {
     } finally {
       setSaving(false)
     }
-  }, [selectedTxns, txnMoveTarget, showToast, invalidate])
+  }, [selectedTxns, txnMoveTarget, scope, showToast, invalidate])
 
   // Create category
   const handleCreateCategory = useCallback(async () => {
@@ -850,6 +900,7 @@ function CategoryManager() {
                       <option key={t.value} value={t.value}>{t.label}</option>
                     ))}
                   </select>
+                  <ScopePicker scope={scope} onChange={setScope} />
                   <button
                     className={styles.moveConfirm}
                     onClick={handleRecategorizeTxns}
@@ -858,7 +909,7 @@ function CategoryManager() {
                     {saving ? '...' : 'Aplicar'}
                   </button>
                   <span className={styles.txnRecatHint}>
-                    Todas as transacoes com mesma descricao serao atualizadas
+                    {SCOPE_HINTS[scope]} · parcelas seguem juntas
                   </span>
                 </div>
               )}
@@ -934,6 +985,7 @@ function TransactionsTable({ categories }) {
   const [moveTarget, setMoveTarget] = useState('')
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState(null)
+  const [scope, setScope] = useCategorizeScope()
   const pageSize = 50
 
   // Reset page when filters change
@@ -1014,6 +1066,7 @@ function TransactionsTable({ categories }) {
         const res = await api.post('/categories/bulk/', {
           action: isUncategorize ? 'uncategorize_transaction' : 'recategorize_transaction',
           transaction_id: txnId,
+          scope,
           ...(isUncategorize ? {} : { to_category_id: catId, to_subcategory_id: subId || undefined }),
         })
         totalUpdated += res.updated || 0
@@ -1027,7 +1080,7 @@ function TransactionsTable({ categories }) {
     } finally {
       setSaving(false)
     }
-  }, [selectedTxns, moveTarget, showToast, invalidate])
+  }, [selectedTxns, moveTarget, scope, showToast, invalidate])
 
   const selectAll = useCallback(() => {
     if (selectedTxns.size === txns.length) setSelectedTxns(new Set())
@@ -1125,6 +1178,7 @@ function TransactionsTable({ categories }) {
               <option key={t.value} value={t.value}>{t.label}</option>
             ))}
           </select>
+          <ScopePicker scope={scope} onChange={setScope} />
           <button
             className={styles.moveConfirm}
             onClick={handleRecategorize}
@@ -1132,7 +1186,7 @@ function TransactionsTable({ categories }) {
           >
             {saving ? '...' : 'Aplicar'}
           </button>
-          <span className={styles.txnRecatHint}>Parcelas e descricoes iguais atualizadas automaticamente</span>
+          <span className={styles.txnRecatHint}>{SCOPE_HINTS[scope]} · parcelas seguem juntas</span>
         </div>
       )}
 
