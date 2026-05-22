@@ -1540,6 +1540,17 @@ class SpendingInsightsView(APIView):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+class SubscriptionsControlView(APIView):
+    """GET /api/analytics/subscriptions/"""
+    def get(self, request):
+        try:
+            from .services import get_subscriptions_control
+            return Response(get_subscriptions_control(profile=request.profile))
+        except Exception as e:
+            logger.exception('SubscriptionsControlView error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
 class OrcamentoView(APIView):
     """GET /api/analytics/orcamento/?month_str=2025-12"""
     def get(self, request):

@@ -5624,6 +5624,170 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
 # ---------------------------------------------------------------------------
 # Spending Insights (BUDG-03)
 # ---------------------------------------------------------------------------
+# Subscriptions Control — auto-detect recurring charges from transactions
+# ---------------------------------------------------------------------------
+
+def get_subscriptions_control(profile=None):
+    """
+    Detect active/inactive subscriptions from the last 9 months of transactions.
+
+    Approach:
+    - Source: Assinaturas + Musica categories (curated subscription buckets).
+    - Group by merchant key: normalized first word of description + amount band.
+    - Detect cadence from median gap between charges:
+        weekly (<14d), monthly (14-45d), quarterly (45-120d), annual (120-400d).
+    - Status:
+        active   — last charge within 1.5 × cadence_days from today
+        expiring — last charge within 2.5 × cadence (probable cancellation)
+        cancelled — older than that
+    - monthly_equivalent = avg_amount × (30 / cadence_days)
+
+    Returns dict with categories[], totals, flags, last_run_at.
+    """
+    from datetime import date, timedelta
+    from statistics import median
+
+    today = date.today()
+    cutoff = today - timedelta(days=270)  # 9 months back
+
+    # Source: subscriptions live in Assinaturas + Musica (Patreon, Rocinante, etc.)
+    txns = list(Transaction.objects.filter(
+        profile=profile, amount__lt=0,
+        is_internal_transfer=False,
+        date__gte=cutoff,
+        category__name__in=['Assinaturas', 'Musica'],
+    ).select_related('category', 'subcategory'))
+
+    # Group key: (first_word_lowercased)
+    # Amount band intentionally ignored at first — we surface the range to the user
+    # so price changes (e.g. Patreon downgrade) are visible instead of split.
+    import re as _re
+    def _merchant_key(desc):
+        cleaned = _re.sub(r'^[^A-Za-z]+', '', desc or '')
+        first = cleaned.split(' ')[0].lower()
+        return first if len(first) >= 4 else (desc or '').lower()[:12]
+
+    groups = {}
+    for t in txns:
+        key = _merchant_key(t.description)
+        groups.setdefault(key, []).append(t)
+
+    results = []
+    total_monthly = 0.0
+    for key, items in groups.items():
+        if len(items) < 2:
+            # Single charges are either annuals not yet renewed OR one-offs.
+            # Show only if last 60 days (probable annual that just hit).
+            t = items[0]
+            if (today - t.date).days <= 60:
+                amt = float(abs(t.amount))
+                results.append({
+                    'merchant': t.description,
+                    'merchant_key': key,
+                    'category': t.category.name if t.category else 'Não categorizado',
+                    'subcategory': t.subcategory.name if t.subcategory else '',
+                    'cadence': 'annual',
+                    'cadence_days': 365,
+                    'avg_amount': round(amt, 2),
+                    'min_amount': round(amt, 2),
+                    'max_amount': round(amt, 2),
+                    'monthly_equivalent': round(amt / 12, 2),
+                    'last_charge': t.date.strftime('%Y-%m-%d'),
+                    'next_predicted': (t.date + timedelta(days=365)).strftime('%Y-%m-%d'),
+                    'charge_count_9mo': 1,
+                    'status': 'active',
+                    'flags': ['single_charge_assumed_annual'],
+                })
+                total_monthly += amt / 12
+            continue
+
+        sorted_items = sorted(items, key=lambda x: x.date)
+        dates = [t.date for t in sorted_items]
+        gaps = [(dates[i+1] - dates[i]).days for i in range(len(dates) - 1)]
+        med_gap = median(gaps) if gaps else 30
+
+        if med_gap < 14:
+            cadence, cadence_days = 'weekly', 7
+        elif med_gap < 45:
+            cadence, cadence_days = 'monthly', 30
+        elif med_gap < 120:
+            cadence, cadence_days = 'quarterly', 90
+        else:
+            cadence, cadence_days = 'annual', 365
+
+        amounts = [float(abs(t.amount)) for t in sorted_items]
+        avg = sum(amounts) / len(amounts)
+        last_charge = sorted_items[-1].date
+        days_since = (today - last_charge).days
+
+        if days_since <= cadence_days * 1.5:
+            status = 'active'
+        elif days_since <= cadence_days * 2.5:
+            status = 'expiring'
+        else:
+            status = 'cancelled'
+
+        flags = []
+        if max(amounts) - min(amounts) > avg * 0.3:
+            flags.append('amount_varies')
+        if status == 'active' and len(set(amounts)) > 1 and amounts[-1] < amounts[0] * 0.7:
+            flags.append('price_dropped')
+
+        # Cadence months for monthly_equivalent
+        months_per_charge = cadence_days / 30.0
+        monthly_eq = avg / months_per_charge
+
+        latest = sorted_items[-1]
+        results.append({
+            'merchant': latest.description,
+            'merchant_key': key,
+            'category': latest.category.name if latest.category else 'Não categorizado',
+            'subcategory': latest.subcategory.name if latest.subcategory else '',
+            'cadence': cadence,
+            'cadence_days': cadence_days,
+            'avg_amount': round(avg, 2),
+            'min_amount': round(min(amounts), 2),
+            'max_amount': round(max(amounts), 2),
+            'monthly_equivalent': round(monthly_eq, 2),
+            'last_charge': last_charge.strftime('%Y-%m-%d'),
+            'next_predicted': (last_charge + timedelta(days=cadence_days)).strftime('%Y-%m-%d'),
+            'charge_count_9mo': len(sorted_items),
+            'status': status,
+            'flags': flags,
+        })
+        if status == 'active':
+            total_monthly += monthly_eq
+
+    # Sort: active first by cost desc, then expiring, then cancelled
+    status_order = {'active': 0, 'expiring': 1, 'cancelled': 2}
+    results.sort(key=lambda r: (status_order.get(r['status'], 3), -r['monthly_equivalent']))
+
+    # Aggregate by subcategory for stacked view
+    by_sub = {}
+    for r in results:
+        if r['status'] != 'active':
+            continue
+        key = r['subcategory'] or r['category']
+        by_sub.setdefault(key, {'name': key, 'monthly': 0.0, 'count': 0})
+        by_sub[key]['monthly'] += r['monthly_equivalent']
+        by_sub[key]['count'] += 1
+    sub_breakdown = sorted(
+        ({'name': v['name'], 'monthly': round(v['monthly'], 2), 'count': v['count']} for v in by_sub.values()),
+        key=lambda x: -x['monthly'],
+    )
+
+    return {
+        'subscriptions': results,
+        'total_monthly': round(total_monthly, 2),
+        'total_annual': round(total_monthly * 12, 2),
+        'by_subcategory': sub_breakdown,
+        'active_count': sum(1 for r in results if r['status'] == 'active'),
+        'expiring_count': sum(1 for r in results if r['status'] == 'expiring'),
+        'cancelled_count': sum(1 for r in results if r['status'] == 'cancelled'),
+    }
+
+
+# ---------------------------------------------------------------------------
 
 def get_spending_insights(profile=None):
     """

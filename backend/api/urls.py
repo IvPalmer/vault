@@ -13,7 +13,7 @@ from .views import (
     ImportStatementsView,
     RecurringInitializeView, RecurringExpectedView, RecurringUpdateView,
     RecurringCustomView, RecurringSkipView, BalanceSaveView,
-    ProjectionView, OrcamentoView, AnalyticsTrendsView, SpendingInsightsView,
+    ProjectionView, OrcamentoView, AnalyticsTrendsView, SpendingInsightsView, SubscriptionsControlView,
     SmartCategorizeView, InstallmentDetailsView,
     RecurringTemplatesView, ReapplyTemplateView,
     CheckingTransactionsView,
@@ -113,6 +113,7 @@ urlpatterns = [
     path('analytics/trends/', AnalyticsTrendsView.as_view(), name='analytics-trends'),
     # Spending insights (BUDG-03)
     path('analytics/insights/', SpendingInsightsView.as_view(), name='spending-insights'),
+    path('analytics/subscriptions/', SubscriptionsControlView.as_view(), name='subscriptions-control'),
     # Phase B: projection + orçamento
     path('analytics/projection/', ProjectionView.as_view(), name='analytics-projection'),
     path('analytics/orcamento/', OrcamentoView.as_view(), name='analytics-orcamento'),

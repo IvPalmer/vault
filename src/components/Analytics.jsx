@@ -15,6 +15,7 @@ import {
   MonthlyCategoryChart,
   CategoryDescBreakdownChart,
   SpendingInsights,
+  SubscriptionsControlCard,
 } from './charts'
 import Skeleton from './Skeleton'
 import styles from './Analytics.module.css'
@@ -173,6 +174,12 @@ function Analytics() {
           <div className={`${styles.card} ${styles.spanFull}`}>
             <h3 className={styles.cardTitle}>MAIORES GASTOS DO PERÍODO</h3>
             <TopExpensesTable data={data.top_expenses} />
+          </div>
+
+          {/* Row 8: Subscriptions Control — full width */}
+          <div className={`${styles.card} ${styles.spanFull}`}>
+            <h3 className={styles.cardTitle}>CONTROLE DE ASSINATURAS</h3>
+            <SubscriptionsControlCard />
           </div>
         </div>
       )}
