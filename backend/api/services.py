@@ -5703,7 +5703,9 @@ def get_subscriptions_control(profile=None):
         (r'remarkable',                  'reMarkable'),
         (r'locaweb',                     'Locaweb'),
         (r'hostinger',                   'Hostinger'),
+        (r'name-?cheap',                 'Namecheap'),
         (r'1 ?password',                 '1Password'),
+        (r'applecombill',                'Apple Services'),
         (r'lc music',                    'Patreon — LC Music'),
         (r'patreon',                     'Patreon'),
         (r'rocinante',                   'Rocinante'),
@@ -5772,12 +5774,19 @@ def get_subscriptions_control(profile=None):
     results = []
     total_monthly = 0.0
     MIN_CHARGES = 3
+    # Whitelist of canonical labels that are billed annually. Only these
+    # merchants get the "single-charge → annual" promotion; anything else
+    # with <3 charges is treated as either a trial that ended or a
+    # recently cancelled sub and is dropped.
+    KNOWN_ANNUALS = {
+        'iTunes Match', 'Dr. Kegel', 'Pushscroll', 'Waterllama',
+        '1Password', 'Apple Developer', 'Hostinger', 'Namecheap',
+        'OpenRouter',
+    }
+
     for key, items in groups.items():
         sorted_items = sorted(items, key=lambda x: x.date)
 
-        # Annual detection: groups with 1-2 charges in the 9-month window
-        # are likely annual subs. Inject them as annuals so iTunes Match,
-        # Dr. Kegel, Pushscroll, Waterllama, 1Password, etc. show up.
         if len(items) < MIN_CHARGES:
             if len(items) == 0:
                 continue
@@ -5785,13 +5794,15 @@ def get_subscriptions_control(profile=None):
             amt = float(abs(last.amount))
             if len(items) == 2:
                 gap = (sorted_items[1].date - sorted_items[0].date).days
-                # Two charges only counts as a sub if the gap is roughly
+                # Two charges only count as a sub if the gap is roughly
                 # annual; anything else is two unrelated buys.
                 if not (200 <= gap <= 400):
                     continue
             else:
-                # Single charge — assume annual only if the user explicitly
-                # categorized it as Assinaturas (already the case here).
+                # Single charge — only promote to annual when we recognize
+                # the merchant as a known annual brand.
+                if key not in KNOWN_ANNUALS:
+                    continue
                 gap = 365
             cadence_days = 365
             cadence = 'annual'
