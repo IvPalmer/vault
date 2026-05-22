@@ -5131,11 +5131,20 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     month_list = [m for m in all_months if eff_start <= m <= eff_end]
 
     # -- 2. Base querysets ---------------------------------------------------
+    # Defense in depth: exclude Transferencias (account movements like CC bill
+    # payments). is_internal_transfer should catch these, but legacy ingest
+    # occasionally missed the flag — the category filter is a safety net so
+    # leaked rows don't skew the expense trend. Renda / Investimentos are kept
+    # because income and investment trends rely on them.
+    _transfer_cat_ids = list(
+        Category.objects.filter(profile=profile, name='Transferencias')
+        .values_list('id', flat=True)
+    )
     base_qs = Transaction.objects.filter(
         month_str__in=month_list,
         is_internal_transfer=False,
         profile=profile,
-    )
+    ).exclude(category_id__in=_transfer_cat_ids)
     if category_ids:
         base_qs = base_qs.filter(category_id__in=category_ids)
 
