@@ -3842,10 +3842,14 @@ def get_orcamento(month_str, profile=None):
     ).exclude(name__in=EXCLUDE_NAMES).order_by('name'))
     cat_ids = [c.id for c in all_cats]
 
-    # ── 3. Consumption query: any negative txn in an active category ─
+    # ── 3. Consumption query: ALL txns in an active category (signed) ─
+    # We sum signed amounts so positive refunds/estornos net against negative
+    # purchases within the same (category, subcategory). Display clamps the
+    # result to max(0, -net) — categories that net positive (more refunds than
+    # spend) collapse to 0 and drop out, which is the desired behavior.
     def _consumption_qs(**extra):
         return Transaction.objects.filter(
-            amount__lt=0, is_internal_transfer=False,
+            is_internal_transfer=False,
             category_id__in=cat_ids, profile=profile, **extra,
         )
 
@@ -3878,10 +3882,12 @@ def get_orcamento(month_str, profile=None):
         all_subcategories.setdefault(sub.category_id, []).append(sub)
 
     # ── 7. 6-month avg per category (months-with-spend basis) ────────
+    # lookback_spending is signed; clamp to positive net spend (refunds collapse).
     avg_by_cat = {}
     total_avg = 0.0
     for cat in all_cats:
-        raw = float(abs(lookback_spending.get(cat.id, Decimal('0.00'))))
+        net = float(lookback_spending.get(cat.id, Decimal('0.00')))
+        raw = max(0.0, -net)
         mc = lookback_month_counts.get(cat.id, 0)
         avg = raw / max(mc, 1)
         avg_by_cat[cat.id] = avg
@@ -3902,12 +3908,15 @@ def get_orcamento(month_str, profile=None):
     total_current_consumption = 0.0
 
     for cat in all_cats:
-        has_current = cat.id in current_spending
+        # Net per category: sum(sub nets) + cat-only net, naturally produced by SQL.
+        # Clamp to positive spend; a category whose refunds exceed purchases drops out.
+        cat_net = float(current_spending.get(cat.id, Decimal('0.00')))
+        spent = max(0.0, -cat_net)
+        has_current = spent > 0
         has_history = avg_by_cat.get(cat.id, 0) > 0
         if not has_current and not has_history:
             continue
 
-        spent = float(abs(current_spending.get(cat.id, Decimal('0.00'))))
         avg_6m = avg_by_cat.get(cat.id, 0.0)
 
         # Reference: manual override > 6m average. Used for status + delta.
@@ -3935,11 +3944,14 @@ def get_orcamento(month_str, profile=None):
         if has_current:
             total_current_consumption += spent
 
-        # Subcategory breakdown (only subs with spending this month)
+        # Subcategory breakdown: net per sub (signed), clamped for display.
+        # Refunds inside a sub cancel its purchases; subs that net to zero or
+        # positive (more refunds than spend) drop out of the breakdown.
         cat_sub_spending = sub_spending.get(cat.id, {})
         subcategories_data = []
         for sub in all_subcategories.get(cat.id, []):
-            sub_spent = float(abs(cat_sub_spending.get(sub.id, Decimal('0.00'))))
+            sub_net = float(cat_sub_spending.get(sub.id, Decimal('0.00')))
+            sub_spent = max(0.0, -sub_net)
             if sub_spent > 0:
                 subcategories_data.append({
                     'id': str(sub.id),
@@ -3947,7 +3959,10 @@ def get_orcamento(month_str, profile=None):
                     'spent': round(sub_spent, 2),
                 })
         subcategories_data.sort(key=lambda s: -s['spent'])
-        uncategorized_spent = float(abs(cat_sub_spending.get(None, Decimal('0.00'))))
+        # Cat-only net (no subcategory). When this is positive (pure refund on
+        # the category), it already deducted from `spent` above — hide the row.
+        uncat_net = float(cat_sub_spending.get(None, Decimal('0.00')))
+        uncategorized_spent = max(0.0, -uncat_net)
 
         categories.append({
             'id': str(cat.id),
