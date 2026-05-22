@@ -5664,41 +5664,45 @@ def get_subscriptions_control(profile=None):
     # Canonical merchant patterns. Each (regex, label) collapses variants.
     # Order matters — more specific first.
     import re as _re
+    # Brand-name substring patterns. Word boundaries dropped — Pluggy
+    # sometimes returns concatenated suffixes like LINKEDINSAOPAULOBR
+    # which would not match a \b-bounded pattern. Each pattern is a
+    # unique brand string, so plain substring is safe.
     CANONICAL = [
-        (r'\bclaude\.?ai\b',            'Claude.ai'),
-        (r'\bchatgpt\b|\bopenai\b',     'ChatGPT'),
-        (r'\bsynthetic\b',              'Synthetic.new'),
-        (r'\bopenrouter\b',             'OpenRouter'),
+        (r'claude\.?ai',                 'Claude.ai'),
+        (r'chatgpt|openai',              'ChatGPT'),
+        (r'synthetic',                   'Synthetic.new'),
+        (r'openrouter',                  'OpenRouter'),
         (r'apple one premier',           'Apple One Premier'),
         (r'apple developer',             'Apple Developer'),
         (r'apple music',                 'Apple Music'),
         (r'apple tv',                    'Apple TV+'),
         (r'apple arcade',                'Apple Arcade'),
-        (r'\bicloud',                    'iCloud+'),
-        (r'\bitunes match\b',           'iTunes Match'),
-        (r'\bterabox\b',                'TeraBox'),
-        (r'\bmyfitness',                'MyFitnessPal'),
-        (r'\bheadspace\b',              'Headspace'),
-        (r'\bwaterllama\b',             'Waterllama'),
-        (r'\bpushscroll\b',             'Pushscroll'),
-        (r'dr\.? kegel|\bkegel\b',      'Dr. Kegel'),
+        (r'icloud',                      'iCloud+'),
+        (r'itunes match',                'iTunes Match'),
+        (r'terabox',                     'TeraBox'),
+        (r'myfitness',                   'MyFitnessPal'),
+        (r'headspace',                   'Headspace'),
+        (r'waterllama',                  'Waterllama'),
+        (r'pushscroll',                  'Pushscroll'),
+        (r'dr\.? kegel|kegel',           'Dr. Kegel'),
         (r'disney',                      'Disney+'),
-        (r'\bnetflix',                  'Netflix'),
-        (r'\bhbo ?max\b',               'HBO Max'),
+        (r'netflix',                     'Netflix'),
+        (r'hbo ?max',                    'HBO Max'),
         (r'youtube premium',             'YouTube Premium'),
         (r'amazon ?prime',               'Amazon Prime'),
-        (r'\bspotify\b',                'Spotify'),
+        (r'spotify',                     'Spotify'),
         (r'soundcloud',                  'SoundCloud'),
-        (r'^adobe\b|\*adobe',            'Adobe'),
-        (r'\bsetapp\b',                 'Setapp'),
-        (r'\bsplice\b',                 'Splice'),
-        (r'\bfigma\b',                  'Figma'),
-        (r'\bgithub\b',                 'GitHub'),
-        (r'\benhancv\b',                'Enhancv'),
-        (r'\blinkedin\b',               'LinkedIn'),
-        (r'\bremarkable\b',             'reMarkable'),
-        (r'\blocaweb\b',                'Locaweb'),
-        (r'\bhostinger\b',              'Hostinger'),
+        (r'^adobe|\*adobe',              'Adobe'),
+        (r'setapp',                      'Setapp'),
+        (r'splice',                      'Splice'),
+        (r'figma',                       'Figma'),
+        (r'github',                      'GitHub'),
+        (r'enhancv',                     'Enhancv'),
+        (r'linkedin',                    'LinkedIn'),
+        (r'remarkable',                  'reMarkable'),
+        (r'locaweb',                     'Locaweb'),
+        (r'hostinger',                   'Hostinger'),
         (r'1 ?password',                 '1Password'),
         (r'lc music',                    'Patreon — LC Music'),
         (r'patreon',                     'Patreon'),
@@ -5769,10 +5773,60 @@ def get_subscriptions_control(profile=None):
     total_monthly = 0.0
     MIN_CHARGES = 3
     for key, items in groups.items():
+        sorted_items = sorted(items, key=lambda x: x.date)
+
+        # Annual detection: groups with 1-2 charges in the 9-month window
+        # are likely annual subs. Inject them as annuals so iTunes Match,
+        # Dr. Kegel, Pushscroll, Waterllama, 1Password, etc. show up.
         if len(items) < MIN_CHARGES:
+            if len(items) == 0:
+                continue
+            last = sorted_items[-1]
+            amt = float(abs(last.amount))
+            if len(items) == 2:
+                gap = (sorted_items[1].date - sorted_items[0].date).days
+                # Two charges only counts as a sub if the gap is roughly
+                # annual; anything else is two unrelated buys.
+                if not (200 <= gap <= 400):
+                    continue
+            else:
+                # Single charge — assume annual only if the user explicitly
+                # categorized it as Assinaturas (already the case here).
+                gap = 365
+            cadence_days = 365
+            cadence = 'annual'
+            expected_next = last.date + timedelta(days=cadence_days)
+            overdue = (today - expected_next).days
+            if overdue <= 1:
+                status = 'active'
+            elif overdue <= cadence_days:
+                status = 'expiring'
+            else:
+                status = 'cancelled'
+            monthly_eq = amt / 12.0
+            results.append({
+                'merchant': key,
+                'merchant_key': key,
+                'raw_description': last.description,
+                'category': last.category.name if last.category else 'Não categorizado',
+                'subcategory': last.subcategory.name if last.subcategory else '',
+                'cadence': cadence,
+                'cadence_days': cadence_days,
+                'avg_amount': round(amt, 2),
+                'min_amount': round(amt, 2),
+                'max_amount': round(amt, 2),
+                'monthly_equivalent': round(monthly_eq, 2),
+                'last_charge': last.date.strftime('%Y-%m-%d'),
+                'next_predicted': expected_next.strftime('%Y-%m-%d'),
+                'charge_count_9mo': len(items),
+                'status': status,
+                'flags': ['annual_inferred'] if len(items) == 1 else [],
+            })
+            if status == 'active':
+                total_monthly += monthly_eq
             continue
 
-        sorted_items = sorted(items, key=lambda x: x.date)
+        # Original sorted_items already set
         dates = [t.date for t in sorted_items]
         gaps = [(dates[i+1] - dates[i]).days for i in range(len(dates) - 1)]
         # Filter out same-week bursts (likely duplicates or billing retries
