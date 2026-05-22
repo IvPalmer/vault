@@ -5721,51 +5721,36 @@ def get_subscriptions_control(profile=None):
             return desc or '?'
         return ' '.join(words[:2])
 
-    # Group by canonical label, then sub-group by (day-of-month bucket,
-    # amount band) so a merchant with multiple billing patterns (Amazon
-    # Prime on 3 separate days, Apple Services with mixed amounts) is
-    # split into the real underlying subscriptions instead of being
-    # collapsed into one weekly-looking blob.
+    # Group by canonical label, then split when a merchant bills on
+    # clearly distinct days of the month (Amazon Prime day 10 / 20 / 24
+    # = 3 separate subs). Amount band intentionally NOT used — exchange
+    # rate jitter would split a single ChatGPT sub into multiple bands.
     def _dom_bucket(day):
-        # 3 buckets: early/mid/late month
         if day <= 10: return 'e'
         if day <= 20: return 'm'
         return 'l'
-
-    def _amt_band(amount):
-        # Round to nearest R$5 to allow exchange-rate jitter, then group
-        # everything within ±20% of the band representative.
-        a = abs(float(amount))
-        return round(a / 5) * 5
 
     primary = {}
     for t in txns:
         primary.setdefault(_merchant_label(t.description), []).append(t)
 
-    # Second pass: split each primary group into sub-groups when distinct
-    # (day-bucket, amount-band) clusters exist.
     groups = {}
     for label, items in primary.items():
         if len(items) < 3:
-            # Single-cluster check still applies, no need to split.
             groups[label] = items
             continue
         sub = {}
         for t in items:
-            sub_key = (_dom_bucket(t.date.day), _amt_band(t.amount))
-            sub.setdefault(sub_key, []).append(t)
-        if len(sub) == 1:
+            sub.setdefault(_dom_bucket(t.date.day), []).append(t)
+        # Only split if each cluster has at least 3 charges of its own.
+        viable = {k: v for k, v in sub.items() if len(v) >= 3}
+        if len(viable) <= 1:
             groups[label] = items
         else:
-            # Distinct clusters — emit each with a disambiguating suffix.
-            for (dom, band), sub_items in sub.items():
-                if len(sub_items) < 2:
-                    continue
-                # Suffix: "dia X" using median day, "≈R$Y" using median amount.
+            for bucket, sub_items in viable.items():
                 med_day = int(median([t.date.day for t in sub_items]))
                 med_amt = median([abs(float(t.amount)) for t in sub_items])
-                suffix = f' (dia {med_day:02d}, ~R${med_amt:.0f})'
-                groups[f'{label}{suffix}'] = sub_items
+                groups[f'{label} (dia {med_day:02d}, ~R${med_amt:.0f})'] = sub_items
 
     results = []
     total_monthly = 0.0
