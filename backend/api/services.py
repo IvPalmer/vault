@@ -5629,88 +5629,111 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
 
 def get_subscriptions_control(profile=None):
     """
-    Detect active/inactive subscriptions from the last 9 months of transactions.
+    Detect active subscriptions from the last 9 months of transactions.
 
-    Approach:
-    - Source: Assinaturas + Musica categories (curated subscription buckets).
-    - Group by merchant key: normalized first word of description + amount band.
+    Strict mode (avoid false positives like Bandcamp one-off purchases):
+    - Source: Assinaturas + Musica (Patreon/Rocinante recurring) categories ONLY.
+    - Exclude subcategories that hold one-off purchases not subscriptions:
+        Musica > Discos (album buys), Musica > Digital (Bandcamp).
+    - Require >= 3 charges in the 9-month window to qualify as recurring.
+      A single charge is never enough — annuals show on the second cycle.
+    - Normalize merchant key against a curated map of known services to
+      collapse variants (Netflix*, Amazon Prime*, Adobe variants, etc.).
     - Detect cadence from median gap between charges:
         weekly (<14d), monthly (14-45d), quarterly (45-120d), annual (120-400d).
     - Status:
         active   — last charge within 1.5 × cadence_days from today
         expiring — last charge within 2.5 × cadence (probable cancellation)
         cancelled — older than that
-    - monthly_equivalent = avg_amount × (30 / cadence_days)
 
-    Returns dict with categories[], totals, flags, last_run_at.
+    Returns dict with subscriptions[], totals, breakdown.
     """
     from datetime import date, timedelta
     from statistics import median
 
     today = date.today()
-    cutoff = today - timedelta(days=270)  # 9 months back
+    cutoff = today - timedelta(days=270)
 
-    # Source: subscriptions live in Assinaturas + Musica (Patreon, Rocinante, etc.)
+    # Subcategories that hold one-off purchases, not subscriptions.
+    EXCLUDE_SUBCATS = {'Discos', 'Digital', 'Gravadoras'}
+
     txns = list(Transaction.objects.filter(
         profile=profile, amount__lt=0,
         is_internal_transfer=False,
         date__gte=cutoff,
         category__name__in=['Assinaturas', 'Musica'],
-    ).select_related('category', 'subcategory'))
+    ).exclude(subcategory__name__in=EXCLUDE_SUBCATS).select_related('category', 'subcategory'))
 
-    # Group key: first two meaningful words.
-    # Single-word (Adobe, Netflix) → use the one word.
-    # Two-word brands (Apple One, Apple Music) → keep distinct.
-    # Amount range is surfaced to the user so price changes stay visible
-    # (e.g. Patreon downgrade R$329 → R$133).
+    # Canonical merchant patterns. Each (regex, label) collapses variants.
+    # Order matters — more specific first.
     import re as _re
-    def _merchant_key(desc):
+    CANONICAL = [
+        (r'\bclaude\.?ai\b',            'Claude.ai'),
+        (r'\bchatgpt\b|\bopenai\b',     'ChatGPT'),
+        (r'\bsynthetic\b',              'Synthetic.new'),
+        (r'\bopenrouter\b',             'OpenRouter'),
+        (r'apple one premier',           'Apple One Premier'),
+        (r'apple developer',             'Apple Developer'),
+        (r'apple music',                 'Apple Music'),
+        (r'apple tv',                    'Apple TV+'),
+        (r'apple arcade',                'Apple Arcade'),
+        (r'\bicloud',                    'iCloud+'),
+        (r'\bitunes match\b',           'iTunes Match'),
+        (r'\bterabox\b',                'TeraBox'),
+        (r'\bmyfitness',                'MyFitnessPal'),
+        (r'\bheadspace\b',              'Headspace'),
+        (r'\bwaterllama\b',             'Waterllama'),
+        (r'\bpushscroll\b',             'Pushscroll'),
+        (r'dr\.? kegel|\bkegel\b',      'Dr. Kegel'),
+        (r'disney',                      'Disney+'),
+        (r'\bnetflix',                  'Netflix'),
+        (r'\bhbo ?max\b',               'HBO Max'),
+        (r'youtube premium',             'YouTube Premium'),
+        (r'amazon ?prime',               'Amazon Prime'),
+        (r'\bspotify\b',                'Spotify'),
+        (r'soundcloud',                  'SoundCloud'),
+        (r'^adobe\b|\*adobe',            'Adobe'),
+        (r'\bsetapp\b',                 'Setapp'),
+        (r'\bsplice\b',                 'Splice'),
+        (r'\bfigma\b',                  'Figma'),
+        (r'\bgithub\b',                 'GitHub'),
+        (r'\benhancv\b',                'Enhancv'),
+        (r'\blinkedin\b',               'LinkedIn'),
+        (r'\bremarkable\b',             'reMarkable'),
+        (r'\blocaweb\b',                'Locaweb'),
+        (r'\bhostinger\b',              'Hostinger'),
+        (r'1 ?password',                 '1Password'),
+        (r'lc music',                    'Patreon — LC Music'),
+        (r'patreon',                     'Patreon (outros)'),
+        (r'rocinante',                   'Rocinante'),
+        (r'bloopradioshow',              'Bloop Radio Show'),
+    ]
+
+    def _merchant_label(desc):
+        d = (desc or '').lower()
+        for pat, label in CANONICAL:
+            if _re.search(pat, d):
+                return label
+        # Fall back: first 2 meaningful words, capitalized.
         cleaned = _re.sub(r'^[^A-Za-z]+', '', desc or '')
-        words = [w.lower() for w in cleaned.split() if w]
+        words = [w for w in cleaned.split() if w]
         if not words:
-            return (desc or '').lower()[:12]
-        # Skip noise prefixes like 'paypal *', 'paddle.net*', 'ebn *' when present.
-        if words[0] in {'paypal', 'paddle.net*', 'ebn', 'pb*rocinantetres', 'asa*oinc', 'apl*itunes'} and len(words) > 1:
-            words = words[1:]
-        first = words[0]
-        if len(words) >= 2 and len(first) <= 6:
-            # Combine when first word is short/generic to disambiguate
-            # (Apple One vs Apple Music, etc.)
-            return f'{first} {words[1]}'
-        return first if len(first) >= 4 else (desc or '').lower()[:12]
+            return desc or '?'
+        return ' '.join(words[:2])
 
     groups = {}
     for t in txns:
-        key = _merchant_key(t.description)
+        key = _merchant_label(t.description)
         groups.setdefault(key, []).append(t)
 
     results = []
     total_monthly = 0.0
+    MIN_CHARGES = 3
     for key, items in groups.items():
-        if len(items) < 2:
-            # Single charges are either annuals not yet renewed OR one-offs.
-            # Show only if last 60 days (probable annual that just hit).
-            t = items[0]
-            if (today - t.date).days <= 60:
-                amt = float(abs(t.amount))
-                results.append({
-                    'merchant': t.description,
-                    'merchant_key': key,
-                    'category': t.category.name if t.category else 'Não categorizado',
-                    'subcategory': t.subcategory.name if t.subcategory else '',
-                    'cadence': 'annual',
-                    'cadence_days': 365,
-                    'avg_amount': round(amt, 2),
-                    'min_amount': round(amt, 2),
-                    'max_amount': round(amt, 2),
-                    'monthly_equivalent': round(amt / 12, 2),
-                    'last_charge': t.date.strftime('%Y-%m-%d'),
-                    'next_predicted': (t.date + timedelta(days=365)).strftime('%Y-%m-%d'),
-                    'charge_count_9mo': 1,
-                    'status': 'active',
-                    'flags': ['single_charge_assumed_annual'],
-                })
-                total_monthly += amt / 12
+        if len(items) < MIN_CHARGES:
+            # Not enough charges to call it a subscription. One-offs and
+            # annuals on their first cycle get filtered out — they'll appear
+            # naturally on the second charge.
             continue
 
         sorted_items = sorted(items, key=lambda x: x.date)
@@ -5751,8 +5774,9 @@ def get_subscriptions_control(profile=None):
 
         latest = sorted_items[-1]
         results.append({
-            'merchant': latest.description,
+            'merchant': key,
             'merchant_key': key,
+            'raw_description': latest.description,
             'category': latest.category.name if latest.category else 'Não categorizado',
             'subcategory': latest.subcategory.name if latest.subcategory else '',
             'cadence': cadence,
