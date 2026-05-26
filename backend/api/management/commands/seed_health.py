@@ -217,28 +217,28 @@ class Command(BaseCommand):
             defaults={
                 'status': 'ativa',
                 'notes': 'Primeira gestação. Detalhes operacionais em health/family/.',
-                'plano_nome': 'Amil 702 PME (PRC 609)',
+                'plano_nome': 'Amil 702 PME (PRC 609) + Proasa ADV 300 DF',
                 'plano_vigencia_inicio': date(2026, 4, 28),  # confirmar dia exato
-                'carencia_obstetrica_dias': 300,
-                # Estimativa provisória — substituir quando USG datação confirmar.
-                # IG estimada ~5 sem em 2026-05-02 → DUM ~28/03/2026, DPP ~02/01/2027
-                'dum': date(2026, 3, 28),
-                'dpp': date(2027, 1, 2),
+                'carencia_obstetrica_dias': 0,  # Proasa ADV 300 cobre parto integralmente (carências aproveitadas)
+                # Confirmado por USG datação 20/05/2026 (9s1d, CCN 24,5mm).
+                # DUM USG-derivada ~17/03/2026. DPP oficial 22/12/2026.
+                'dum': date(2026, 3, 17),
+                'dpp': date(2026, 12, 22),
             },
         )
         if not created:
             updated = False
             if not pregnancy.plano_nome:
-                pregnancy.plano_nome = 'Amil 702 PME (PRC 609)'
+                pregnancy.plano_nome = 'Amil 702 PME (PRC 609) + Proasa ADV 300 DF'
                 updated = True
             if not pregnancy.plano_vigencia_inicio:
                 pregnancy.plano_vigencia_inicio = date(2026, 4, 28)
                 updated = True
             if not pregnancy.dum:
-                pregnancy.dum = date(2026, 3, 28)
+                pregnancy.dum = date(2026, 3, 17)
                 updated = True
             if not pregnancy.dpp:
-                pregnancy.dpp = date(2027, 1, 2)
+                pregnancy.dpp = date(2026, 12, 22)
                 updated = True
             if updated:
                 pregnancy.save()

@@ -91,11 +91,26 @@ function ExamRow({ exam }) {
         {exam.notes && <div className={styles.examNotes}>{exam.notes}</div>}
       </div>
       {exam.arquivo_path && (() => {
-        // file:// links only resolve when (a) we're on the actual Mac that
-        // holds the PDFs (mac platform string AND mac UA — iPad Safari can
-        // report MacIntel) AND (b) the browser is on a local origin where
-        // file:// is reachable (localhost / 127.0.0.1 / Tailscale .ts.net).
-        // Any other origin → disabled.
+        // arquivo_path can be (a) a https:// URL (Drive, etc.) — works on any
+        // device, or (b) a legacy local path that only resolves via file://
+        // when we're on Palmer's Mac AND the browser is on a local origin.
+        const path = exam.arquivo_path
+        const isUrl = /^https?:\/\//i.test(path)
+
+        if (isUrl) {
+          return (
+            <a
+              className={styles.examFile}
+              href={path}
+              target="_blank"
+              rel="noreferrer"
+              title="Abrir anexo"
+            >
+              PDF
+            </a>
+          )
+        }
+
         const host = (typeof window !== 'undefined' && window.location.hostname) || ''
         const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || ''
         const plat = (typeof navigator !== 'undefined' && navigator.platform) || ''
@@ -109,7 +124,7 @@ function ExamRow({ exam }) {
           return (
             <span
               className={`${styles.examFile} ${styles.examFileDisabled}`}
-              title="PDF disponível apenas no Mac do Palmer (arquivo local)"
+              title="Arquivo local (legado) — apenas no Mac do Palmer"
               aria-disabled="true"
             >
               PDF
@@ -119,7 +134,7 @@ function ExamRow({ exam }) {
         return (
           <a
             className={styles.examFile}
-            href={`file://${exam.arquivo_path.startsWith('/') ? exam.arquivo_path : '/Users/palmer/Documents/' + exam.arquivo_path}`}
+            href={`file://${path.startsWith('/') ? path : '/Users/palmer/Documents/' + path}`}
             target="_blank"
             rel="noreferrer"
             title="Abrir arquivo local"
