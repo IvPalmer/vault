@@ -785,6 +785,35 @@ function Settings({ onOpenWizard }) {
     return map
   }, [budgetConfigsData])
 
+  // Orcamento (consumo atual por categoria + subcategoria no mês selecionado)
+  const { data: orcamentoData } = useQuery({
+    queryKey: ['orcamento-settings', selectedBudgetMonth],
+    queryFn: () => api.get(`/analytics/orcamento/?month_str=${selectedBudgetMonth}`),
+    enabled: !!selectedBudgetMonth,
+  })
+
+  const orcamentoByCategory = useMemo(() => {
+    const map = new Map()
+    if (!orcamentoData?.categories) return map
+    for (const oc of orcamentoData.categories) {
+      const subSpent = new Map()
+      for (const s of oc.subcategories || []) {
+        subSpent.set(String(s.id), parseFloat(s.spent || 0))
+      }
+      map.set(String(oc.id), { spent: parseFloat(oc.spent || 0), subSpent })
+    }
+    return map
+  }, [orcamentoData])
+
+  // Status helper: ok < 80%, warning 80-100%, over > 100%, sem limite + gasto > 0 = over
+  const computeUsageStatus = (spent, limit) => {
+    if (!limit || limit <= 0) return spent > 0 ? 'over' : 'ok'
+    const pct = spent / limit
+    if (pct > 1) return 'over'
+    if (pct >= 0.8) return 'warning'
+    return 'ok'
+  }
+
   const saveBudgetOverride = async (categoryId, value) => {
     const existing = budgetConfigsByCategory.get(String(categoryId))
     try {
@@ -1624,6 +1653,8 @@ function Settings({ onOpenWizard }) {
             <span className={styles.budgetLimitSmall} title="Limite usado quando não há override do mês">Padrão</span>
             <span className={styles.budgetLimitSmall} title="Override apenas para o mês selecionado">Override</span>
             <span className={styles.budgetLimitEffective}>Efetivo</span>
+            <span className={styles.budgetLimitSmall} title="Gasto realizado no mês">Gasto</span>
+            <span className={styles.budgetUsageCell} title="Uso do limite">Uso</span>
             <span style={{ width: 32, flexShrink: 0 }} />
           </div>
           <div className={styles.itemList}>
@@ -1636,6 +1667,13 @@ function Settings({ onOpenWizard }) {
               const defaultLimit = parseFloat(cat.default_limit || 0)
               const overrideLimit = hasOverride ? parseFloat(cfg.limit_override || 0) : 0
               const effectiveLimit = hasOverride ? overrideLimit : defaultLimit
+              const orcCat = orcamentoByCategory.get(String(cat.id))
+              const catSpent = orcCat ? orcCat.spent : 0
+              const catStatus = computeUsageStatus(catSpent, effectiveLimit)
+              const catUsagePct = effectiveLimit > 0 ? (catSpent / effectiveLimit) * 100 : null
+              const subSpentMap = orcCat ? orcCat.subSpent : new Map()
+              const distributed = subs.reduce((s, sub) => s + parseFloat(sub.default_limit || 0), 0)
+              const distribDelta = distributed - effectiveLimit
               return (
                 <div key={cat.id}>
                   <div className={styles.budgetTableRow}>
@@ -1675,6 +1713,25 @@ function Settings({ onOpenWizard }) {
                         ? `R$ ${Math.round(effectiveLimit).toLocaleString('pt-BR')}`
                         : '\u2014'}
                     </span>
+                    <span
+                      className={styles.budgetLimitSmall}
+                      style={{ color: catStatus === 'over' ? 'var(--color-red)' : catStatus === 'warning' ? 'var(--color-orange)' : 'var(--color-text)' }}
+                    >
+                      {catSpent > 0
+                        ? `R$ ${Math.round(catSpent).toLocaleString('pt-BR')}`
+                        : '\u2014'}
+                    </span>
+                    <span className={styles.budgetUsageCell}>
+                      {catUsagePct !== null && catSpent > 0 ? (
+                        <span className={`${styles.budgetUsageBadge} ${styles['budgetStatus_' + catStatus]}`}>
+                          {Math.round(catUsagePct)}%
+                        </span>
+                      ) : catSpent > 0 && effectiveLimit === 0 ? (
+                        <span className={`${styles.budgetUsageBadge} ${styles.budgetStatus_over}`}>sem limite</span>
+                      ) : (
+                        <span style={{ color: 'var(--color-text-secondary)', opacity: 0.4 }}>—</span>
+                      )}
+                    </span>
                     <span style={{ width: 32, flexShrink: 0, textAlign: 'right' }}>
                       {hasOverride && (
                         <button
@@ -1682,41 +1739,73 @@ function Settings({ onOpenWizard }) {
                           onClick={() => clearBudgetOverride(cat.id)}
                           title="Limpar override deste mês"
                         >
-                          {'✕'}
+                          {'\u2715'}
                         </button>
                       )}
                     </span>
                   </div>
-                  {/* Subcategory limits — Padrão editável, Override por subcategoria não existe ainda, Efetivo = Padrão */}
+                  {/* Subcategorias — Limite editável (Subcategory.default_limit), Gasto do mês, Uso */}
                   {isBudgetExpanded && subs.map((sub) => {
-                    const subDefault = parseFloat(sub.default_limit || 0)
+                    const subLimit = parseFloat(sub.default_limit || 0)
+                    const subSpent = parseFloat(subSpentMap.get(String(sub.id)) || 0)
+                    const subStatus = computeUsageStatus(subSpent, subLimit)
+                    const subUsagePct = subLimit > 0 ? (subSpent / subLimit) * 100 : null
                     return (
-                      <div key={sub.id} className={styles.budgetTableRow} style={{ paddingLeft: 32, opacity: 0.85 }}>
+                      <div key={sub.id} className={styles.budgetTableRow} style={{ paddingLeft: 32, opacity: 0.92 }}>
                         <span className={styles.subIndent}>{'\u2514'}</span>
                         <span className={styles.budgetCatName} style={{ fontSize: '0.82rem' }}>{sub.name}</span>
                         <span className={styles.budgetLimitSmall}>
                           <InlineEdit
-                            value={subDefault}
+                            value={subLimit}
                             onSave={(val) => handleUpdateSubcategory(sub.id, 'default_limit', val)}
                             color="var(--color-text-secondary)"
                             placeholder="—"
                           />
                         </span>
-                        <span className={styles.budgetLimitSmall} title="Override por subcategoria não disponível">
-                          <span style={{ color: 'var(--color-text-secondary)', fontSize: '0.72rem', opacity: 0.5 }}>—</span>
+                        <span className={styles.budgetLimitSmall} title="Override mensal por subcategoria não disponível">
+                          <span style={{ color: 'var(--color-text-secondary)', opacity: 0.4 }}>—</span>
                         </span>
                         <span
                           className={styles.budgetLimitEffective}
                           style={{ color: 'var(--color-text)' }}
                         >
-                          {subDefault > 0
-                            ? `R$ ${Math.round(subDefault).toLocaleString('pt-BR')}`
-                            : '—'}
+                          {subLimit > 0
+                            ? `R$ ${Math.round(subLimit).toLocaleString('pt-BR')}`
+                            : '\u2014'}
+                        </span>
+                        <span
+                          className={styles.budgetLimitSmall}
+                          style={{ color: subStatus === 'over' ? 'var(--color-red)' : subStatus === 'warning' ? 'var(--color-orange)' : 'var(--color-text)' }}
+                        >
+                          {subSpent > 0
+                            ? `R$ ${Math.round(subSpent).toLocaleString('pt-BR')}`
+                            : '\u2014'}
+                        </span>
+                        <span className={styles.budgetUsageCell}>
+                          {subUsagePct !== null && subSpent > 0 ? (
+                            <span className={`${styles.budgetUsageBadge} ${styles['budgetStatus_' + subStatus]}`}>
+                              {Math.round(subUsagePct)}%
+                            </span>
+                          ) : subSpent > 0 && subLimit === 0 ? (
+                            <span className={`${styles.budgetUsageBadge} ${styles.budgetStatus_over}`}>sem limite</span>
+                          ) : (
+                            <span style={{ color: 'var(--color-text-secondary)', opacity: 0.4 }}>—</span>
+                          )}
                         </span>
                         <span style={{ width: 32, flexShrink: 0 }} />
                       </div>
                     )
                   })}
+                  {isBudgetExpanded && subs.length > 0 && (
+                    <div className={styles.budgetDistribSummary}>
+                      Distribuído: R$ {Math.round(distributed).toLocaleString('pt-BR')} de R$ {Math.round(effectiveLimit).toLocaleString('pt-BR')}
+                      {effectiveLimit > 0 && Math.abs(distribDelta) > 1 && (
+                        <span style={{ color: distribDelta > 0 ? 'var(--color-red)' : 'var(--color-orange)', marginLeft: 8 }}>
+                          ({distribDelta > 0 ? '+' : ''}{Math.round(distribDelta).toLocaleString('pt-BR')})
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}
