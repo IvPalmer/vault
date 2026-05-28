@@ -453,6 +453,20 @@ function MetricasSection() {
     }
   }, [selectedMonth, invalidateMetricas, invalidateProjection])
 
+  const handleClearBalanceOverride = useCallback(async () => {
+    try {
+      const list = await api.get(`/balance-overrides/?month_str=${selectedMonth}`)
+      const items = Array.isArray(list) ? list : (list.results || [])
+      for (const item of items) {
+        await api.delete(`/balance-overrides/${item.id}/`)
+      }
+      invalidateMetricas()
+      invalidateProjection()
+    } catch (err) {
+      console.error('Failed to clear balance override:', err)
+    }
+  }, [selectedMonth, invalidateMetricas, invalidateProjection])
+
   const cards = useMemo(() => (data ? buildCards(data) : null), [data])
 
   /* ── Drag handlers ── */
@@ -643,24 +657,14 @@ function MetricasSection() {
       <div className={styles.balanceRow}>
         <span className={styles.balanceLabel}>SALDO EM CONTA</span>
         {data.is_current_month ? (
-          data.balance_anchor_value != null ? (
-            <>
-              <span
-                className={styles.balanceAuto}
-                style={{ color: data.balance_anchor_value >= 0 ? 'var(--color-green)' : 'var(--color-red)' }}
-              >
-                R$ {fmt(data.balance_anchor_value)}
-              </span>
-              <span className={styles.balanceHint}>Pluggy {data.balance_anchor_date}</span>
-            </>
-          ) : (
+          <>
             <InlineEdit
-              value={data.balance_override}
+              value={data.balance_override != null ? data.balance_override : data.balance_anchor_value}
               onSave={handleSaveBalance}
               prefix="R$"
               color={
-                data.balance_override != null
-                  ? data.balance_override >= 0
+                (data.balance_override != null ? data.balance_override : data.balance_anchor_value) != null
+                  ? (data.balance_override != null ? data.balance_override : data.balance_anchor_value) >= 0
                     ? 'var(--color-green)'
                     : 'var(--color-red)'
                   : undefined
@@ -671,7 +675,23 @@ function MetricasSection() {
                   : 'clique para informar'
               }
             />
-          )
+            {data.balance_override != null && data.balance_anchor_value != null && (
+              <span className={styles.balanceHint} title="Saldo sincronizado pelo Pluggy. Clique no × pra remover o override.">
+                manual · sync: R$ {fmt(data.balance_anchor_value)}
+                <button
+                  type="button"
+                  onClick={handleClearBalanceOverride}
+                  title="Limpar override e voltar pro sync"
+                  style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', marginLeft: 6, padding: '0 4px', fontSize: '0.85em' }}
+                >
+                  ×
+                </button>
+              </span>
+            )}
+            {data.balance_override == null && data.balance_anchor_value != null && (
+              <span className={styles.balanceHint}>Pluggy {data.balance_anchor_date}</span>
+            )}
+          </>
         ) : data.is_future && data.projected_balance != null ? (
           <>
             <span
