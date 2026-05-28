@@ -1656,7 +1656,7 @@ function Settings({ onOpenWizard }) {
                         value={defaultLimit}
                         onSave={(val) => handleUpdateCategory(cat.id, 'default_limit', val)}
                         color="var(--color-text-secondary)"
-                        placeholder="\u2014"
+                        placeholder="—"
                       />
                     </span>
                     <span className={styles.budgetLimitSmall}>
@@ -1687,23 +1687,36 @@ function Settings({ onOpenWizard }) {
                       )}
                     </span>
                   </div>
-                  {/* Subcategory limits (defaults only — BudgetConfig is per category) */}
-                  {isBudgetExpanded && subs.map((sub) => (
-                    <div key={sub.id} className={styles.budgetTableRow} style={{ paddingLeft: 32, opacity: 0.85 }}>
-                      <span className={styles.subIndent}>{'\u2514'}</span>
-                      <span className={styles.budgetCatName} style={{ fontSize: '0.82rem' }}>{sub.name}</span>
-                      <span className={styles.budgetLimitSmall}>
-                        <InlineEdit
-                          value={sub.default_limit || 0}
-                          onSave={(val) => handleUpdateSubcategory(sub.id, 'default_limit', val)}
-                          color="var(--color-text-secondary)"
-                        />
-                      </span>
-                      <span className={styles.budgetLimitSmall} />
-                      <span className={styles.budgetLimitEffective} />
-                      <span style={{ width: 32, flexShrink: 0 }} />
-                    </div>
-                  ))}
+                  {/* Subcategory limits — Padrão editável, Override por subcategoria não existe ainda, Efetivo = Padrão */}
+                  {isBudgetExpanded && subs.map((sub) => {
+                    const subDefault = parseFloat(sub.default_limit || 0)
+                    return (
+                      <div key={sub.id} className={styles.budgetTableRow} style={{ paddingLeft: 32, opacity: 0.85 }}>
+                        <span className={styles.subIndent}>{'\u2514'}</span>
+                        <span className={styles.budgetCatName} style={{ fontSize: '0.82rem' }}>{sub.name}</span>
+                        <span className={styles.budgetLimitSmall}>
+                          <InlineEdit
+                            value={subDefault}
+                            onSave={(val) => handleUpdateSubcategory(sub.id, 'default_limit', val)}
+                            color="var(--color-text-secondary)"
+                            placeholder="—"
+                          />
+                        </span>
+                        <span className={styles.budgetLimitSmall} title="Override por subcategoria não disponível">
+                          <span style={{ color: 'var(--color-text-secondary)', fontSize: '0.72rem', opacity: 0.5 }}>—</span>
+                        </span>
+                        <span
+                          className={styles.budgetLimitEffective}
+                          style={{ color: 'var(--color-text)' }}
+                        >
+                          {subDefault > 0
+                            ? `R$ ${Math.round(subDefault).toLocaleString('pt-BR')}`
+                            : '—'}
+                        </span>
+                        <span style={{ width: 32, flexShrink: 0 }} />
+                      </div>
+                    )
+                  })}
                 </div>
               )
             })}
