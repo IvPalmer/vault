@@ -305,6 +305,24 @@ function Settings({ onOpenWizard }) {
   // Budget subcategory expansion
   const [expandedBudgetCat, setExpandedBudgetCat] = useState(null)
 
+  // Budget month selector (for monthly limit overrides)
+  const [selectedBudgetMonth, setSelectedBudgetMonth] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
+
+  const budgetMonthOptions = useMemo(() => {
+    const options = []
+    const base = new Date()
+    for (let offset = -3; offset <= 12; offset++) {
+      const d = new Date(base.getFullYear(), base.getMonth() + offset, 1)
+      const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      const label = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', '').replace(/(^\w)/, m => m.toUpperCase())
+      options.push({ value, label })
+    }
+    return options
+  }, [])
+
   // Profile settings
   const { profileId, currentProfile, profileSlug } = useProfile()
 
@@ -751,6 +769,52 @@ function Settings({ onOpenWizard }) {
     queryFn: () => api.get('/categories/'),
   })
 
+  // BudgetConfig overrides for the selected month (per-category monthly limits)
+  const { data: budgetConfigsData } = useQuery({
+    queryKey: ['budget-configs', selectedBudgetMonth],
+    queryFn: () => api.get(`/budget-configs/?month_str=${selectedBudgetMonth}`),
+  })
+
+  const budgetConfigsByCategory = useMemo(() => {
+    const map = new Map()
+    if (!budgetConfigsData) return map
+    const list = Array.isArray(budgetConfigsData) ? budgetConfigsData : (budgetConfigsData.results || [])
+    for (const cfg of list) {
+      if (cfg.category) map.set(String(cfg.category), cfg)
+    }
+    return map
+  }, [budgetConfigsData])
+
+  const saveBudgetOverride = async (categoryId, value) => {
+    const existing = budgetConfigsByCategory.get(String(categoryId))
+    try {
+      if (existing) {
+        await api.patch(`/budget-configs/${existing.id}/`, { limit_override: value })
+      } else {
+        await api.post('/budget-configs/', {
+          category: categoryId,
+          month_str: selectedBudgetMonth,
+          pay_num: 0,
+          limit_override: value,
+        })
+      }
+      queryClient.invalidateQueries({ queryKey: ['budget-configs', selectedBudgetMonth] })
+    } catch (err) {
+      console.error('Failed to save budget override:', err)
+    }
+  }
+
+  const clearBudgetOverride = async (categoryId) => {
+    const existing = budgetConfigsByCategory.get(String(categoryId))
+    if (!existing) return
+    try {
+      await api.delete(`/budget-configs/${existing.id}/`)
+      queryClient.invalidateQueries({ queryKey: ['budget-configs', selectedBudgetMonth] })
+    } catch (err) {
+      console.error('Failed to clear budget override:', err)
+    }
+  }
+
   const allCategories = useMemo(() => {
     if (!categoriesData) return []
     const list = Array.isArray(categoriesData) ? categoriesData : (categoriesData.results || [])
@@ -880,8 +944,12 @@ function Settings({ onOpenWizard }) {
   }, [templatesData])
 
   const totalAllocated = useMemo(() => {
-    return taxonomyCategories.reduce((s, c) => s + parseFloat(c.default_limit || 0), 0)
-  }, [taxonomyCategories])
+    return taxonomyCategories.reduce((s, c) => {
+      const cfg = budgetConfigsByCategory.get(String(c.id))
+      const value = cfg ? parseFloat(cfg.limit_override || 0) : parseFloat(c.default_limit || 0)
+      return s + value
+    }, 0)
+  }, [taxonomyCategories, budgetConfigsByCategory])
 
   const SECTION_NAV = [
     { id: 'wizard', label: 'Wizard' },
@@ -1536,13 +1604,38 @@ function Settings({ onOpenWizard }) {
             </div>
           </div>
 
-          {/* Category budget limits with subcategory expansion */}
-          <h4 className={styles.subheading}>Limites por Categoria (Variável)</h4>
+          {/* Category budget limits with monthly override + subcategory expansion */}
+          <div className={styles.budgetToolbar}>
+            <h4 className={styles.subheading} style={{ margin: 0 }}>Limites por Categoria</h4>
+            <select
+              className={styles.budgetMonthSelect}
+              value={selectedBudgetMonth}
+              onChange={(e) => setSelectedBudgetMonth(e.target.value)}
+              title="Mês do override (vazio = usa o padrão da categoria)"
+            >
+              {budgetMonthOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className={styles.budgetTableHeader}>
+            <span style={{ width: 24, flexShrink: 0 }} />
+            <span className={styles.budgetCatName}>Categoria</span>
+            <span className={styles.budgetLimitSmall} title="Limite usado quando não há override do mês">Padrão</span>
+            <span className={styles.budgetLimitSmall} title="Override apenas para o mês selecionado">Override</span>
+            <span className={styles.budgetLimitEffective}>Efetivo</span>
+            <span style={{ width: 32, flexShrink: 0 }} />
+          </div>
           <div className={styles.itemList}>
             {taxonomyCategories.map((cat) => {
               const subs = cat.subcategories || []
               const hasSubs = subs.length > 0
               const isBudgetExpanded = expandedBudgetCat === cat.id
+              const cfg = budgetConfigsByCategory.get(String(cat.id))
+              const hasOverride = Boolean(cfg)
+              const defaultLimit = parseFloat(cat.default_limit || 0)
+              const overrideLimit = hasOverride ? parseFloat(cfg.limit_override || 0) : 0
+              const effectiveLimit = hasOverride ? overrideLimit : defaultLimit
               return (
                 <div key={cat.id}>
                   <div className={styles.budgetTableRow}>
@@ -1552,32 +1645,63 @@ function Settings({ onOpenWizard }) {
                         onClick={() => setExpandedBudgetCat(isBudgetExpanded ? null : cat.id)}
                         title={isBudgetExpanded ? 'Fechar' : 'Ver subcategorias'}
                       >
-                        {isBudgetExpanded ? '▾' : '▸'}
+                        {isBudgetExpanded ? '\u25BE' : '\u25B8'}
                       </button>
                     ) : (
                       <span style={{ width: 24, display: 'inline-block' }} />
                     )}
                     <span className={styles.budgetCatName}>{cat.name}</span>
-                    <span className={styles.budgetLimit}>
+                    <span className={styles.budgetLimitSmall}>
                       <InlineEdit
-                        value={cat.default_limit || 0}
+                        value={defaultLimit}
                         onSave={(val) => handleUpdateCategory(cat.id, 'default_limit', val)}
-                        color="var(--color-text)"
+                        color="var(--color-text-secondary)"
+                        placeholder="\u2014"
                       />
                     </span>
+                    <span className={styles.budgetLimitSmall}>
+                      <InlineEdit
+                        value={hasOverride ? overrideLimit : 0}
+                        onSave={(val) => saveBudgetOverride(cat.id, val)}
+                        color={hasOverride ? 'var(--color-accent)' : 'var(--color-text-secondary)'}
+                        placeholder="usa padrão"
+                      />
+                    </span>
+                    <span
+                      className={styles.budgetLimitEffective}
+                      style={{ color: hasOverride ? 'var(--color-accent)' : 'var(--color-text)' }}
+                    >
+                      {effectiveLimit > 0
+                        ? `R$ ${Math.round(effectiveLimit).toLocaleString('pt-BR')}`
+                        : '\u2014'}
+                    </span>
+                    <span style={{ width: 32, flexShrink: 0, textAlign: 'right' }}>
+                      {hasOverride && (
+                        <button
+                          className={styles.budgetClearBtn}
+                          onClick={() => clearBudgetOverride(cat.id)}
+                          title="Limpar override deste mês"
+                        >
+                          {'✕'}
+                        </button>
+                      )}
+                    </span>
                   </div>
-                  {/* Subcategory limits */}
+                  {/* Subcategory limits (defaults only — BudgetConfig is per category) */}
                   {isBudgetExpanded && subs.map((sub) => (
                     <div key={sub.id} className={styles.budgetTableRow} style={{ paddingLeft: 32, opacity: 0.85 }}>
                       <span className={styles.subIndent}>{'\u2514'}</span>
                       <span className={styles.budgetCatName} style={{ fontSize: '0.82rem' }}>{sub.name}</span>
-                      <span className={styles.budgetLimit}>
+                      <span className={styles.budgetLimitSmall}>
                         <InlineEdit
                           value={sub.default_limit || 0}
                           onSave={(val) => handleUpdateSubcategory(sub.id, 'default_limit', val)}
-                          color="var(--color-text)"
+                          color="var(--color-text-secondary)"
                         />
                       </span>
+                      <span className={styles.budgetLimitSmall} />
+                      <span className={styles.budgetLimitEffective} />
+                      <span style={{ width: 32, flexShrink: 0 }} />
                     </div>
                   ))}
                 </div>

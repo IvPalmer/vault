@@ -1255,6 +1255,72 @@ html { scroll-behavior: smooth; }
   text-align: right;
 }
 
+.budgetToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin: var(--space-md) 0 var(--space-sm);
+}
+
+.budgetMonthSelect {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.budgetMonthSelect:hover {
+  border-color: var(--color-accent);
+}
+
+.budgetTableHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 4px var(--space-sm);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+}
+
+.budgetLimitSmall {
+  width: 90px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 0.78rem;
+}
+
+.budgetLimitEffective {
+  width: 95px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.budgetClearBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+  padding: 2px 6px;
+  border-radius: 3px;
+  line-height: 1;
+}
+
+.budgetClearBtn:hover {
+  color: var(--color-red);
+  background: rgba(220, 53, 69, 0.08);
+}
+
 /* Rename rules section */
 .renameRow {
   display: flex;
