@@ -39,6 +39,7 @@ import HipImagingCard from './saude/HipImagingCard'
 import ClinicalReportCard from './saude/ClinicalReportCard'
 import MealPlanCard from './saude/MealPlanCard'
 import ShoppingListCard from './saude/ShoppingListCard'
+import CursosView from './saude/CursosView'
 import { PALMER_LAB_PANEL, PALMER_CLINICAL_REPORT, PALMER_OBSERVATIONS } from './saude/palmerHealthData'
 import { RAFA_LAB_PANEL, RAFA_PREGNANCY_REPORT, RAFA_OBSERVATIONS } from './saude/rafaHealthData'
 import { RAFA_MEAL_PLAN } from './saude/rafaMealPlan'
@@ -348,6 +349,7 @@ function PersonalView({ profileId, profileName }) {
  */
 function FamiliaView() {
   const [adding, setAdding] = useState(false)
+  const [famTab, setFamTab] = useState('acompanhamento')
   const { data: pregnancies = [], isLoading } = useQuery({
     queryKey: ['pregnancies-shared'],
     queryFn: () => api.get('/saude/pregnancies/'),
@@ -355,18 +357,39 @@ function FamiliaView() {
   const ativa = pregnancies.find(p => p.status === 'ativa')
   const completedSet = useMemo(() => new Set(ativa?.completed_checkpoint_ids || []), [ativa])
 
-  if (isLoading) return <div className={styles.empty}>Carregando…</div>
-  if (!ativa) {
-    return (
-      <div className={styles.empty}>
-        Nenhuma gestação ativa registrada. Use o admin Django para cadastrar.
-      </div>
-    )
-  }
-
   return (
     <div className={styles.tabContent}>
-      <div className={styles.heroRow}>
+      <div className={styles.subTabs} role="tablist" aria-label="Seções da família">
+        <button
+          role="tab"
+          aria-selected={famTab === 'acompanhamento'}
+          className={famTab === 'acompanhamento' ? styles.subTabActive : styles.subTab}
+          onClick={() => setFamTab('acompanhamento')}
+        >
+          Acompanhamento
+        </button>
+        <button
+          role="tab"
+          aria-selected={famTab === 'cursos'}
+          className={famTab === 'cursos' ? styles.subTabActive : styles.subTab}
+          onClick={() => setFamTab('cursos')}
+        >
+          Cursos
+        </button>
+      </div>
+
+      {famTab === 'cursos' && <CursosView />}
+
+      {famTab === 'acompanhamento' && (
+        isLoading ? (
+          <div className={styles.empty}>Carregando…</div>
+        ) : !ativa ? (
+          <div className={styles.empty}>
+            Nenhuma gestação ativa registrada. Use o admin Django para cadastrar.
+          </div>
+        ) : (
+          <>
+            <div className={styles.heroRow}>
         <div className={styles.heroLeft}>
           <div className={styles.familyTitle}>Gestação · {ativa.gestante_name}</div>
           <div className={styles.familyMeta}>
@@ -437,6 +460,9 @@ function FamiliaView() {
             ))}
           </div>
         </section>
+      )}
+          </>
+        )
       )}
     </div>
   )
