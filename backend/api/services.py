@@ -3775,6 +3775,27 @@ def get_projection(start_month_str, num_months=0, profile=None):
             if linked and all(t.account_id in _cc_acct_ids_proj for t in linked):
                 _fixo_on_cc_tpl_ids.add(ft.id)
 
+    # Realistic variable estimate for future months (dynamic): trailing avg of
+    # ACTUAL variable spend over the last 3 closed months, minus the parcela
+    # portion (parcelas are already counted in the `installments` line, so
+    # subtracting avoids double-counting). This makes saldo_projetado reflect
+    # what Palmer actually spends — and it shifts as recent months close.
+    _rv_gv, _rv_parc = [], []
+    for _k in range(1, 4):
+        _cm = _month_str_add(start_month_str, -_k)
+        try:
+            _mm = get_metricas(_cm, profile=profile)
+            _gv = float(_mm.get('gastos_variaveis', 0) or 0)
+            if _gv > 0:
+                _rv_gv.append(_gv)
+                _rv_parc.append(float(_mm.get('parcelas', 0) or 0))
+        except Exception:
+            pass
+    if _rv_gv:
+        realistic_variable = max(0.0, (sum(_rv_gv) / len(_rv_gv)) - (sum(_rv_parc) / len(_rv_parc)))
+    else:
+        realistic_variable = 0.0
+
     # Build projection rows
     rows = []
     cumulative = 0.0
@@ -3847,16 +3868,14 @@ def get_projection(start_month_str, num_months=0, profile=None):
                 invest = invest_goal  # max(template, 20% income)
             # else: keep invest at template amount (already set above)
 
-            # Budget = starting balance + monthly surplus. This is what you can
-            # ACTUALLY spend — accounts for any hole you're starting in.
+            # Budget = envelope (max you COULD spend to break even). Kept as the
+            # chart's "ORC" column — NOT what we assume you actually spend.
             monthly_surplus = income - fixo - invest - installments
             budget = cumulative + monthly_surplus  # cumulative = prev month's ending saldo
-            # In deficit (budget < 0): no spending, all surplus pays debt.
-            # In healthy (budget >= 0): spend budget, saldo → 0.
-            if budget < 0:
-                variable = 0.0  # Belt-tightening: surplus pays down debt
-            else:
-                variable = budget
+            # Realistic + dynamic: assume the trailing-average variable spend, so
+            # the carry-over (cumulative = saldo projetado) reflects reality and
+            # shifts as recent months close. May go negative → real deficit signal.
+            variable = realistic_variable
             net = monthly_surplus - variable
             cumulative += net
 
