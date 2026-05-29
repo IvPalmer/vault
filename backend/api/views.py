@@ -1654,6 +1654,11 @@ class RecurringTemplatesView(APIView):
                 contract_start=request.data.get('contract_start', ''),
                 contract_term_months=request.data.get('contract_term_months'),
                 end_month=request.data.get('end_month', ''),
+                match_mode=request.data.get('match_mode', 'manual'),
+                category_id=request.data.get('category_id'),
+                expected_source=request.data.get('expected_source', 'manual'),
+                expected_floor_amount=request.data.get('expected_floor_amount'),
+                expected_lookback_months=request.data.get('expected_lookback_months', 3),
             )
             return Response(result, status=status.HTTP_201_CREATED)
         except Exception as e:
@@ -1667,6 +1672,8 @@ class RecurringTemplatesView(APIView):
         for field in (
             'name', 'template_type', 'default_limit', 'due_day',
             'contract_start', 'contract_term_months', 'end_month', 'display_order',
+            'match_mode', 'category_id', 'expected_source',
+            'expected_floor_amount', 'expected_lookback_months',
         ):
             if field in request.data:
                 kwargs[field] = request.data[field]

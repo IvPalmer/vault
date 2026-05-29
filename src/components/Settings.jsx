@@ -292,6 +292,9 @@ function Settings({ onOpenWizard }) {
   const [newType, setNewType] = useState('Fixo')
   const [newAmount, setNewAmount] = useState('')
   const [newDueDay, setNewDueDay] = useState('')
+  const [newCategoryMode, setNewCategoryMode] = useState(false)
+  const [newCategoryId, setNewCategoryId] = useState('')
+  const [newExpectedSource, setNewExpectedSource] = useState('avg_3m')
   const [newSaving, setNewSaving] = useState(false)
 
   // Categories management
@@ -741,21 +744,32 @@ function Settings({ onOpenWizard }) {
 
   const handleCreateTemplate = async (e) => {
     e.preventDefault()
-    if (!newName.trim() || !newAmount) return
+    if (!newName.trim()) return
+    if (newCategoryMode ? !newCategoryId : !newAmount) return
     setNewSaving(true)
     try {
-      await api.post('/analytics/recurring/templates/', {
+      const payload = {
         name: newName.trim(),
         template_type: newType,
-        default_limit: parseFloat(newAmount),
+        default_limit: newCategoryMode ? 0 : parseFloat(newAmount),
         due_day: newDueDay ? parseInt(newDueDay) : null,
-      })
+      }
+      if (newCategoryMode) {
+        payload.match_mode = 'category'
+        payload.category_id = newCategoryId
+        payload.expected_source = newExpectedSource
+        if (newAmount) payload.expected_floor_amount = parseFloat(newAmount)
+      }
+      await api.post('/analytics/recurring/templates/', payload)
       refetchTemplates()
       setShowNewForm(false)
       setNewName('')
       setNewType('Fixo')
       setNewAmount('')
       setNewDueDay('')
+      setNewCategoryMode(false)
+      setNewCategoryId('')
+      setNewExpectedSource('avg_3m')
     } catch (err) {
       console.error('Failed to create template:', err)
     } finally {
@@ -1296,12 +1310,45 @@ function Settings({ onOpenWizard }) {
               <option value="Income">Entrada</option>
               <option value="Investimento">Investimento</option>
             </select>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
+              <input
+                type="checkbox"
+                checked={newCategoryMode}
+                onChange={(e) => setNewCategoryMode(e.target.checked)}
+              />
+              Categoria inteira
+            </label>
+            {newCategoryMode && (
+              <>
+                <select
+                  className={styles.formSelect}
+                  value={newCategoryId}
+                  onChange={(e) => setNewCategoryId(e.target.value)}
+                >
+                  <option value="">Categoria…</option>
+                  {allCategories.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                <select
+                  className={styles.formSelect}
+                  value={newExpectedSource}
+                  onChange={(e) => setNewExpectedSource(e.target.value)}
+                  title="Como o valor esperado é calculado"
+                >
+                  <option value="avg_3m">Média 3m</option>
+                  <option value="prev_month">Mês anterior</option>
+                  <option value="max_floor_avg">Max(piso, média)</option>
+                  <option value="manual">Manual</option>
+                </select>
+              </>
+            )}
             <div className={styles.amountWrap}>
               <span className={styles.amountPrefix}>R$</span>
               <input
                 className={styles.amountInput}
                 type="number"
-                placeholder="0"
+                placeholder={newCategoryMode ? 'Piso (opc)' : '0'}
                 value={newAmount}
                 onChange={(e) => setNewAmount(e.target.value)}
                 step="0.01"
@@ -1320,7 +1367,7 @@ function Settings({ onOpenWizard }) {
             <button
               className={styles.formSaveBtn}
               type="submit"
-              disabled={newSaving || !newName.trim() || !newAmount}
+              disabled={newSaving || !newName.trim() || (newCategoryMode ? !newCategoryId : !newAmount)}
             >
               {newSaving ? '...' : 'Criar'}
             </button>

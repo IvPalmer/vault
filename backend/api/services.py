@@ -239,6 +239,69 @@ def _get_expected_amount(template, month_str, profile=None):
     return total if total is not None else template.default_limit
 
 
+def _category_actual_for_month(category, month_str, profile=None):
+    """Gross expense (positive number) for a category in a month (CC + checking).
+    Uses transaction-month (month_str) and excludes internal transfers — matching
+    how category-matched mappings compute 'actual' in get_metricas."""
+    if not category:
+        return Decimal('0.00')
+    total = Transaction.objects.filter(
+        profile=profile, category=category, month_str=month_str,
+        amount__lt=0, is_internal_transfer=False,
+    ).aggregate(s=Sum('amount'))['s'] or Decimal('0.00')
+    return abs(total)
+
+
+def _category_cc_share(category, month_str, profile=None, cc_account_ids=None, lookback=3):
+    """Fraction of a category's expense that lands on credit-card accounts, over a
+    trailing window including the current month. Used to decide whether a
+    category-based recurring item is CC-billed (so it isn't double-counted with
+    the fatura). Returns Decimal in [0, 1]."""
+    if not category or not cc_account_ids:
+        return Decimal('0.00')
+    months = [_month_str_add(month_str, -i) for i in range(0, max(1, lookback) + 1)]
+    qs = Transaction.objects.filter(
+        profile=profile, category=category, month_str__in=months,
+        amount__lt=0, is_internal_transfer=False,
+    ).only('amount', 'account_id')
+    total = Decimal('0.00')
+    cc = Decimal('0.00')
+    for t in qs:
+        amt = abs(t.amount)
+        total += amt
+        if t.account_id in cc_account_ids:
+            cc += amt
+    return (cc / total) if total > 0 else Decimal('0.00')
+
+
+def derive_expected_amount(template, month_str, profile=None):
+    """Resolve the expected amount for a recurring template, honoring
+    template.expected_source. For 'manual' (or templates without a category) it
+    falls back to _get_expected_amount. Avg-based sources use the trailing
+    expected_lookback_months of CLOSED-month category actuals so the value stays
+    stable through the month (the projection cascade isn't whipsawed)."""
+    if template and not _template_active_in_month(template, month_str):
+        return Decimal('0.00')
+    source = getattr(template, 'expected_source', 'manual') or 'manual'
+    category = getattr(template, 'category', None)
+    if source == 'manual' or not category:
+        return _get_expected_amount(template, month_str, profile=profile)
+
+    lookback = template.expected_lookback_months or 3
+    prior_months = [_month_str_add(month_str, -i) for i in range(1, lookback + 1)]
+    vals = [_category_actual_for_month(category, m, profile=profile) for m in prior_months]
+
+    if source == 'prev_month':
+        derived = vals[0] if vals else Decimal('0.00')
+    else:  # 'avg_3m' or 'max_floor_avg' — average only non-zero closed months so
+        # sparse history (a missing month) doesn't drag the expected down.
+        nonzero = [v for v in vals if v > 0]
+        derived = (sum(nonzero) / len(nonzero)) if nonzero else Decimal('0.00')
+        if source == 'max_floor_avg' and template.expected_floor_amount is not None:
+            derived = max(template.expected_floor_amount, derived)
+    return Decimal(derived).quantize(Decimal('0.01'))
+
+
 # ---------------------------------------------------------------------------
 # A2-1: initialize_month
 # ---------------------------------------------------------------------------
@@ -253,22 +316,30 @@ def initialize_month(month_str, profile=None):
         is_active=True,
         profile=profile,
     ).filter(
-        Q(default_limit__gt=0) | Q(template_type='Cartao')
+        Q(default_limit__gt=0) | Q(template_type='Cartao') | Q(match_mode='category')
     )
     created = 0
     for tpl in templates:
         if not _template_active_in_month(tpl, month_str):
             continue
-        expected = _get_expected_amount(tpl, month_str, profile=profile)
+        is_category = tpl.match_mode == 'category' and tpl.category_id
+        expected = (
+            derive_expected_amount(tpl, month_str, profile=profile)
+            if is_category else _get_expected_amount(tpl, month_str, profile=profile)
+        )
+        defaults = {
+            'expected_amount': expected,
+            'status': 'missing',
+            'is_custom': False,
+        }
+        if is_category:
+            defaults['match_mode'] = 'category'
+            defaults['category'] = tpl.category
         _, was_created = RecurringMapping.objects.get_or_create(
             template=tpl,
             month_str=month_str,
             profile=profile,
-            defaults={
-                'expected_amount': expected,
-                'status': 'missing',
-                'is_custom': False,
-            },
+            defaults=defaults,
         )
         if was_created:
             created += 1
@@ -853,6 +924,28 @@ def save_balance_override(month_str, balance, profile=None):
 # Recurring template management (Settings)
 # ---------------------------------------------------------------------------
 
+def _serialize_template(tpl):
+    return {
+        'id': str(tpl.id),
+        'name': tpl.name,
+        'template_type': tpl.template_type,
+        'default_limit': float(tpl.default_limit),
+        'due_day': tpl.due_day,
+        'contract_start': tpl.contract_start,
+        'contract_term_months': tpl.contract_term_months,
+        'end_month': tpl.end_month,
+        'display_order': tpl.display_order,
+        'match_mode': tpl.match_mode,
+        'category_id': str(tpl.category_id) if tpl.category_id else None,
+        'category_name': tpl.category.name if tpl.category_id else None,
+        'expected_source': tpl.expected_source,
+        'expected_floor_amount': (
+            float(tpl.expected_floor_amount) if tpl.expected_floor_amount is not None else None
+        ),
+        'expected_lookback_months': tpl.expected_lookback_months,
+    }
+
+
 def get_recurring_templates(profile=None):
     """
     Return all RecurringTemplate items used for recurring budget tracking.
@@ -860,22 +953,9 @@ def get_recurring_templates(profile=None):
     templates = RecurringTemplate.objects.filter(
         is_active=True,
         profile=profile,
-    ).order_by('display_order', 'name')
+    ).select_related('category').order_by('display_order', 'name')
 
-    items = []
-    for tpl in templates:
-        items.append({
-            'id': str(tpl.id),
-            'name': tpl.name,
-            'template_type': tpl.template_type,
-            'default_limit': float(tpl.default_limit),
-            'due_day': tpl.due_day,
-            'contract_start': tpl.contract_start,
-            'contract_term_months': tpl.contract_term_months,
-            'end_month': tpl.end_month,
-            'display_order': tpl.display_order,
-        })
-
+    items = [_serialize_template(tpl) for tpl in templates]
     return {'templates': items, 'count': len(items)}
 
 
@@ -903,25 +983,29 @@ def update_recurring_template(template_id, profile=None, **kwargs):
         tpl.end_month = (kwargs['end_month'] or '').strip()
     if 'display_order' in kwargs and kwargs['display_order'] is not None:
         tpl.display_order = int(kwargs['display_order'])
+    if 'match_mode' in kwargs and kwargs['match_mode'] in ('manual', 'category'):
+        tpl.match_mode = kwargs['match_mode']
+    if 'category_id' in kwargs:
+        cid = kwargs['category_id']
+        tpl.category = Category.objects.filter(id=cid, profile=profile).first() if cid else None
+    if 'expected_source' in kwargs and kwargs['expected_source'] is not None:
+        tpl.expected_source = kwargs['expected_source']
+    if 'expected_floor_amount' in kwargs:
+        efa = kwargs['expected_floor_amount']
+        tpl.expected_floor_amount = Decimal(str(efa)) if efa not in (None, '') else None
+    if 'expected_lookback_months' in kwargs and kwargs['expected_lookback_months']:
+        tpl.expected_lookback_months = int(kwargs['expected_lookback_months'])
 
     tpl.save()
 
-    return {
-        'id': str(tpl.id),
-        'name': tpl.name,
-        'template_type': tpl.template_type,
-        'default_limit': float(tpl.default_limit),
-        'due_day': tpl.due_day,
-        'contract_start': tpl.contract_start,
-        'contract_term_months': tpl.contract_term_months,
-        'end_month': tpl.end_month,
-        'display_order': tpl.display_order,
-    }
+    return _serialize_template(tpl)
 
 
 def create_recurring_template(
     name, template_type, default_limit, due_day=None, profile=None,
     contract_start='', contract_term_months=None, end_month='',
+    match_mode='manual', category_id=None, expected_source='manual',
+    expected_floor_amount=None, expected_lookback_months=3,
 ):
     """
     Create a new RecurringTemplate for recurring budget tracking.
@@ -931,6 +1015,10 @@ def create_recurring_template(
         template_type=template_type,
         profile=profile,
     ).aggregate(m=Max('display_order'))['m'] or 0
+
+    category = None
+    if match_mode == 'category' and category_id:
+        category = Category.objects.filter(id=category_id, profile=profile).first()
 
     tpl = RecurringTemplate.objects.create(
         name=name.strip(),
@@ -943,19 +1031,16 @@ def create_recurring_template(
         is_active=True,
         display_order=max_order + 1,
         profile=profile,
+        match_mode=match_mode if match_mode in ('manual', 'category') else 'manual',
+        category=category,
+        expected_source=expected_source or 'manual',
+        expected_floor_amount=(
+            Decimal(str(expected_floor_amount)) if expected_floor_amount not in (None, '') else None
+        ),
+        expected_lookback_months=int(expected_lookback_months) if expected_lookback_months else 3,
     )
 
-    return {
-        'id': str(tpl.id),
-        'name': tpl.name,
-        'template_type': tpl.template_type,
-        'default_limit': float(tpl.default_limit),
-        'due_day': tpl.due_day,
-        'contract_start': tpl.contract_start,
-        'contract_term_months': tpl.contract_term_months,
-        'end_month': tpl.end_month,
-        'display_order': tpl.display_order,
-    }
+    return _serialize_template(tpl)
 
 
 def delete_recurring_template(template_id, profile=None):
@@ -1167,6 +1252,19 @@ def get_metricas(month_str, profile=None):
     fixo_on_cc = Decimal('0.00')
     _fixo_on_cc_mapping_ids = set()
     for m in fixo_mappings_all:
+        # Category-based recurring (e.g. Assinaturas): treat as CC-billed when the
+        # category's spend is predominantly on credit cards, so its expected amount
+        # is subtracted from the budget envelope (it's already inside fatura_total).
+        if m.match_mode == 'category' and m.category_id:
+            share = _category_cc_share(
+                m.category, month_str, profile=profile, cc_account_ids=cc_account_ids
+            )
+            # Only treat as CC-billed when the category is (near-)entirely on cards,
+            # so the binary subtract-from-budget + skip-in-a_pagar stays accurate.
+            if share >= Decimal('0.9'):
+                fixo_on_cc += _mapping_expected_amount(m)
+                _fixo_on_cc_mapping_ids.add(m.id)
+            continue
         linked_txns = list(m.transactions.all())
         if not linked_txns and m.transaction:
             linked_txns = [m.transaction]
@@ -3600,6 +3698,11 @@ def get_projection(start_month_str, num_months=0, profile=None):
     def _tpl_amount(tpl, month):
         if not _template_active_in_month(tpl, month):
             return 0.0
+        # Category-based recurring (e.g. Assinaturas) has no default_limit — its
+        # expected is derived from category history. Future-month fatura estimates
+        # don't include recurring subscriptions, so count them here (once).
+        if getattr(tpl, 'match_mode', 'manual') == 'category' and tpl.category_id:
+            return float(derive_expected_amount(tpl, month, profile=profile))
         val = bc_lookup.get((str(tpl.id), month))
         return val if val is not None else float(tpl.default_limit)
 
@@ -3620,6 +3723,16 @@ def get_projection(start_month_str, num_months=0, profile=None):
     )
     _fixo_on_cc_tpl_ids = set()
     for ft in fixo_tpls:
+        # Category-based recurring billed to CC (e.g. Assinaturas): exclude from the
+        # projection's fixo, same as other CC-billed fixos — its cost rides on the
+        # fatura side, so counting it in fixo too would double-count.
+        if getattr(ft, 'match_mode', 'manual') == 'category' and ft.category_id:
+            share = _category_cc_share(
+                ft.category, start_month_str, profile=profile, cc_account_ids=_cc_acct_ids_proj
+            )
+            if share >= Decimal('0.9'):
+                _fixo_on_cc_tpl_ids.add(ft.id)
+            continue
         # Check if this fixo template's current-month mapping links to CC transactions
         cur_mapping = RecurringMapping.objects.filter(
             month_str=start_month_str, profile=profile, template=ft,
@@ -5706,7 +5819,7 @@ def get_subscriptions_control(profile=None):
         (r'name-?cheap',                 'Namecheap'),
         (r'1 ?password',                 '1Password'),
         (r'applecombill',                'Apple Services'),
-        (r'lc music',                    'Patreon — LC Music'),
+        (r'lc music',                    'TraxDB'),
         (r'patreon',                     'Patreon'),
         (r'rocinante',                   'Rocinante'),
         (r'bloopradioshow',              'Bloop Radio Show'),

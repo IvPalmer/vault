@@ -16,6 +16,19 @@ TEMPLATE_TYPE_CHOICES = (
     ('Cartao', 'Cartao'),
 )
 
+# Module-level so RecurringTemplate (defined before RecurringMapping) can reference it.
+MATCH_MODE_CHOICES = (
+    ('manual', 'Manual'),       # Explicitly linked transaction(s)
+    ('category', 'Category'),   # Auto-match all txns in a category
+)
+
+EXPECTED_SOURCE_CHOICES = (
+    ('manual', 'Manual'),                    # default_limit / BudgetConfig override
+    ('prev_month', 'Mês anterior'),          # previous closed month's actual
+    ('avg_3m', 'Média (N meses)'),           # trailing N-month average of actuals
+    ('max_floor_avg', 'Max(piso, média)'),   # max(floor, trailing average)
+)
+
 
 class Profile(models.Model):
     """
@@ -243,6 +256,25 @@ class RecurringTemplate(models.Model):
     template_type = models.CharField(max_length=20, choices=TEMPLATE_TYPE_CHOICES)
     default_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     due_day = models.IntegerField(null=True, blank=True)
+    # --- Category-based recurring (e.g. Assinaturas): match a whole category,
+    #     auto-fill "real" from its transactions, derive "expected" from history. ---
+    match_mode = models.CharField(max_length=20, choices=MATCH_MODE_CHOICES, default='manual')
+    category = models.ForeignKey(
+        Category, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='recurring_templates',
+        help_text='For match_mode=category: the category whose txns auto-fill this item.',
+    )
+    expected_source = models.CharField(
+        max_length=20, choices=EXPECTED_SOURCE_CHOICES, default='manual',
+        help_text='How the monthly expected amount is derived.',
+    )
+    expected_floor_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text='Floor for max_floor_avg expected_source.',
+    )
+    expected_lookback_months = models.IntegerField(
+        default=3, help_text='Trailing window (closed months) for avg-based expected_source.',
+    )
     contract_start = models.CharField(max_length=7, blank=True, default='')
     contract_term_months = models.IntegerField(null=True, blank=True)
     end_month = models.CharField(max_length=7, blank=True, default='')
