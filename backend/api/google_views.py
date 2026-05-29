@@ -5,9 +5,9 @@ REST views for Google Suite — OAuth, Gmail, Drive/Sheets/Docs.
 import logging
 import re
 
-import requests
 from django.http import StreamingHttpResponse, HttpResponse
 from django.shortcuts import redirect as http_redirect
+from google.auth.transport.requests import AuthorizedSession
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -363,12 +363,12 @@ class CursoStreamView(APIView):
             f'https://www.googleapis.com/drive/v3/files/{file_id}'
             '?alt=media&supportsAllDrives=true'
         )
-        upstream = requests.get(
+        # AuthorizedSession refreshes the access token as needed and attaches
+        # the bearer header (a raw creds.token can be stale → 401).
+        session = AuthorizedSession(creds)
+        upstream = session.get(
             drive_url,
-            headers={
-                'Authorization': f'Bearer {creds.token}',
-                'Range': f'bytes={start}-{end}',
-            },
+            headers={'Range': f'bytes={start}-{end}'},
             stream=True,
             timeout=60,
         )
