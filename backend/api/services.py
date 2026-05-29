@@ -1583,9 +1583,18 @@ def get_metricas(month_str, profile=None):
             # - Paid from an earlier month (cross-month to past) → no carryover
             # - Paid from THIS month (cross-month to current) → carryover (late)
             # - Not paid at all → carryover (still pending)
-            _paid_in_own_month = any(
-                _t.month_str == _prev_m for _t in _cm.transactions.all()
-            )
+            if _cm.match_mode == 'category' and _cm.category_id:
+                # Category-matched recurring (e.g. Assinaturas): "paid in own month"
+                # when the category had expense txns that month — it auto-matches by
+                # category, so the manual M2M is empty and must not be read as unpaid.
+                _paid_in_own_month = Transaction.objects.filter(
+                    profile=profile, category_id=_cm.category_id, month_str=_prev_m,
+                    amount__lt=0, is_internal_transfer=False,
+                ).exists()
+            else:
+                _paid_in_own_month = any(
+                    _t.month_str == _prev_m for _t in _cm.transactions.all()
+                )
             if _paid_in_own_month:
                 continue
             _paid_from_other = any(
