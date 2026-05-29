@@ -5,7 +5,7 @@ REST views for Google Suite — OAuth, Gmail, Drive/Sheets/Docs.
 import logging
 import re
 
-from django.http import StreamingHttpResponse, HttpResponse
+from django.http import HttpResponse
 from django.shortcuts import redirect as http_redirect
 from google.auth.transport.requests import AuthorizedSession
 from rest_framework import status
@@ -290,6 +290,20 @@ def _stream_account():
     )
 
 
+_drive_sessions = {}  # account.id -> AuthorizedSession (reused; auto-refreshes token)
+
+
+def _drive_session(account):
+    sess = _drive_sessions.get(account.id)
+    if sess is None:
+        creds = google_auth.get_credentials(account)
+        if not creds:
+            return None
+        sess = AuthorizedSession(creds)
+        _drive_sessions[account.id] = sess
+    return sess
+
+
 class CursoStreamView(APIView):
     """GET /api/google/drive/stream/<file_id>/
 
@@ -354,8 +368,8 @@ class CursoStreamView(APIView):
         elif end is None:
             end = start + _STREAM_CHUNK - 1
 
-        creds = google_auth.get_credentials(account)
-        if not creds:
+        session = _drive_session(account)
+        if session is None:
             return Response({'error': 'No credentials'},
                             status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
@@ -363,39 +377,32 @@ class CursoStreamView(APIView):
             f'https://www.googleapis.com/drive/v3/files/{file_id}'
             '?alt=media&supportsAllDrives=true'
         )
-        # AuthorizedSession refreshes the access token as needed and attaches
-        # the bearer header (a raw creds.token can be stale → 401).
-        session = AuthorizedSession(creds)
-        upstream = session.get(
-            drive_url,
-            headers={'Range': f'bytes={start}-{end}'},
-            stream=True,
-            timeout=60,
-        )
+        try:
+            upstream = session.get(
+                drive_url,
+                headers={'Range': f'bytes={start}-{end}'},
+                timeout=60,
+            )
+        except Exception as e:
+            logger.error(f'curso-stream upstream failed for {file_id}: {e}')
+            return Response({'error': 'Upstream error'},
+                            status=status.HTTP_502_BAD_GATEWAY)
         if upstream.status_code not in (200, 206):
-            body = upstream.text[:200]
-            upstream.close()
-            logger.error(f'curso-stream drive {upstream.status_code} for {file_id}: {body}')
+            logger.error(f'curso-stream drive {upstream.status_code} for {file_id}: {upstream.text[:200]}')
             return Response({'error': 'Upstream error'},
                             status=status.HTTP_502_BAD_GATEWAY)
 
-        length = end - start + 1
-
-        def body_iter():
-            try:
-                for chunk in upstream.iter_content(64 * 1024):
-                    if chunk:
-                        yield chunk
-            finally:
-                upstream.close()
-
-        resp = StreamingHttpResponse(body_iter(), status=206, content_type=ctype)
+        # Range is capped to <= _STREAM_CHUNK, so buffer the whole chunk and
+        # return a complete 206. (Browsers stall on some proxied *streaming*
+        # bodies over HTTP/2; a bounded buffered response is bulletproof.)
+        data = upstream.content
+        real_end = start + len(data) - 1
+        resp = HttpResponse(data, status=206, content_type=ctype)
         resp['Accept-Ranges'] = 'bytes'
-        resp['Content-Length'] = str(length)
+        resp['Content-Length'] = str(len(data))
         if total is not None:
-            resp['Content-Range'] = f'bytes {start}-{end}/{total}'
+            resp['Content-Range'] = f'bytes {start}-{real_end}/{total}'
         resp['Cache-Control'] = 'private, max-age=3600'
-        resp['X-Accel-Buffering'] = 'no'  # tell nginx not to buffer the stream
         return resp
 
 
