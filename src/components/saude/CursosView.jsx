@@ -98,6 +98,7 @@ export default function CursosView() {
             src={previewUrl(active.driveId)}
             title={active.title}
             allow="autoplay; encrypted-media"
+            referrerPolicy="no-referrer"
             allowFullScreen
           />
         </div>

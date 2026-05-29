@@ -361,16 +361,22 @@ function FamiliaView() {
     <div className={styles.tabContent}>
       <div className={styles.subTabs} role="tablist" aria-label="Seções da família">
         <button
+          id="fam-subtab-acompanhamento"
           role="tab"
           aria-selected={famTab === 'acompanhamento'}
+          aria-controls="fam-subpanel-acompanhamento"
+          tabIndex={famTab === 'acompanhamento' ? 0 : -1}
           className={famTab === 'acompanhamento' ? styles.subTabActive : styles.subTab}
           onClick={() => setFamTab('acompanhamento')}
         >
           Acompanhamento
         </button>
         <button
+          id="fam-subtab-cursos"
           role="tab"
           aria-selected={famTab === 'cursos'}
+          aria-controls="fam-subpanel-cursos"
+          tabIndex={famTab === 'cursos' ? 0 : -1}
           className={famTab === 'cursos' ? styles.subTabActive : styles.subTab}
           onClick={() => setFamTab('cursos')}
         >
@@ -378,10 +384,15 @@ function FamiliaView() {
         </button>
       </div>
 
-      {famTab === 'cursos' && <CursosView />}
+      {famTab === 'cursos' && (
+        <div id="fam-subpanel-cursos" role="tabpanel" aria-labelledby="fam-subtab-cursos">
+          <CursosView />
+        </div>
+      )}
 
       {famTab === 'acompanhamento' && (
-        isLoading ? (
+        <div id="fam-subpanel-acompanhamento" role="tabpanel" aria-labelledby="fam-subtab-acompanhamento">
+        {isLoading ? (
           <div className={styles.empty}>Carregando…</div>
         ) : !ativa ? (
           <div className={styles.empty}>
@@ -462,7 +473,8 @@ function FamiliaView() {
         </section>
       )}
           </>
-        )
+        )}
+        </div>
       )}
     </div>
   )
