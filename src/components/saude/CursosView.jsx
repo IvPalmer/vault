@@ -9,8 +9,12 @@
  */
 import { useState, useMemo } from 'react'
 import { BABY_COURSES } from './babyCourses'
+import { API_BASE_URL } from '../../api/client'
 import styles from './cursos.module.css'
 
+// Video plays through our same-origin streaming proxy (reliable regardless of
+// Drive's preview transcoding). PDFs use Drive's preview (works fine).
+const streamUrl = (id) => `${API_BASE_URL}/google/drive/stream/${id}/`
 const previewUrl = (id) => `https://drive.google.com/file/d/${id}/preview`
 const viewUrl = (id) => `https://drive.google.com/file/d/${id}/view`
 
@@ -92,16 +96,28 @@ export default function CursosView() {
           <h3 className={styles.playerTitle}>{active.title}</h3>
         </div>
 
-        <div className={active.type === 'pdf' ? styles.embedPdf : styles.embedVideo}>
-          <iframe
-            key={active.driveId}
-            src={previewUrl(active.driveId)}
-            title={active.title}
-            allow="autoplay; encrypted-media"
-            referrerPolicy="no-referrer"
-            allowFullScreen
-          />
-        </div>
+        {active.type === 'pdf' ? (
+          <div className={styles.embedPdf}>
+            <iframe
+              key={active.driveId}
+              src={previewUrl(active.driveId)}
+              title={active.title}
+              referrerPolicy="no-referrer"
+              allowFullScreen
+            />
+          </div>
+        ) : (
+          <div className={styles.embedVideo}>
+            <video
+              key={active.driveId}
+              src={streamUrl(active.driveId)}
+              title={active.title}
+              controls
+              playsInline
+              preload="metadata"
+            />
+          </div>
+        )}
 
         <a
           className={styles.openDrive}

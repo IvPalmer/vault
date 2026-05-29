@@ -170,6 +170,7 @@
 }
 
 .embedVideo iframe,
+.embedVideo video,
 .embedPdf iframe {
   position: absolute;
   inset: 0;

@@ -49,6 +49,7 @@ from .google_views import (
     GmailMessagesView, GmailMessageDetailView, GmailSendView,
     GmailTrashView, GmailLabelsView,
     DriveFilesView, DriveFileContentView, SpreadsheetView, DocumentView,
+    CursoStreamView,
 )
 
 router = DefaultRouter()
@@ -173,6 +174,7 @@ urlpatterns = [
     # Drive
     path('google/drive/files/', DriveFilesView.as_view(), name='drive-files'),
     path('google/drive/files/<str:file_id>/content/', DriveFileContentView.as_view(), name='drive-file-content'),
+    path('google/drive/stream/<str:file_id>/', CursoStreamView.as_view(), name='curso-stream'),
     path('google/drive/sheets/<str:spreadsheet_id>/', SpreadsheetView.as_view(), name='drive-spreadsheet'),
     path('google/drive/docs/<str:document_id>/', DocumentView.as_view(), name='drive-document'),
 ]

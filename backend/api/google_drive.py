@@ -19,6 +19,10 @@ _EXPORT_MAP = {
     'application/vnd.google-apps.drawing': ('image/png', 'png'),
 }
 
+# Root Drive folder of the archived baby-prep courses ("Curso Bebê - Brunna").
+# The course streaming endpoint only serves files nested under this folder.
+CURSO_BEBE_ROOT_FOLDER = '1NMFkq3Uh3A2ZTQhpQH3w6S0BP5MDhr8z'
+
 
 # ---------------------------------------------------------------------------
 # Service builders
@@ -139,6 +143,54 @@ def get_file_content(account, file_id, mime_type=None):
     except Exception as e:
         logger.error(f'get_file_content failed for {file_id}: {e}')
         return None
+
+
+def get_file_meta(account, file_id):
+    """Return Drive file metadata (id, name, mimeType, size, parents) or None."""
+    service = get_drive_service(account)
+    if not service:
+        return None
+    try:
+        return service.files().get(
+            fileId=file_id,
+            fields='id,name,mimeType,size,parents',
+            supportsAllDrives=True,
+        ).execute()
+    except Exception as e:
+        logger.error(f'get_file_meta failed for {file_id}: {e}')
+        return None
+
+
+def is_descendant_of(account, file_id, root_folder_id, max_depth=6):
+    """True if file_id IS root_folder_id or is nested (any depth) under it.
+
+    Walks the first-parent chain up to max_depth hops. Used to scope the
+    course streaming endpoint so it can only serve files inside the course
+    folder, never arbitrary Drive files the service account can read.
+    """
+    service = get_drive_service(account)
+    if not service:
+        return False
+    current = file_id
+    seen = set()
+    for _ in range(max_depth):
+        if current == root_folder_id:
+            return True
+        if not current or current in seen:
+            break
+        seen.add(current)
+        try:
+            meta = service.files().get(
+                fileId=current, fields='parents', supportsAllDrives=True,
+            ).execute()
+        except Exception as e:
+            logger.error(f'is_descendant_of walk failed at {current}: {e}')
+            return False
+        parents = meta.get('parents') or []
+        if not parents:
+            break
+        current = parents[0]
+    return False
 
 
 def trash_file(account, file_id):
