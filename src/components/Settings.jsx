@@ -1303,21 +1303,23 @@ function Settings({ onOpenWizard }) {
             <select
               className={styles.formSelect}
               value={newType}
-              onChange={(e) => setNewType(e.target.value)}
+              onChange={(e) => { setNewType(e.target.value); if (e.target.value !== 'Fixo') setNewCategoryMode(false) }}
             >
               <option value="Fixo">Fixo</option>
               <option value="Variavel">Variável</option>
               <option value="Income">Entrada</option>
               <option value="Investimento">Investimento</option>
             </select>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
-              <input
-                type="checkbox"
-                checked={newCategoryMode}
-                onChange={(e) => setNewCategoryMode(e.target.checked)}
-              />
-              Categoria inteira
-            </label>
+            {newType === 'Fixo' && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={newCategoryMode}
+                  onChange={(e) => setNewCategoryMode(e.target.checked)}
+                />
+                Categoria inteira
+              </label>
+            )}
             {newCategoryMode && (
               <>
                 <select

@@ -16,6 +16,7 @@ from api.models import (
 from api.services import (
     _category_actual_for_month,
     _category_cc_share,
+    create_recurring_template,
     derive_expected_amount,
     initialize_month,
 )
@@ -111,3 +112,35 @@ class CategoryRecurringTests(TestCase):
         self.assertEqual(m.match_mode, 'category')
         self.assertEqual(m.category_id, self.cat.id)
         self.assertEqual(m.expected_amount, Decimal('2000.00'))
+
+    # --- API input validation (hardening) ---
+    def test_create_rejects_category_mode_non_fixo(self):
+        with self.assertRaises(ValueError):
+            create_recurring_template(
+                'X', 'Income', 0, profile=self.p,
+                match_mode='category', category_id=str(self.cat.id), expected_source='avg_3m',
+            )
+
+    def test_create_rejects_invalid_category(self):
+        with self.assertRaises(ValueError):
+            create_recurring_template(
+                'X', 'Fixo', 0, profile=self.p,
+                match_mode='category',
+                category_id='00000000-0000-0000-0000-000000000000', expected_source='avg_3m',
+            )
+
+    def test_create_rejects_invalid_expected_source(self):
+        with self.assertRaises(ValueError):
+            create_recurring_template(
+                'X', 'Fixo', 0, profile=self.p,
+                match_mode='category', category_id=str(self.cat.id), expected_source='bogus',
+            )
+
+    def test_create_clamps_lookback(self):
+        res = create_recurring_template(
+            'X', 'Fixo', 0, profile=self.p,
+            match_mode='category', category_id=str(self.cat.id),
+            expected_source='avg_3m', expected_lookback_months=99,
+        )
+        tpl = RecurringTemplate.objects.get(id=res['id'])
+        self.assertEqual(tpl.expected_lookback_months, 12)

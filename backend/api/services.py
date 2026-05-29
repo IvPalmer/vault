@@ -924,6 +924,9 @@ def save_balance_override(month_str, balance, profile=None):
 # Recurring template management (Settings)
 # ---------------------------------------------------------------------------
 
+EXPECTED_SOURCE_VALUES = ('manual', 'prev_month', 'avg_3m', 'max_floor_avg')
+
+
 def _serialize_template(tpl):
     return {
         'id': str(tpl.id),
@@ -989,12 +992,14 @@ def update_recurring_template(template_id, profile=None, **kwargs):
         cid = kwargs['category_id']
         tpl.category = Category.objects.filter(id=cid, profile=profile).first() if cid else None
     if 'expected_source' in kwargs and kwargs['expected_source'] is not None:
+        if kwargs['expected_source'] not in EXPECTED_SOURCE_VALUES:
+            raise ValueError('expected_source inválido')
         tpl.expected_source = kwargs['expected_source']
     if 'expected_floor_amount' in kwargs:
         efa = kwargs['expected_floor_amount']
         tpl.expected_floor_amount = Decimal(str(efa)) if efa not in (None, '') else None
     if 'expected_lookback_months' in kwargs and kwargs['expected_lookback_months']:
-        tpl.expected_lookback_months = int(kwargs['expected_lookback_months'])
+        tpl.expected_lookback_months = max(1, min(12, int(kwargs['expected_lookback_months'])))
 
     tpl.save()
 
@@ -1016,9 +1021,26 @@ def create_recurring_template(
         profile=profile,
     ).aggregate(m=Max('display_order'))['m'] or 0
 
+    # Validate category-recurring inputs (raises -> view returns 400) so a
+    # malformed template can never silently distort the budget math.
+    match_mode = match_mode if match_mode in ('manual', 'category') else 'manual'
     category = None
-    if match_mode == 'category' and category_id:
-        category = Category.objects.filter(id=category_id, profile=profile).first()
+    if match_mode == 'category':
+        if template_type != 'Fixo':
+            raise ValueError('Recorrente por categoria só é suportado para tipo Fixo')
+        category = (
+            Category.objects.filter(id=category_id, profile=profile).first()
+            if category_id else None
+        )
+        if not category:
+            raise ValueError('category_id válido é obrigatório para recorrente por categoria')
+        if (expected_source or 'manual') not in EXPECTED_SOURCE_VALUES:
+            raise ValueError('expected_source inválido')
+    try:
+        lookback = int(expected_lookback_months) if expected_lookback_months else 3
+    except (TypeError, ValueError):
+        lookback = 3
+    lookback = max(1, min(12, lookback))
 
     tpl = RecurringTemplate.objects.create(
         name=name.strip(),
@@ -1031,13 +1053,13 @@ def create_recurring_template(
         is_active=True,
         display_order=max_order + 1,
         profile=profile,
-        match_mode=match_mode if match_mode in ('manual', 'category') else 'manual',
+        match_mode=match_mode,
         category=category,
         expected_source=expected_source or 'manual',
         expected_floor_amount=(
             Decimal(str(expected_floor_amount)) if expected_floor_amount not in (None, '') else None
         ),
-        expected_lookback_months=int(expected_lookback_months) if expected_lookback_months else 3,
+        expected_lookback_months=lookback,
     )
 
     return _serialize_template(tpl)
