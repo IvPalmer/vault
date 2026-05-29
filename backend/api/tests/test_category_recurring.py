@@ -76,6 +76,16 @@ class CategoryRecurringTests(TestCase):
         # avg(Apr)=1000, floor 1500 → 1500
         self.assertEqual(derive_expected_amount(tpl, '2026-05', profile=self.p), Decimal('1500.00'))
 
+    def test_prev_month_falls_back_when_prior_empty(self):
+        # Only Apr has data; deriving for a future month whose prior months are empty
+        # must fall back to the most recent non-zero month instead of returning 0.
+        self._txn(date(2026, 4, 5), '-1500')
+        tpl = RecurringTemplate.objects.create(
+            profile=self.p, name='A', template_type='Fixo',
+            match_mode='category', category=self.cat, expected_source='prev_month',
+        )
+        self.assertEqual(derive_expected_amount(tpl, '2026-08', profile=self.p), Decimal('1500.00'))
+
     def test_derive_manual_falls_back_to_default_limit(self):
         tpl = RecurringTemplate.objects.create(
             profile=self.p, name='Aluguel', template_type='Fixo',

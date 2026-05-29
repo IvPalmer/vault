@@ -299,6 +299,23 @@ def derive_expected_amount(template, month_str, profile=None):
         derived = (sum(nonzero) / len(nonzero)) if nonzero else Decimal('0.00')
         if source == 'max_floor_avg' and template.expected_floor_amount is not None:
             derived = max(template.expected_floor_amount, derived)
+
+    # Fallback: if the chosen source produced nothing — e.g. 'prev_month' on a
+    # FUTURE month whose prior month has no data yet, or a fully-empty window —
+    # walk further back to the most recent non-zero months so the expected is
+    # never blank in the table/projection.
+    if derived <= 0:
+        found = []
+        for _i in range(1, 13):
+            _v = _category_actual_for_month(category, _month_str_add(month_str, -_i), profile=profile)
+            if _v > 0:
+                found.append(_v)
+            if len(found) >= (lookback or 3):
+                break
+        if found:
+            derived = sum(found) / len(found)
+            if source == 'max_floor_avg' and template.expected_floor_amount is not None:
+                derived = max(template.expected_floor_amount, derived)
     return Decimal(derived).quantize(Decimal('0.01'))
 
 
