@@ -3703,47 +3703,6 @@ def get_projection(start_month_str, num_months=0, profile=None):
             profile=profile, template_type='Cartao', is_active=True,
         ).values_list('name', flat=True)
     )
-    # Cache per-month installment lookups to avoid redundant DB queries
-    _fatura_cache = {}
-
-    def _estimate_fatura_for_month(m):
-        """Estimate total CC fatura for month m (purchases + per-card parcelas).
-        Includes sub-cards (inactive templates) whose charges aren't in a Pluggy bill.
-        """
-        if m in _fatura_cache:
-            return _fatura_cache[m]
-        # Check if any card has a Pluggy bill for this month
-        pluggy_bills = {
-            mp.template.name: float(mp.expected_amount)
-            for mp in RecurringMapping.objects.filter(
-                month_str=m, profile=profile,
-                template__template_type='Cartao', template__is_active=True,
-            ).select_related('template')
-            if mp.expected_amount > 0
-        }
-        if pluggy_bills:
-            # Pluggy bills are authoritative and include sub-card charges
-            _fatura_cache[m] = sum(pluggy_bills.values())
-            return _fatura_cache[m]
-        # No Pluggy bills — estimate from purchases + fresh per-month parcelas
-        month_sched = _compute_installment_schedule(m, num_future_months=0, profile=profile)
-        month_by_card = month_sched.get('_by_card', {}).get(m, {})
-        total = Decimal('0')
-        for cc_acct in cc_accounts:
-            q = _build_cc_fatura_query_single(cc_acct.id, m, profile)
-            purchases = abs(Transaction.objects.filter(q).aggregate(
-                total=Sum('amount'))['total'] or Decimal('0'))
-            card_parcelas = Decimal(str(month_by_card.get(cc_acct.name, 0)))
-            # Real purchases already include installment txns — use whichever
-            # is larger (purchases for imported months, parcelas for future).
-            card_total = max(purchases, card_parcelas)
-            if cc_acct.name in cartao_template_names:
-                total += card_total
-            elif card_total > 0:
-                # Sub-card not in a Pluggy bill — add its portion
-                total += card_total
-        _fatura_cache[m] = float(total)
-        return _fatura_cache[m]
 
     # Prefetch BudgetConfig overrides for all future months in one query
     future_months = [_month_str_add(start_month_str, i) for i in range(1, num_months)]
@@ -3827,6 +3786,26 @@ def get_projection(start_month_str, num_months=0, profile=None):
     else:
         realistic_variable = 0.0
 
+    def _estimate_committed_card_for_month(m):
+        """Future-month card outflow = COMMITTED components only: parcelas +
+        CC-billed fixos (Assinaturas, seguros no cartão). The discretionary CC
+        spend is already counted in the realistic `variable`, so using the FULL
+        bill here would double-count it. (Current month uses metricas.fatura_total.)"""
+        parcelas = Decimal(str(installment_schedule.get(m, 0) or 0))
+        cc_fixos = Decimal('0.00')
+        for tpl in fixo_tpls:
+            amount = Decimal(str(_tpl_amount(tpl, m)))
+            if getattr(tpl, 'match_mode', 'manual') == 'category' and tpl.category_id:
+                share = _category_cc_share(
+                    tpl.category, m, profile=profile, cc_account_ids=_cc_acct_ids_proj,
+                )
+                if share >= Decimal('0.9'):
+                    cc_fixos += amount
+                continue
+            if tpl.id in _fixo_on_cc_tpl_ids:
+                cc_fixos += amount
+        return float(parcelas + cc_fixos)
+
     # Build projection rows
     rows = []
     cumulative = 0.0
@@ -3869,19 +3848,20 @@ def get_projection(start_month_str, num_months=0, profile=None):
             # Exclude CC-billed fixo templates (their cost is in fatura)
             fixo = sum(_tpl_amount(t, month) for t in fixo_tpls if t.id not in _fixo_on_cc_tpl_ids)
             invest = sum(_tpl_amount(t, month) for t in invest_tpls)
-            # Use full fatura estimate (purchases + parcelas) when available,
-            # fall back to installments-only for far-future months.
-            fatura_est = _estimate_fatura_for_month(month)
-            installments = fatura_est if fatura_est > 0 else installment_schedule.get(month, 0)
+            # Future card outflow = committed components only (parcelas + CC-billed
+            # fixos). The discretionary CC spend is already in `variable`
+            # (realistic), so the FULL bill here would double-count it.
+            installments = _estimate_committed_card_for_month(month)
             variable = 0.0
 
-        # Dynamic savings target: use max(template invest, target % of income)
+        # Savings target kept for the display tooltip only. The actual invest is
+        # the committed Investimento items (consórcio + amortização + reserva),
+        # so the Invest column reconciles with the Investimentos table.
         savings_target_amount = income * savings_target_pct / 100 if income > 0 else 0.0
-        invest_goal = max(invest, savings_target_amount)
 
         if i == 0:
             # Current month: use metricas clamped invest and saldo.
-            invest = float(metricas.get('invest_expected_total', invest_goal))
+            invest = float(metricas.get('invest_expected_total', invest))
             # Metricas saldo already reflects actual spending via bank balance.
             cumulative = current_month_saldo
             # Budget = theoretical variable budget (total envelope).
@@ -3891,13 +3871,8 @@ def get_projection(start_month_str, num_months=0, profile=None):
             variable = float(metricas.get('gastos_variaveis', 0))
             net = cumulative - starting_balance
         else:
-            # Future months: always try 20% target first, fall back to
-            # template amount only when the month can't afford it.
-            test_surplus = income - fixo - invest_goal - installments
-            test_budget = cumulative + test_surplus
-            if test_budget >= 0:
-                invest = invest_goal  # max(template, 20% income)
-            # else: keep invest at template amount (already set above)
+            # Future months: invest stays = sum of committed Investimento items
+            # (set above). No synthetic 20% floor — the Reserva line is explicit.
 
             # Budget = envelope (max you COULD spend to break even). Kept as the
             # chart's "ORC" column — NOT what we assume you actually spend.
