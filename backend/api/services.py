@@ -1832,6 +1832,19 @@ def get_metricas(month_str, profile=None):
                     'moved_to': target,
                 })
 
+    # Outras entradas: cash that hit the account but isn't salary — real non-salary
+    # income (reembolsos, extra) + financing inflows like the loan captação (which is
+    # flagged is_internal_transfer to stay out of income/budget, but IS real cash).
+    # Surfaced as a separate projection column so the cash flow reconciles.
+    _salario_recebido = sum(
+        (_get_actual_for_mapping(m, is_income=True) for m in income_mappings),
+        Decimal('0.00'),
+    )
+    _captacao = abs(Transaction.objects.filter(
+        profile=profile, month_str=month_str, amount__gt=0, category__name='Emprestimos',
+    ).aggregate(s=Sum('amount'))['s'] or Decimal('0.00'))
+    outras_entradas = max(Decimal('0.00'), entradas_atuais - _salario_recebido) + _captacao
+
     result_dict = {
         'month_str': month_str,
         'balance_override': balance_override,
@@ -1843,6 +1856,7 @@ def get_metricas(month_str, profile=None):
         'checking_balance_eom': float(checking_balance_eom) if checking_balance_eom is not None else None,
         'entradas_atuais': float(entradas_atuais),
         'entradas_projetadas': float(entradas_projetadas),
+        'outras_entradas': float(outras_entradas),
         'gastos_atuais': float(gastos_atuais),
         'gastos_projetados': float(gastos_projetados),
         'gastos_fixos': float(gastos_fixos),
@@ -3899,6 +3913,7 @@ def get_projection(start_month_str, num_months=0, profile=None):
         rows.append({
             'month': month,
             'income': round(income, 2),
+            'outras_entradas': round(float(metricas.get('outras_entradas', 0)) if i == 0 else 0.0, 2),
             'fixo': round(fixo, 2),
             'investimento': round(invest, 2),
             'savings_target_amount': round(savings_target_amount, 2),
@@ -3928,6 +3943,7 @@ def get_projection(start_month_str, num_months=0, profile=None):
             history.append({
                 'month': hist_month,
                 'income': round(h_income, 2),
+                'outras_entradas': round(float(hm.get('outras_entradas', 0)), 2),
                 'fixo': round(h_fixo_fb, 2),
                 'investimento': round(h_invest, 2),
                 'savings_target_amount': round(h_income * savings_target_pct / 100, 2) if h_income else 0,

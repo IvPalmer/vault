@@ -191,7 +191,8 @@ function ProjectionSection() {
           <thead>
             <tr>
               <th>MES</th>
-              <th className={styles.numCol}>ENTRADAS</th>
+              <th className={styles.numCol}>SALÁRIO</th>
+              <th className={styles.numCol} title="Empréstimo, reembolsos e outras entradas não-salário">OUTRAS ENTRADAS</th>
               <th className={styles.numCol}>FIXOS</th>
               <th className={styles.numCol}>INVEST.</th>
               <th className={styles.numCol}>CARTAO</th>
@@ -205,6 +206,7 @@ function ProjectionSection() {
               <tr key={row.month} style={{ opacity: 0.6 }}>
                 <td className={styles.monthCell}>{shortMonth(row.month)}</td>
                 <td className={`${styles.numCol} ${styles.green}`}>R$ {fmt(row.income)}</td>
+                <td className={`${styles.numCol} ${styles.green}`}>{row.outras_entradas ? `R$ ${fmt(row.outras_entradas)}` : '—'}</td>
                 <td className={`${styles.numCol} ${styles.red}`}>R$ {fmt(row.fixo)}</td>
                 <td className={`${styles.numCol} ${styles.purple}`}>R$ {fmt(row.investimento)}</td>
                 <td className={`${styles.numCol} ${styles.orange}`}>R$ {fmt(row.installments)}</td>
@@ -226,7 +228,7 @@ function ProjectionSection() {
                 <td className={styles.monthCell}>
                   <span className={styles.balanceLabel}>Saldo Anterior</span>
                 </td>
-                <td colSpan={5}></td>
+                <td colSpan={6}></td>
                 <td className={`${styles.numCol} ${styles.saldoCol} ${bal >= 0 ? styles.green : styles.red}`}>
                   <strong>{bal < 0 ? '-' : ''}R$ {fmt(bal)}</strong>
                 </td>
@@ -244,6 +246,9 @@ function ProjectionSection() {
                   <td className={styles.monthCell}>{shortMonth(row.month)}</td>
                   <td className={`${styles.numCol} ${styles.green}`}>
                     R$ {fmt(row.income)}
+                  </td>
+                  <td className={`${styles.numCol} ${styles.green}`}>
+                    {row.outras_entradas ? `R$ ${fmt(row.outras_entradas)}` : '—'}
                   </td>
                   <td className={`${styles.numCol} ${styles.red}`}>
                     R$ {fmt(row.fixo)}
