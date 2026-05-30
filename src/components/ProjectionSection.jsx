@@ -254,18 +254,14 @@ function ProjectionSection() {
                     R$ {fmt(row.fixo)}
                   </td>
                   <td className={`${styles.numCol} ${styles.purple}`} title={
-                    row.investimento === 0 && row.savings_target_amount > 0
-                      ? `Sem margem para investir (meta: R$ ${fmt(row.savings_target_amount)})`
-                      : row.investimento < row.savings_target_amount
-                        ? `Parcial: R$ ${fmt(row.investimento)} de R$ ${fmt(row.savings_target_amount)}`
-                        : `Meta ${Math.round(row.investimento / row.income * 100)}% atingida`
+                    row.income > 0
+                      ? `Consórcio + amortização + reserva comprometidos (${Math.round(row.investimento / row.income * 100)}% da renda)`
+                      : 'Consórcio + amortização + reserva comprometidos'
                   }>
-                    {row.investimento === 0 && row.savings_target_amount > 0 ? (
-                      <span style={{ color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>-</span>
-                    ) : row.investimento < row.savings_target_amount * 0.99 ? (
-                      <span style={{ opacity: 0.7 }}>R$ {fmt(row.investimento)} <span style={{ fontSize: '0.7em' }}>parcial</span></span>
-                    ) : (
+                    {row.investimento > 0 ? (
                       <>R$ {fmt(row.investimento)}</>
+                    ) : (
+                      <span style={{ color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>—</span>
                     )}
                   </td>
                   <td className={`${styles.numCol} ${styles.orange}`}>
