@@ -6,8 +6,14 @@ from unittest.mock import patch
 from django.core.management import call_command
 from django.test import TestCase
 
-from api.models import Account, BudgetConfig, Profile, RecurringTemplate, SalaryConfig, Transaction
-from api.services import _deduped_transaction_sum, sync_salary_to_budget
+from api.models import (
+    Account, BudgetConfig, Category, Profile, RecurringTemplate,
+    SalaryConfig, Subcategory, Transaction,
+)
+from api.services import (
+    _deduped_transaction_sum, sync_salary_to_budget,
+    build_apple_amount_map, resolve_apple_subscription, _is_generic_apple,
+)
 
 
 class RecurringTemplateContractTests(TestCase):
@@ -251,6 +257,87 @@ class SalaryBudgetSyncTests(TestCase):
         self.assertEqual(sum((cfg.limit_override for cfg in configs), Decimal('0.00')), Decimal('44000.00'))
 
 
+class AppleAmountCategorizationTests(TestCase):
+    """Apple subscriptions arrive brandless ("APPLECOMBILL"); only the amount
+    distinguishes the service. These cover the learn-from-history resolver and
+    the retroactive fix command."""
+
+    def setUp(self):
+        self.profile = Profile.objects.create(name='Tester')
+        self.acct = Account.objects.create(
+            profile=self.profile, name='Visa', account_type='credit_card')
+        self.cat = Category.objects.create(profile=self.profile, name='Assinaturas')
+        self.subs = {
+            n: Subcategory.objects.create(profile=self.profile, category=self.cat, name=n)
+            for n in ['Apple One', 'Streaming Video', 'Software', 'Gaming']
+        }
+
+    def _txn(self, desc, iso_date, amount, sub=None, manual=False):
+        return Transaction.objects.create(
+            profile=self.profile, account=self.acct, date=date.fromisoformat(iso_date),
+            description=desc, amount=Decimal(str(amount)), category=self.cat,
+            subcategory=self.subs[sub] if sub else None,
+            is_manually_categorized=manual,
+        )
+
+    def _seed_history(self):
+        # Reconciled, brand-named ground truth.
+        self._txn('Disney+ Premium (via Apple)', '2026-03-29', '-66.90', 'Streaming Video')
+        self._txn('Disney+ Premium (via Apple)', '2026-04-29', '-66.90', 'Streaming Video')
+        self._txn('Apple Developer Anual (via Apple)', '2026-01-30', '-548.46', 'Software')
+        # Price-change collision: TV+ at 14.90 (older), Arcade at 14.90 (newer)
+        # — recency must win, so 14.90 → Gaming.
+        self._txn('Apple TV+ (via Apple)', '2025-09-14', '-14.90', 'Streaming Video')
+        self._txn('Apple Arcade (via Apple)', '2026-04-14', '-14.90', 'Gaming')
+        # Near-identical amounts that integer rounding would have collided.
+        self._txn('Notion (via Apple)', '2026-03-10', '-29.99', 'Software')
+        self._txn('iCloud Mini (via Apple)', '2026-03-10', '-29.90', 'Apple One')
+        # Generic noise — must be EXCLUDED from the learned map.
+        self._txn('Apple Services', '2026-02-24', '-66.90', 'Apple One')
+
+    def test_build_map_excludes_generic_and_recency_wins(self):
+        self._seed_history()
+        m = build_apple_amount_map(self.profile)
+        self.assertEqual(m[Decimal('66.90')]['description'], 'Disney+ Premium (via Apple)')
+        self.assertEqual(m[Decimal('548.46')]['description'], 'Apple Developer Anual (via Apple)')
+        # Recency: newest 14.90 is Apple Arcade.
+        self.assertEqual(m[Decimal('14.90')]['description'], 'Apple Arcade (via Apple)')
+        self.assertEqual(m[Decimal('14.90')]['subcategory_id'], self.subs['Gaming'].id)
+        # Cent precision: 29.90 and 29.99 must NOT collide.
+        self.assertEqual(m[Decimal('29.99')]['description'], 'Notion (via Apple)')
+        self.assertEqual(m[Decimal('29.90')]['description'], 'iCloud Mini (via Apple)')
+
+    def test_resolve_hits_known_amount_and_misses_novel(self):
+        self._seed_history()
+        m = build_apple_amount_map(self.profile)
+        hit = resolve_apple_subscription(self.profile, Decimal('-66.90'), m)
+        self.assertEqual(hit['description'], 'Disney+ Premium (via Apple)')
+        self.assertEqual(hit['subcategory'], self.subs['Streaming Video'])
+        # Novel amount → no history → abstain.
+        self.assertIsNone(resolve_apple_subscription(self.profile, Decimal('-79.00'), m))
+        self.assertTrue(_is_generic_apple('Apple Services'))
+        self.assertFalse(_is_generic_apple('Disney+ Premium (via Apple)'))
+
+    def test_recategorize_command_fixes_generic_respects_manual_and_novel(self):
+        self._seed_history()
+        wrong = self._txn('Apple Services', '2026-05-29', '-66.90', 'Apple One')  # → Disney+
+        manual = self._txn('Apple Services', '2026-05-26', '-66.90', 'Software', manual=True)
+        novel = self._txn('Apple Services', '2026-05-06', '-79.00', 'Apple One')  # no history
+
+        call_command('recategorize_apple', profile='Tester', verbosity=0)
+
+        wrong.refresh_from_db(); manual.refresh_from_db(); novel.refresh_from_db()
+        # Generic 66.90 fixed to Disney+/Streaming Video.
+        self.assertEqual(wrong.description, 'Disney+ Premium (via Apple)')
+        self.assertEqual(wrong.subcategory, self.subs['Streaming Video'])
+        # Manual override untouched.
+        self.assertEqual(manual.description, 'Apple Services')
+        self.assertEqual(manual.subcategory, self.subs['Software'])
+        # Novel amount left generic.
+        self.assertEqual(novel.description, 'Apple Services')
+        self.assertEqual(novel.subcategory, self.subs['Apple One'])
+
+
 class PluggyBilledDuplicateSkipTests(TestCase):
     """Regression for the over-aggressive 'unbilled dup' skip that suppressed
     real charges on an OPEN bill.
@@ -275,6 +362,7 @@ class PluggyBilledDuplicateSkipTests(TestCase):
         cmd.rename_rules = []
         cmd.pluggy_mappings = {}
         cmd.categorization_rules = []
+        cmd.apple_amount_map = {}
         return cmd
 
     def _ptxn(self, _id, desc, iso_date, amount, bill_id=None, total_inst=None):

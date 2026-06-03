@@ -4340,6 +4340,92 @@ def _apply_categorization_rules(description, profile):
     return None, None
 
 
+# ---------------------------------------------------------------------------
+# Apple subscription resolution by amount
+# ---------------------------------------------------------------------------
+# The bank/Pluggy never name the actual Apple service — every Apple
+# subscription arrives as "APPLECOMBILL" / "APPLE.COM/BILL" (renamed to the
+# generic "Apple Services"). The ONLY signal distinguishing Disney+ from iCloud
+# from Apple Developer is the amount. The user reconciles each charge to its
+# real service (description "Disney+ Premium (via Apple)" + subcategory), and
+# the helpers below turn that reconciliation into a reusable classifier so
+# future charges (and mis-categorized past ones) resolve by amount.
+
+_GENERIC_APPLE = ('apple services', 'applecombill', 'apple.com')
+
+
+def _is_generic_apple(description):
+    """True when the description is a brandless Apple billing descriptor."""
+    d = (description or '').strip().lower()
+    if not d:
+        return False
+    if d == 'apple':
+        return True
+    return any(g in d for g in _GENERIC_APPLE)
+
+
+def _apple_amount_key(amount):
+    """Exact 2-decimal magnitude key. BRL subscription prices are exact, so the
+    cent value IS the signal — never round it away (29.90 ≠ 29.99)."""
+    return abs(Decimal(str(amount))).quantize(Decimal('0.01'))
+
+
+def build_apple_amount_map(profile):
+    """Learn ``{amount(2dp): {description, category_id, subcategory_id}}`` from
+    the profile's RECONCILED Apple subscriptions.
+
+    Ground truth = "Assinaturas" charges mentioning Apple that carry a SPECIFIC
+    brand (not a generic Apple descriptor) and a subcategory. Iterated oldest →
+    newest (with a stable ``created_at``/``id`` tiebreaker) so the MOST RECENT
+    brand wins per amount: a price change (Apple TV+ 14.90 → 21.90) naturally
+    re-points the stale amount to whatever currently bills at it, which is why
+    apparent same-price collisions resolve cleanly.
+    """
+    qs = (
+        Transaction.objects.filter(
+            profile=profile,
+            category__name='Assinaturas',
+            subcategory__isnull=False,
+            description__icontains='apple',
+        )
+        .order_by('date', 'created_at', 'id')
+        .values_list('amount', 'description', 'category_id', 'subcategory_id')
+    )
+    amount_map = {}
+    for amount, desc, cat_id, sub_id in qs:
+        if _is_generic_apple(desc):
+            continue
+        amount_map[_apple_amount_key(amount)] = {
+            'description': desc,
+            'category_id': cat_id,
+            'subcategory_id': sub_id,
+        }
+    return amount_map
+
+
+def resolve_apple_subscription(profile, amount, amount_map=None):
+    """Resolve a generic Apple charge to its learned service by amount.
+
+    Returns ``{description, category, subcategory}`` or None when the amount has
+    no reconciled history (novel/ambiguous) — caller then keeps the generic
+    fallback. Caller is responsible for checking the description is a generic
+    Apple descriptor first (see :func:`_is_generic_apple`).
+    """
+    if amount_map is None:
+        amount_map = build_apple_amount_map(profile)
+    hit = amount_map.get(_apple_amount_key(amount))
+    if not hit:
+        return None
+    try:
+        cat = Category.objects.get(id=hit['category_id']) if hit['category_id'] else None
+        sub = Subcategory.objects.get(id=hit['subcategory_id']) if hit['subcategory_id'] else None
+    except (Category.DoesNotExist, Subcategory.DoesNotExist):
+        return None
+    if not cat:
+        return None
+    return {'description': hit['description'], 'category': cat, 'subcategory': sub}
+
+
 def _normalize_description(desc):
     """
     Normalize a description for matching purposes.
@@ -4519,6 +4605,10 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
     # Valid subcategory IDs per category: sub must belong to the same category
     sub_to_cat = {s.id: s.category_id for s in sub_lookup.values()}
 
+    # Apple subscription amount → service classifier (learned from reconciled
+    # brand-named history). Resolves brandless "Apple Services" charges by value.
+    apple_amount_map = build_apple_amount_map(profile)
+
     # ── Process each uncategorized transaction ──
     results = []
     by_strategy = Counter()
@@ -4552,9 +4642,21 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
         # Check if this is a PIX/personal transfer (skip learning strategies)
         is_pix = _is_pix_transfer(txn)
 
+        # ── Strategy 0: Apple subscription by amount (confidence: 0.97) ──
+        # Brandless Apple charge ("Apple Services") → resolve the specific
+        # service by amount from reconciled history, before Pluggy's generic
+        # mapping would bucket it as Apple One.
+        if apple_amount_map and _is_generic_apple(txn.description):
+            apple_hit = resolve_apple_subscription(profile, txn.amount, apple_amount_map)
+            if apple_hit and apple_hit['category']:
+                matched_category = apple_hit['category']
+                matched_subcategory = apple_hit['subcategory']
+                match_method = 'apple_amount'
+                confidence = 0.97
+
         # ── Strategy 1: Pluggy Category Mapping (confidence: 1.0) ──
         # Uses Pluggy's ML classification stored on the transaction
-        if txn.pluggy_category_id:
+        if not matched_category and txn.pluggy_category_id:
             p_cat, p_sub = _resolve_pluggy(txn.pluggy_category_id)
             if p_cat:
                 matched_category = p_cat

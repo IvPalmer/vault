@@ -323,6 +323,10 @@ class Command(BaseCommand):
             self.card_account_map['5780'] = rafa_acc
         except Account.DoesNotExist:
             pass
+        # Apple subscriptions arrive brandless ("APPLECOMBILL"); learn the
+        # amount -> service classifier from this profile's reconciled history.
+        from api.services import build_apple_amount_map
+        self.apple_amount_map = build_apple_amount_map(profile)
 
     def _apply_rename(self, description):
         """Apply rename rules to a description."""
@@ -652,10 +656,23 @@ class Command(BaseCommand):
             # Card last 4 digits from creditCardMetadata
             card_last4 = (cc_meta or {}).get('cardNumber', '') or ''
 
-            # Categorization: Pluggy category mapping + description refinement + rules
-            category, subcategory = self._apply_pluggy_categorization(
-                pluggy_category_id, description=display_desc
-            )
+            # Apple subscriptions: the bank gives no brand, so resolve the
+            # specific service by amount from reconciled history BEFORE the
+            # generic "apple services -> Apple One" rule would fire.
+            apple_hit = None
+            if self.apple_amount_map:
+                from api.services import _is_generic_apple, resolve_apple_subscription
+                if _is_generic_apple(display_desc):
+                    apple_hit = resolve_apple_subscription(
+                        self.profile, amount, self.apple_amount_map)
+            if apple_hit:
+                display_desc = apple_hit['description']
+                category, subcategory = apple_hit['category'], apple_hit['subcategory']
+            else:
+                # Categorization: Pluggy category mapping + description refinement + rules
+                category, subcategory = self._apply_pluggy_categorization(
+                    pluggy_category_id, description=display_desc
+                )
 
             # Route additional card purchases to their own account
             target_account = vault_acct
