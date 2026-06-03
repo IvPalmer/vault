@@ -146,6 +146,36 @@ By linking the dev account to MeuPluggy, API reads go through a proxy that refre
 | NuBank Conta | BANK | `ef7d504f-c4ef-44b9-afe0-8086e5a4f846` |
 | NuBank Cartão | CREDIT | `eaa5556b-f38b-4b1e-9e68-fffdca6f1a9a` |
 
+## Balance anchors & month-end realignment
+
+`BalanceAnchor` rows store the checking balance on a date. Closed-month opening
+balances come from `_get_checking_balance_eom()` (services.py), which reads the
+anchor **on** the month-end date (or rolls the latest in-month anchor forward).
+
+**Gotcha — Pluggy anchor date = sync date, not balance date.** The daily sync
+(`sync_pluggy --save-balance`) stamps each anchor with the *sync* date, but
+MeuPluggy lags the bank by ~1-2 days, so an anchor "dated" the 29th may actually
+hold the 27th's balance. At a month boundary this skews the next month's opening
+by whatever posted in the missed days.
+
+Example (2026-06): June opened at R$22.146 but the Itaú statement showed
+end-of-May = **R$21.996,44** (R$150 lower — a 28/05 −150 PIX the lagged anchor
+missed). The bank statement's end-of-month "SALDO DO DIA" is authoritative.
+
+**Realignment (do this whenever a month-end looks off):** take the exact EOM
+balance from the statement and drop an anchor on the last day of the month:
+
+```
+manage.py set_balance_anchor --profile Palmer --date 2026-05-31 --balance 21996.44
+```
+
+`_get_checking_balance_eom` then returns it exactly (step 1: anchor on month-end).
+The daily sync only writes current-date anchors, so a manual month-end anchor is
+never overwritten. Note: loan proceeds that land in checking (e.g. the 45k
+Pronampe disbursement on 27/05, categorized `Emprestimos`, `is_internal_transfer=True`)
+ARE part of the real balance and correctly included in the opening — only income
+that posts *after* month-end (e.g. salary on 01/06) is excluded.
+
 ### Paid Plans
 
 | Plan | Cost | Notes |
