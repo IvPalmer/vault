@@ -112,6 +112,19 @@ def _compute_invoice_month(txn_date, closing_day, due_offset=1):
     return payment.strftime('%Y-%m')
 
 
+def _pluggy_brl_amount(ptxn):
+    """BRL magnitude of a Pluggy txn as Decimal.
+
+    Foreign-currency CC purchases report the original currency in `amount`
+    and BRL in `amountInAccountCurrency` — always use the BRL value so dedup
+    keys are computed identically everywhere.
+    """
+    brl_amount = ptxn.get('amountInAccountCurrency')
+    if brl_amount is not None and ptxn.get('currencyCode') not in (None, '', 'BRL'):
+        return Decimal(str(brl_amount))
+    return Decimal(str(ptxn['amount']))
+
+
 class Command(BaseCommand):
     help = 'Sync transactions from Pluggy Open Finance API'
 
@@ -440,11 +453,26 @@ class Command(BaseCommand):
         else:
             due_offset = 1  # Default: payment next month
 
-        # Track which invoice months are covered by Pluggy bills.
-        # Unbilled account-level transactions for these months are duplicates.
-        billed_months = set()
+        # Identity keys of purchases Pluggy itemized under a bill (carry a
+        # billId). A no-billId account-level copy is a duplicate ONLY if such a
+        # billed twin actually exists — not merely because the invoice month
+        # has a bill. Open bills carry billIds for older charges while the most
+        # recent ones (last days before close) have none yet; keying on
+        # identity keeps those real charges (e.g. ICATU on the 28th).
+        billed_keys = set()  # (invoice_month, abs_amount, norm_desc)
         if is_cc:
-            billed_months = set(self.bill_map.values())
+            for _ptxn in pluggy_txns:
+                _meta = _ptxn.get('creditCardMetadata') or {}
+                _bill_id = _meta.get('billId', '')
+                if not (_bill_id and _bill_id in self.bill_map):
+                    continue
+                _raw = _ptxn.get('descriptionRaw') or _ptxn.get('description', '')
+                _desc = _ptxn.get('description', _raw)
+                billed_keys.add((
+                    self.bill_map[_bill_id],
+                    abs(_pluggy_brl_amount(_ptxn)),
+                    _dedup_norm(_desc),
+                ))
 
         for ptxn in pluggy_txns:
             ext_id = ptxn['id']
@@ -457,14 +485,9 @@ class Command(BaseCommand):
             # Parse transaction data
             raw_desc = ptxn.get('descriptionRaw') or ptxn.get('description', '')
             description = ptxn.get('description', raw_desc)
-            # For foreign-currency CC transactions, Pluggy returns the
-            # original currency in `amount` and BRL in `amountInAccountCurrency`.
-            # Always use the BRL value for Vault.
-            brl_amount = ptxn.get('amountInAccountCurrency')
-            if brl_amount is not None and ptxn.get('currencyCode') not in (None, '', 'BRL'):
-                raw_amount = Decimal(str(brl_amount))
-            else:
-                raw_amount = Decimal(str(ptxn['amount']))
+            # Foreign-currency CC purchases report original currency in
+            # `amount` and BRL in `amountInAccountCurrency` — use BRL.
+            raw_amount = _pluggy_brl_amount(ptxn)
             txn_date = date.fromisoformat(ptxn['date'][:10])
             month_str = txn_date.strftime('%Y-%m')
 
@@ -476,6 +499,33 @@ class Command(BaseCommand):
                 amount = -raw_amount
             else:
                 amount = raw_amount
+
+            # Resolve invoice month and drop billed duplicates UP FRONT — before
+            # this row touches any dedup index. A skipped no-billId copy must not
+            # poison the in-batch content index, or its billId twin gets dropped
+            # too (losing both copies).
+            cc_meta = ptxn.get('creditCardMetadata')
+            norm_desc = _dedup_norm(description)
+            invoice_month = ''
+            if is_cc:
+                bill_id = (cc_meta or {}).get('billId', '')
+                if bill_id and bill_id in self.bill_map:
+                    # Exact invoice month from Pluggy bill itemization.
+                    invoice_month = self.bill_map[bill_id]
+                else:
+                    invoice_month = _compute_invoice_month(txn_date, closing_day, due_offset)
+                    # NuBank double-lists purchases: once via the bills API
+                    # (with billId) and once at the account level (no billId).
+                    # Drop the account-level copy ONLY when a billed twin of THIS
+                    # purchase actually exists. Real charges on an open bill whose
+                    # recent purchases have no billId yet are KEPT.
+                    if (invoice_month, abs(amount), norm_desc) in billed_keys:
+                        skipped_count += 1
+                        existing_ext_ids.add(ext_id)
+                        if self.verbosity >= 2:
+                            self.stdout.write(
+                                f'  Billed dup skip: "{description}" {txn_date} R${amount}')
+                        continue
 
             # Content-based dedup: skip if same (amount, normalized description) with
             # date ±1 day already exists. Handles MeuPluggy external_id changes AND
@@ -491,8 +541,8 @@ class Command(BaseCommand):
 
             # Fuzzy dedup: match on (date, abs_amount, normalized_description)
             # Handles legacy data with different casing, punctuation, accents
+            # (norm_desc already computed above for the invoice-month resolution)
             raw_norm_desc = _norm(description)
-            norm_desc = _dedup_norm(description)
             synced_dates = existing_synced_by_amt.get((abs(amount), norm_desc), set())
             if any(abs((txn_date - d).days) <= 1 for d in synced_dates):
                 skipped_count += 1
@@ -571,7 +621,6 @@ class Command(BaseCommand):
             is_installment, installment_info = _detect_installment(description)
 
             # CC installment metadata from Pluggy (more reliable than regex)
-            cc_meta = ptxn.get('creditCardMetadata')
             if cc_meta and cc_meta.get('totalInstallments'):
                 is_installment = True
                 inst_num = cc_meta.get('installmentNumber', 1)
@@ -580,30 +629,6 @@ class Command(BaseCommand):
                 # Include installment info in display description if not already there
                 if not re.search(r'\d+/\d+', display_desc):
                     display_desc = f'{display_desc} {installment_info}'
-
-            # Compute invoice_month for CC transactions
-            invoice_month = ''
-            if is_cc:
-                # Use Pluggy billId if available (exact), else fall back to heuristic
-                bill_id = (cc_meta or {}).get('billId', '')
-                if bill_id and bill_id in self.bill_map:
-                    invoice_month = self.bill_map[bill_id]
-                else:
-                    invoice_month = _compute_invoice_month(txn_date, closing_day, due_offset)
-
-                    # Skip unbilled CC transactions ONLY when bills data
-                    # covers this invoice period.  Some banks (NuBank) return
-                    # the same purchase from both the bills API (with billId)
-                    # and account transactions (without billId).  Skip the
-                    # account-level duplicate, but KEEP recent purchases whose
-                    # invoice period has no bill yet (still open).
-                    if invoice_month in billed_months:
-                        skipped_count += 1
-                        existing_ext_ids.add(ext_id)
-                        if self.verbosity >= 2:
-                            self.stdout.write(
-                                f'  Unbilled dup skip: "{description}" {txn_date} R${amount}')
-                        continue
 
             # Detect internal transfers
             is_transfer = _detect_internal_transfer(description, amount, raw_desc)

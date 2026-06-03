@@ -249,3 +249,89 @@ class SalaryBudgetSyncTests(TestCase):
         ).order_by('pay_num')
         self.assertEqual(list(configs.values_list('pay_num', flat=True)), [1, 2])
         self.assertEqual(sum((cfg.limit_override for cfg in configs), Decimal('0.00')), Decimal('44000.00'))
+
+
+class PluggyBilledDuplicateSkipTests(TestCase):
+    """Regression for the over-aggressive 'unbilled dup' skip that suppressed
+    real charges on an OPEN bill.
+
+    The old guard skipped any no-billId CC transaction whose heuristic
+    invoice_month merely *had a bill* (``invoice_month in billed_months``).
+    On an open bill, recent purchases (last days before close) have no billId
+    yet, so real charges like ICATU (the 28th) were silently dropped every
+    cycle. The fix only skips a no-billId copy when a billed twin of THAT exact
+    purchase exists, and resolves it before touching the dedup indices.
+    """
+
+    def _cmd(self, profile, bill_map):
+        from api.management.commands.sync_pluggy import Command
+        cmd = Command()
+        cmd.profile = profile
+        cmd.dry_run = False
+        cmd.verbosity = 0
+        cmd.bill_map = bill_map
+        cmd.bill_totals = {}
+        cmd.card_account_map = {}
+        cmd.rename_rules = []
+        cmd.pluggy_mappings = {}
+        cmd.categorization_rules = []
+        return cmd
+
+    def _ptxn(self, _id, desc, day, amount, bill_id=None, total_inst=None):
+        meta = {}
+        if bill_id:
+            meta['billId'] = bill_id
+        if total_inst:
+            meta.update(totalInstallments=total_inst, installmentNumber=1)
+        return {
+            'id': _id,
+            'description': desc,
+            'descriptionRaw': desc,
+            'amount': amount,  # Pluggy CC: positive = charge
+            'date': f'2026-05-{day:02d}',
+            'creditCardMetadata': meta or None,
+        }
+
+    def test_open_bill_real_charge_kept_and_billed_dup_skipped(self):
+        profile = Profile.objects.create(name='Tester')
+        # Itaú-style: closes the 30th, due the 10th next month.
+        card = Account.objects.create(
+            profile=profile, name='Visa Infinite', account_type='credit_card',
+            closing_day=30, due_day=10,
+        )
+        # bill_map: an older closed bill (2026-05) and the still-open bill
+        # (2026-06) — the latter is what made the old guard misfire.
+        bill_map = {'B-APR': '2026-05', 'B-MAY': '2026-06'}
+
+        pluggy_txns = [
+            # Older charge itemized under the closed bill.
+            self._ptxn('t-store', 'STORE OLD', 5, 100.0, bill_id='B-APR'),
+            # Older charge already itemized under the open June bill.
+            self._ptxn('t-early', 'EARLY MAY STORE', 6, 50.0, bill_id='B-MAY'),
+            # NuBank-style genuine duplicate: account-level copy FIRST (no
+            # billId), then its billId twin. Tests that the skipped copy does
+            # NOT poison the content index and drop the twin too.
+            self._ptxn('t-petz-acct', 'PETZ DIGITAL', 30, 283.65),
+            self._ptxn('t-petz-bill', 'PETZ DIGITAL', 29, 283.65, bill_id='B-MAY'),
+            # Real recurring charge on the open bill, no billId yet (the ICATU
+            # failure mode). Heuristic invoice_month = 2026-06, which HAS a bill,
+            # but no billed twin of this purchase exists -> must be KEPT.
+            self._ptxn('t-icatu', 'ICATUSEGUROS*Icat', 28, 493.83),
+        ]
+
+        cmd = self._cmd(profile, bill_map)
+        new, skipped, updated = cmd._sync_transactions(pluggy_txns, card)
+
+        # ICATU survives.
+        icatu = Transaction.objects.filter(description__icontains='ICATU')
+        self.assertEqual(icatu.count(), 1)
+        self.assertEqual(icatu.first().amount, Decimal('-493.83'))
+        self.assertEqual(icatu.first().invoice_month, '2026-06')
+
+        # PETZ kept exactly once (the billId twin), account-level dup dropped.
+        self.assertEqual(
+            Transaction.objects.filter(description__icontains='PETZ').count(), 1)
+
+        # 4 created (store, early, petz-billed, icatu); 1 skipped (petz-acct).
+        self.assertEqual(new, 4)
+        self.assertEqual(skipped, 1)
