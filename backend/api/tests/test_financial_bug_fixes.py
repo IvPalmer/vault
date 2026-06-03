@@ -340,3 +340,33 @@ class PluggyBilledDuplicateSkipTests(TestCase):
         # 4 created (store, icatu-apr, petz-billed, icatu-may); 1 skipped (petz-acct).
         self.assertEqual(new, 4)
         self.assertEqual(skipped, 1)
+
+    def test_billed_dup_key_is_signed(self):
+        """The billed-twin gate keys on the SIGNED amount, so a no-billId
+        refund (-X) is not collapsed onto a billed same-merchant purchase (+X)
+        by THIS gate. (Same-day same-amount refunds are still collapsed by the
+        pre-existing abs-keyed synced dedup — out of scope here; the assertion
+        below only covers the gate added by this fix.)"""
+        profile = Profile.objects.create(name='Tester')
+        card = Account.objects.create(
+            profile=profile, name='Visa Infinite', account_type='credit_card',
+            closing_day=30, due_day=5,
+        )
+        bill_map = {'B-MAY': '2026-06'}
+        # Refund 2 days after the billed purchase — outside the ±1 day window of
+        # every dedup path, so it must survive end-to-end.
+        pluggy_txns = [
+            self._ptxn('t-buy', 'STORE X', '2026-05-20', 50.0, bill_id='B-MAY'),
+            self._ptxn('t-refund', 'STORE X', '2026-05-22', -50.0),
+        ]
+        cmd = self._cmd(profile, bill_map)
+        new, skipped, updated = cmd._sync_transactions(pluggy_txns, card)
+
+        store = Transaction.objects.filter(description__icontains='STORE X')
+        self.assertEqual(store.count(), 2)
+        self.assertEqual(
+            set(store.values_list('amount', flat=True)),
+            {Decimal('-50.00'), Decimal('50.00')},
+        )
+        self.assertEqual(new, 2)
+        self.assertEqual(skipped, 0)

@@ -454,16 +454,21 @@ class Command(BaseCommand):
             due_offset = 1  # Default: payment next month
 
         # Dates of purchases Pluggy itemized under a bill (carry a billId),
-        # indexed by (abs_amount, norm_desc). A no-billId account-level copy is
-        # a duplicate ONLY if a billed twin of the SAME purchase exists — same
-        # amount and description within ±1 day. Key on transaction identity
-        # (NOT invoice_month): invoice_month is derived two different ways on the
-        # two sides (Pluggy billId vs heuristic) so it doesn't align, and a
-        # recurring charge (ICATU/Apple/iFood — same amount+desc every month)
-        # would collide with a prior month's billed instance and be wrongly
-        # suppressed. The date separates the months; it also keeps real charges
-        # on an open bill whose recent purchases have no billId yet.
-        billed_dates_by_key = {}  # (abs_amount, norm_desc) -> set of dates
+        # indexed by (signed_amount, norm_desc). A no-billId account-level copy
+        # is a duplicate ONLY if a billed twin of the SAME purchase exists —
+        # same SIGNED amount and description within ±1 day. Three deliberate
+        # choices:
+        #   - Identity, NOT invoice_month: invoice_month is derived two
+        #     different ways on the two sides (Pluggy billId vs heuristic) so it
+        #     doesn't align. A recurring charge (ICATU/Apple/iFood — same
+        #     amount+desc monthly) would collide with a prior month's billed
+        #     instance and be wrongly suppressed.
+        #   - Date separates the months, and keeps real charges on an open bill
+        #     whose recent purchases have no billId yet.
+        #   - SIGNED amount (raw Pluggy value, before the Vault CC sign flip):
+        #     a refund/reversal (-X) must not be collapsed onto a same-merchant
+        #     purchase (+X) — only true bill/account twins share the same sign.
+        billed_dates_by_key = {}  # (signed_amount, norm_desc) -> set of dates
         if is_cc:
             for _ptxn in pluggy_txns:
                 _meta = _ptxn.get('creditCardMetadata') or {}
@@ -472,7 +477,7 @@ class Command(BaseCommand):
                     continue
                 _raw = _ptxn.get('descriptionRaw') or _ptxn.get('description', '')
                 _desc = _ptxn.get('description', _raw)
-                _key = (abs(_pluggy_brl_amount(_ptxn)), _dedup_norm(_desc))
+                _key = (_pluggy_brl_amount(_ptxn), _dedup_norm(_desc))
                 billed_dates_by_key.setdefault(_key, set()).add(
                     date.fromisoformat(_ptxn['date'][:10]))
 
@@ -519,11 +524,13 @@ class Command(BaseCommand):
                     # NuBank double-lists purchases: once via the bills API
                     # (with billId) and once at the account level (no billId).
                     # Drop the account-level copy ONLY when a billed twin of THIS
-                    # purchase exists (same amount + description within ±1 day).
-                    # Real charges on an open bill whose recent purchases have no
-                    # billId yet — and recurring charges from other months — are
-                    # KEPT.
-                    billed_dates = billed_dates_by_key.get((abs(amount), norm_desc), set())
+                    # purchase exists (same signed amount + description within
+                    # ±1 day). Real charges on an open bill whose recent
+                    # purchases have no billId yet — and recurring charges from
+                    # other months, and refunds of a same-merchant purchase —
+                    # are KEPT. raw_amount is the signed Pluggy value (matches
+                    # the billed_dates_by_key key built above).
+                    billed_dates = billed_dates_by_key.get((raw_amount, norm_desc), set())
                     if any(abs((txn_date - d).days) <= 1 for d in billed_dates):
                         skipped_count += 1
                         existing_ext_ids.add(ext_id)
