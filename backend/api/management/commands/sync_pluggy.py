@@ -453,13 +453,17 @@ class Command(BaseCommand):
         else:
             due_offset = 1  # Default: payment next month
 
-        # Identity keys of purchases Pluggy itemized under a bill (carry a
-        # billId). A no-billId account-level copy is a duplicate ONLY if such a
-        # billed twin actually exists — not merely because the invoice month
-        # has a bill. Open bills carry billIds for older charges while the most
-        # recent ones (last days before close) have none yet; keying on
-        # identity keeps those real charges (e.g. ICATU on the 28th).
-        billed_keys = set()  # (invoice_month, abs_amount, norm_desc)
+        # Dates of purchases Pluggy itemized under a bill (carry a billId),
+        # indexed by (abs_amount, norm_desc). A no-billId account-level copy is
+        # a duplicate ONLY if a billed twin of the SAME purchase exists — same
+        # amount and description within ±1 day. Key on transaction identity
+        # (NOT invoice_month): invoice_month is derived two different ways on the
+        # two sides (Pluggy billId vs heuristic) so it doesn't align, and a
+        # recurring charge (ICATU/Apple/iFood — same amount+desc every month)
+        # would collide with a prior month's billed instance and be wrongly
+        # suppressed. The date separates the months; it also keeps real charges
+        # on an open bill whose recent purchases have no billId yet.
+        billed_dates_by_key = {}  # (abs_amount, norm_desc) -> set of dates
         if is_cc:
             for _ptxn in pluggy_txns:
                 _meta = _ptxn.get('creditCardMetadata') or {}
@@ -468,11 +472,9 @@ class Command(BaseCommand):
                     continue
                 _raw = _ptxn.get('descriptionRaw') or _ptxn.get('description', '')
                 _desc = _ptxn.get('description', _raw)
-                billed_keys.add((
-                    self.bill_map[_bill_id],
-                    abs(_pluggy_brl_amount(_ptxn)),
-                    _dedup_norm(_desc),
-                ))
+                _key = (abs(_pluggy_brl_amount(_ptxn)), _dedup_norm(_desc))
+                billed_dates_by_key.setdefault(_key, set()).add(
+                    date.fromisoformat(_ptxn['date'][:10]))
 
         for ptxn in pluggy_txns:
             ext_id = ptxn['id']
@@ -517,9 +519,12 @@ class Command(BaseCommand):
                     # NuBank double-lists purchases: once via the bills API
                     # (with billId) and once at the account level (no billId).
                     # Drop the account-level copy ONLY when a billed twin of THIS
-                    # purchase actually exists. Real charges on an open bill whose
-                    # recent purchases have no billId yet are KEPT.
-                    if (invoice_month, abs(amount), norm_desc) in billed_keys:
+                    # purchase exists (same amount + description within ±1 day).
+                    # Real charges on an open bill whose recent purchases have no
+                    # billId yet — and recurring charges from other months — are
+                    # KEPT.
+                    billed_dates = billed_dates_by_key.get((abs(amount), norm_desc), set())
+                    if any(abs((txn_date - d).days) <= 1 for d in billed_dates):
                         skipped_count += 1
                         existing_ext_ids.add(ext_id)
                         if self.verbosity >= 2:

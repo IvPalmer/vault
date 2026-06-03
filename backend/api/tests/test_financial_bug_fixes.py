@@ -277,7 +277,7 @@ class PluggyBilledDuplicateSkipTests(TestCase):
         cmd.categorization_rules = []
         return cmd
 
-    def _ptxn(self, _id, desc, day, amount, bill_id=None, total_inst=None):
+    def _ptxn(self, _id, desc, iso_date, amount, bill_id=None, total_inst=None):
         meta = {}
         if bill_id:
             meta['billId'] = bill_id
@@ -288,50 +288,55 @@ class PluggyBilledDuplicateSkipTests(TestCase):
             'description': desc,
             'descriptionRaw': desc,
             'amount': amount,  # Pluggy CC: positive = charge
-            'date': f'2026-05-{day:02d}',
+            'date': iso_date,
             'creditCardMetadata': meta or None,
         }
 
-    def test_open_bill_real_charge_kept_and_billed_dup_skipped(self):
+    def test_open_bill_and_recurring_charges_kept_only_true_dups_skipped(self):
         profile = Profile.objects.create(name='Tester')
-        # Itaú-style: closes the 30th, due the 10th next month.
+        # Itaú-style: closes the 30th, due the 5th next month (due_offset 1).
         card = Account.objects.create(
             profile=profile, name='Visa Infinite', account_type='credit_card',
-            closing_day=30, due_day=10,
+            closing_day=30, due_day=5,
         )
-        # bill_map: an older closed bill (2026-05) and the still-open bill
-        # (2026-06) — the latter is what made the old guard misfire.
-        bill_map = {'B-APR': '2026-05', 'B-MAY': '2026-06'}
+        # Pluggy maps the APRIL ICATU charge's billId to invoice 2026-06 — the
+        # SAME invoice month the heuristic gives the no-billId MAY charge. That
+        # cross-month collision is exactly what an invoice_month-keyed skip got
+        # wrong; identity-by-date must keep both.
+        bill_map = {'B-MAR': '2026-04', 'B-ICATU-APR': '2026-06', 'B-MAY': '2026-06'}
 
         pluggy_txns = [
-            # Older charge itemized under the closed bill.
-            self._ptxn('t-store', 'STORE OLD', 5, 100.0, bill_id='B-APR'),
-            # Older charge already itemized under the open June bill.
-            self._ptxn('t-early', 'EARLY MAY STORE', 6, 50.0, bill_id='B-MAY'),
+            # Baseline billed charge.
+            self._ptxn('t-store', 'STORE OLD', '2026-03-05', 100.0, bill_id='B-MAR'),
+            # April instance of a RECURRING charge, billed (billId -> 2026-06),
+            # same amount+desc as the May instance below, ~30 days earlier.
+            self._ptxn('t-icatu-apr', 'ICATUSEGUROS*Icat', '2026-04-28', 493.83,
+                       bill_id='B-ICATU-APR'),
             # NuBank-style genuine duplicate: account-level copy FIRST (no
-            # billId), then its billId twin. Tests that the skipped copy does
-            # NOT poison the content index and drop the twin too.
-            self._ptxn('t-petz-acct', 'PETZ DIGITAL', 30, 283.65),
-            self._ptxn('t-petz-bill', 'PETZ DIGITAL', 29, 283.65, bill_id='B-MAY'),
-            # Real recurring charge on the open bill, no billId yet (the ICATU
-            # failure mode). Heuristic invoice_month = 2026-06, which HAS a bill,
-            # but no billed twin of this purchase exists -> must be KEPT.
-            self._ptxn('t-icatu', 'ICATUSEGUROS*Icat', 28, 493.83),
+            # billId), then its billId twin 1 day off. Tests that the skipped
+            # copy does NOT poison the content index and drop the twin too.
+            self._ptxn('t-petz-acct', 'PETZ DIGITAL', '2026-05-30', 283.65),
+            self._ptxn('t-petz-bill', 'PETZ DIGITAL', '2026-05-29', 283.65, bill_id='B-MAY'),
+            # MAY instance of the recurring charge, no billId yet (the ICATU
+            # failure mode). Heuristic invoice_month = 2026-06 collides with the
+            # April instance's billId month, but the dates are ~30 days apart ->
+            # NOT a duplicate -> must be KEPT.
+            self._ptxn('t-icatu-may', 'ICATUSEGUROS*Icat', '2026-05-28', 493.83),
         ]
 
         cmd = self._cmd(profile, bill_map)
         new, skipped, updated = cmd._sync_transactions(pluggy_txns, card)
 
-        # ICATU survives.
+        # Both recurring instances survive (different months, same amount/desc).
         icatu = Transaction.objects.filter(description__icontains='ICATU')
-        self.assertEqual(icatu.count(), 1)
-        self.assertEqual(icatu.first().amount, Decimal('-493.83'))
-        self.assertEqual(icatu.first().invoice_month, '2026-06')
+        self.assertEqual(icatu.count(), 2)
+        self.assertTrue(icatu.filter(date=date(2026, 5, 28),
+                                     amount=Decimal('-493.83')).exists())
 
         # PETZ kept exactly once (the billId twin), account-level dup dropped.
         self.assertEqual(
             Transaction.objects.filter(description__icontains='PETZ').count(), 1)
 
-        # 4 created (store, early, petz-billed, icatu); 1 skipped (petz-acct).
+        # 4 created (store, icatu-apr, petz-billed, icatu-may); 1 skipped (petz-acct).
         self.assertEqual(new, 4)
         self.assertEqual(skipped, 1)
