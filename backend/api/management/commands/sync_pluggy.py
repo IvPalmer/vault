@@ -86,6 +86,45 @@ def _extract_base_desc(description):
     return desc
 
 
+def _merchant_base(description):
+    """First merchant token (split on whitespace/'*', letters only). Collapses
+    the position-bearing suffix Pluggy varies between a purchase's billed and
+    account-level copies (MLJOI09/12 vs MLJOIE08/12 -> MERCADOLIVRE) while
+    keeping different merchants apart (ATEC vs GLEIDSON)."""
+    parts = (description or '').upper().split('*')[0].split()
+    if not parts:
+        return ''
+    tok = re.sub(r'[^A-Z]', '', parts[0])
+    if len(tok) < 3 and len(parts) > 1:
+        tok += re.sub(r'[^A-Z]', '', parts[1])
+    return tok[:12]
+
+
+def _installment_identity(cc_meta, description, brl_amount):
+    """Stable identity of a multi-installment CC charge, or None.
+
+    (cardNumber, purchaseDate, installmentNumber, totalInstallments,
+     merchant_base, brl_amount). Pluggy stamps the ORIGINAL purchaseDate
+     (full timestamp) on every position and re-lists the same position across
+     bill snapshots with shifting posting dates / billIds; keying on this
+     identity matches the same real charge across those shifts. Merchant +
+     amount are included as extra guards. Requires totalInstallments > 1 so
+     ordinary one-off purchases (totalInstallments == 1) are never matched.
+    """
+    if not cc_meta:
+        return None
+    total = cc_meta.get('totalInstallments')
+    # FULL purchaseDate timestamp: copies of one purchase share a byte-identical
+    # timestamp, but two distinct same-day purchases differ by seconds — so
+    # day-truncation could wrongly collapse them.
+    pdate = cc_meta.get('purchaseDate') or ''
+    if not (total and total > 1 and pdate):
+        return None
+    return (cc_meta.get('cardNumber', '') or '', pdate,
+            cc_meta.get('installmentNumber', 1), total,
+            _merchant_base(description), brl_amount)
+
+
 def _compute_invoice_month(txn_date, closing_day, due_offset=1):
     """
     Compute invoice_month for a CC transaction.
@@ -485,12 +524,49 @@ class Command(BaseCommand):
                 billed_dates_by_key.setdefault(_key, set()).add(
                     date.fromisoformat(_ptxn['date'][:10]))
 
+        # Installment de-duplication by purchase identity. Pluggy re-lists the
+        # same installment position across monthly bill snapshots (and as a
+        # no-billId account-level copy), each time with a different posting
+        # date / billId — producing within-month duplicates. Pick ONE winner
+        # per (card, purchaseDate, position): prefer the copy whose billId maps
+        # to a known invoice month (authoritative); fall back to the first seen.
+        # purchaseDate keeps genuinely repeated purchases (same merchant/amount/
+        # plan, different purchase date) apart, so no legitimate charge is lost.
+        inst_winner = {}  # identity -> (ext_id, has_billId)
+        if is_cc:
+            for _ptxn in pluggy_txns:
+                _desc = _ptxn.get('description') or _ptxn.get('descriptionRaw', '')
+                _ident = _installment_identity(
+                    _ptxn.get('creditCardMetadata'), _desc, _pluggy_brl_amount(_ptxn))
+                if _ident is None:
+                    continue
+                _bid = (_ptxn.get('creditCardMetadata') or {}).get('billId', '')
+                _has_bill = bool(_bid and _bid in self.bill_map)
+                _cur = inst_winner.get(_ident)
+                if _cur is None or (_has_bill and not _cur[1]):
+                    inst_winner[_ident] = (_ptxn['id'], _has_bill)
+
         for ptxn in pluggy_txns:
             ext_id = ptxn['id']
 
             # Skip if already synced by external_id
             if ext_id in existing_ext_ids:
                 skipped_count += 1
+                continue
+
+            # Installment duplicate: a re-listing of an installment position we
+            # picked a different winner for. Skip every copy that is not the
+            # chosen one (keeps the billId-backed copy, drops the rest).
+            _idesc = ptxn.get('description') or ptxn.get('descriptionRaw', '')
+            _ident = _installment_identity(
+                ptxn.get('creditCardMetadata'), _idesc, _pluggy_brl_amount(ptxn))
+            if _ident is not None and inst_winner.get(_ident, (ext_id,))[0] != ext_id:
+                skipped_count += 1
+                existing_ext_ids.add(ext_id)
+                if self.verbosity >= 2:
+                    self.stdout.write(
+                        f'  Installment dup skip: "{ptxn.get("description","")}" '
+                        f'{ptxn["date"][:10]} {_ident[2]}/{_ident[3]} purchase={_ident[1]}')
                 continue
 
             # Parse transaction data
@@ -656,6 +732,15 @@ class Command(BaseCommand):
             # Card last 4 digits from creditCardMetadata
             card_last4 = (cc_meta or {}).get('cardNumber', '') or ''
 
+            # Original purchase date (installments): stable anchor for dedup.
+            purchase_date = None
+            _pd = (cc_meta or {}).get('purchaseDate') or ''
+            if _pd:
+                try:
+                    purchase_date = date.fromisoformat(_pd[:10])
+                except ValueError:
+                    purchase_date = None
+
             # Apple subscriptions: the bank gives no brand, so resolve the
             # specific service by amount from reconciled history BEFORE the
             # generic "apple services -> Apple One" rule would fire.
@@ -700,6 +785,7 @@ class Command(BaseCommand):
                 pluggy_category=pluggy_category,
                 pluggy_category_id=pluggy_category_id,
                 card_last4=card_last4,
+                pluggy_purchase_date=purchase_date,
             )
             batch_create.append(txn)
             new_count += 1

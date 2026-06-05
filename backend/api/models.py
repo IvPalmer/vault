@@ -337,6 +337,10 @@ class Transaction(models.Model):
     is_manually_categorized = models.BooleanField(default=False)
     card_last4 = models.CharField(max_length=4, blank=True, default='',
                                    help_text='Last 4 digits of credit card (from Pluggy creditCardMetadata)')
+    pluggy_purchase_date = models.DateField(null=True, blank=True,
+                                            help_text='Original purchase date of an installment plan '
+                                                      '(Pluggy creditCardMetadata.purchaseDate); stable '
+                                                      'anchor for installment de-duplication')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
