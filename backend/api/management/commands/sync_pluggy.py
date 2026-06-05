@@ -487,7 +487,12 @@ class Command(BaseCommand):
 
         batch_create = []
         is_cc = vault_acct.account_type == 'credit_card'
-        closing_day = vault_acct.closing_day or 30  # Itau default
+        # Fallback only — used when a transaction has no Pluggy billId yet (very
+        # recent, unbilled). Itaú's real closing drifts ~27-29 (≈ N business days
+        # before the day-05 due date), so no fixed value is exact; 28 is a safe
+        # middle. Billed transactions use the authoritative billId month, and
+        # rebucket_invoice_month corrects any heuristic guess once the bill closes.
+        closing_day = vault_acct.closing_day or 28
         due_day = vault_acct.due_day
         # due_offset: 0 if payment is same month as closing (due > close),
         # 1 if payment is next month (due < close, e.g. Itaú close=25, due=5)
