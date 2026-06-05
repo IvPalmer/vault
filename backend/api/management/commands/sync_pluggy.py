@@ -441,11 +441,14 @@ class Command(BaseCommand):
             return re.sub(r'\s+', ' ', s.strip().lower())
 
         existing_pluggy_by_content = {}  # (amount, norm_desc) -> set of dates
+        existing_content_exact = {}      # (amount, norm_desc, date) -> count
         for t in Transaction.objects.filter(
             account_id__in=acct_ids, profile=self.profile
         ).exclude(external_id='').values_list('date', 'amount', 'description'):
             ckey = (t[1], _content_norm(t[2]))
             existing_pluggy_by_content.setdefault(ckey, set()).add(t[0])
+            ekey = (t[1], _content_norm(t[2]), t[0])
+            existing_content_exact[ekey] = existing_content_exact.get(ekey, 0) + 1
 
         # Use the central normalization helper from services.py so all dedup paths
         # (sync, get_metricas aggregation, dedup_phantom_transactions command)
@@ -551,6 +554,20 @@ class Command(BaseCommand):
                 if _cur is None or (_has_bill and not _cur[1]):
                     inst_winner[_ident] = (_ptxn['id'], _has_bill)
 
+        # How many charges Pluggy presents per (amount, desc, date). The number of
+        # DISTINCT external_ids Pluggy returns for an identical-content same-day
+        # key IS the real count — so the content dedup below may collapse copies
+        # only down to that count, never below it. This keeps genuinely repeated
+        # identical charges (e.g. three R$18 purchases at one merchant on one day)
+        # while still suppressing refresh re-imports (same charge, new ext_id).
+        incoming_content_exact = {}
+        for _ptxn in pluggy_txns:
+            _amt = -_pluggy_brl_amount(_ptxn) if is_cc else _pluggy_brl_amount(_ptxn)
+            _dsc = _ptxn.get('description') or _ptxn.get('descriptionRaw', '')
+            _ek = (_amt, _content_norm(_dsc), date.fromisoformat(_ptxn['date'][:10]))
+            incoming_content_exact[_ek] = incoming_content_exact.get(_ek, 0) + 1
+        created_content_exact = {}
+
         for ptxn in pluggy_txns:
             ext_id = ptxn['id']
 
@@ -630,8 +647,22 @@ class Command(BaseCommand):
             content_key = (amount, _content_norm(description))
             existing_dates = existing_pluggy_by_content.get(content_key, set())
             if any(abs((txn_date - d).days) <= 1 for d in existing_dates):
-                skipped_count += 1
-                continue
+                # ...unless Pluggy presents MORE identical copies than we already
+                # hold: those are genuinely distinct repeated charges, not a
+                # re-import. Allow up to the count Pluggy returns for this content,
+                # counted over the SAME ±1-day window as the presence check (so a
+                # date-shifted re-import still nets to zero and is skipped).
+                _cn = _content_norm(description)
+                allowance = sum(
+                    incoming_content_exact.get((amount, _cn, txn_date + timedelta(days=k)), 0)
+                    - existing_content_exact.get((amount, _cn, txn_date + timedelta(days=k)), 0)
+                    - created_content_exact.get((amount, _cn, txn_date + timedelta(days=k)), 0)
+                    for k in (-1, 0, 1))
+                if allowance <= 0:
+                    skipped_count += 1
+                    continue
+                created_content_exact[(amount, _cn, txn_date)] = \
+                    created_content_exact.get((amount, _cn, txn_date), 0) + 1
 
             # Track for future iterations in this batch
             existing_pluggy_by_content.setdefault(content_key, set()).add(txn_date)
