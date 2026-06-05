@@ -85,6 +85,10 @@ services:
         apt-get update -qq && apt-get install -y -qq cron > /dev/null 2>&1
         echo "$$SYNC_SCHEDULE cd /app && python manage.py sync_pluggy --profile Palmer --save-balance >> /proc/1/fd/1 2>&1" > /tmp/crontab
         echo "$$SYNC_SCHEDULE cd /app && python manage.py sync_pluggy --profile Rafa --save-balance >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        # Reconcile Pluggy installments after each sync: correct invoice_month
+        # from the authoritative billId, then remove re-listed duplicates.
+        echo "15 8 * * * cd /app && python manage.py rebucket_invoice_month --apply >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        echo "20 8 * * * cd /app && python manage.py dedup_installments --apply >> /proc/1/fd/1 2>&1" >> /tmp/crontab
         # Phantom-duplicate sentinel: runs 30 minutes after each Pluggy sync.
         # Logs counts; exits 1 if rows > 5 OR value > R$500 so cron logs flag regressions.
         echo "30 8 * * * cd /app && python manage.py check_phantom_duplicates --max-rows 5 --max-value 500 >> /proc/1/fd/1 2>&1" >> /tmp/crontab
