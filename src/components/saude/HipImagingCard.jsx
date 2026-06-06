@@ -4,6 +4,7 @@
  */
 import styles from './saude-widgets.module.css'
 import { PALMER_HIP_IMAGING } from './palmerHealthData'
+import HipModel3D from './HipModel3D'
 
 const STATUS_COLOR = {
   alto: '#b43c3c',
@@ -50,6 +51,9 @@ export default function HipImagingCard() {
           </div>
         ))}
       </div>
+
+      <div className={styles.widgetLabel} style={{ marginTop: 16 }}>Modelo 3D · TC segmentada</div>
+      <HipModel3D />
     </div>
   )
 }
