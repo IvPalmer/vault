@@ -95,6 +95,14 @@ function buildCards(data) {
   const faturaTotal = data.fatura_total || 0
   const faturaRemaining = data.fatura_remaining || 0
   const ccForProjection = faturaTotal > 0 ? faturaTotal : (data.parcelas || 0)
+  // Fixo billed to the card (insurance, subscriptions) rides on the fatura, so
+  // projection uses fixo_for_budget (= expected − on-card), not the full fixo.
+  const fixoForBudget = data.fixo_for_budget != null ? data.fixo_for_budget : fixoExpected
+  const fixoOnCc = data.fixo_on_cc || 0
+  // Residual variável already inside gastos_projetados (current month only), so
+  // the subtitle components always add up to the shown value.
+  const projVariavel = Math.max(
+    0, (data.gastos_projetados || 0) - fixoForBudget - investExpected - ccForProjection)
 
   const cards = {
     entradas_atuais: {
@@ -127,19 +135,19 @@ function buildCards(data) {
     gastos_projetados: {
       label: 'GASTOS PROJETADOS',
       value: `R$ ${fmt(data.gastos_projetados)}`,
-      subtitle: `fixo R$ ${fmt(fixoExpected)} + invest R$ ${fmt(investExpected)} + cartao R$ ${fmt(ccForProjection)}`,
+      subtitle: `fixo R$ ${fmt(fixoForBudget)} + invest R$ ${fmt(investExpected)} + cartão R$ ${fmt(ccForProjection)}${projVariavel > 1 ? ` + variável R$ ${fmt(projVariavel)}` : ''}`,
       color: '#fca5a5',
-      tooltip: `Previsao total de saidas da conta: fixos (R$ ${fmt(fixoExpected)}) + investimentos (R$ ${fmt(investExpected)}) + fatura cartao (R$ ${fmt(ccForProjection)}).`,
+      tooltip: `Previsao total de saidas: fixos de conta (R$ ${fmt(fixoForBudget)}) + investimentos (R$ ${fmt(investExpected)}) + fatura cartao (R$ ${fmt(ccForProjection)})${projVariavel > 1 ? ` + variavel ja gasto (R$ ${fmt(projVariavel)})` : ''}. Fixos no cartao (R$ ${fmt(fixoOnCc)}) ja entram na fatura, por isso nao somam de novo.`,
     },
     gastos_fixos: {
       label: 'GASTOS FIXOS',
       value: `R$ ${fmt(fixoPaid)}`,
       subtitle: fixoExpected > 0
-        ? `pagos de R$ ${fmt(fixoExpected)} esperado`
+        ? `pagos de R$ ${fmt(fixoExpected)} esperado${fixoOnCc > 0 ? ` · R$ ${fmt(fixoOnCc)} no cartão` : ''}`
         : 'pagos ate agora',
       color: 'var(--color-red)',
       progress: fixoExpected > 0 ? (fixoPaid / fixoExpected) * 100 : null,
-      tooltip: `Fixos ja pagos: R$ ${fmt(fixoPaid)}. Falta pagar: R$ ${fmt(fixoPending)}. Total esperado: R$ ${fmt(fixoExpected)}.`,
+      tooltip: `Fixos ja pagos: R$ ${fmt(fixoPaid)}. Falta pagar da conta: R$ ${fmt(fixoPending)}. No cartao (na fatura): R$ ${fmt(fixoOnCc)}. Total esperado: R$ ${fmt(fixoExpected)}.`,
     },
     gastos_invest: {
       label: 'GASTOS INVEST.',
