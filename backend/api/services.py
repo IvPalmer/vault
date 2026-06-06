@@ -1169,6 +1169,56 @@ def _get_checking_balance_eom(month_str, profile=None):
     return None
 
 
+# Fixo-on-credit-card inference: how many prior linked months to inspect, and the
+# minimum that must carry evidence, before trusting that an unlinked current month
+# is also card-billed. See _template_history_is_cc_billed.
+FIXO_CC_HISTORY_LOOKBACK = 3
+FIXO_CC_HISTORY_MIN_EVIDENCE = 2
+
+
+def _mapping_linked_txns(mapping):
+    """Transactions linked to a RecurringMapping (M2M, else legacy FK)."""
+    linked = list(mapping.transactions.all())
+    if not linked and mapping.transaction_id:
+        linked = [mapping.transaction]
+    return linked
+
+
+def _linked_txns_cc_state(linked_txns, cc_account_ids):
+    """True if all linked txns are on credit-card accounts, False if any is not,
+    None when there are no linked txns (inconclusive)."""
+    if not linked_txns:
+        return None
+    return all(t.account_id in cc_account_ids for t in linked_txns)
+
+
+def _template_history_is_cc_billed(template_id, month_str, profile, cc_account_ids):
+    """Infer whether a fixo template is billed to a credit card from its recent
+    payment history, for months where the current mapping isn't linked yet.
+
+    Looks back at the template's prior mappings that HAVE linked transactions
+    (most recent first), takes up to LOOKBACK of them, and returns True only when
+    there are at least MIN_EVIDENCE of them and EVERY one was CC-only. Conservative
+    by design: a single checking-linked month blocks the inference, so a payment-
+    method switch is never silently treated as still-on-card."""
+    if not template_id:
+        return False
+    evidence = []
+    qs = (RecurringMapping.objects
+          .filter(profile=profile, template_id=template_id, month_str__lt=month_str)
+          .exclude(status='skipped')
+          .order_by('-month_str')
+          .select_related('transaction').prefetch_related('transactions'))
+    for hm in qs:
+        state = _linked_txns_cc_state(_mapping_linked_txns(hm), cc_account_ids)
+        if state is None:
+            continue
+        evidence.append(state)
+        if len(evidence) >= FIXO_CC_HISTORY_LOOKBACK:
+            break
+    return len(evidence) >= FIXO_CC_HISTORY_MIN_EVIDENCE and all(evidence)
+
+
 def get_metricas(month_str, profile=None):
     """
     MÉTRICAS — unified dashboard metrics replacing both get_summary_metrics
@@ -1304,10 +1354,14 @@ def get_metricas(month_str, profile=None):
                 fixo_on_cc += _mapping_expected_amount(m)
                 _fixo_on_cc_mapping_ids.add(m.id)
             continue
-        linked_txns = list(m.transactions.all())
-        if not linked_txns and m.transaction:
-            linked_txns = [m.transaction]
-        if linked_txns and all(t.account_id in cc_account_ids for t in linked_txns):
+        # Current-month links win; if this month isn't linked yet, infer from the
+        # template's recent payment history so card-billed fixo (insurance, etc.)
+        # isn't double-counted (once in a_pagar, once in the fatura).
+        state = _linked_txns_cc_state(_mapping_linked_txns(m), cc_account_ids)
+        if state is None:
+            state = _template_history_is_cc_billed(
+                m.template_id, month_str, profile, cc_account_ids)
+        if state:
             fixo_on_cc += _mapping_expected_amount(m)
             _fixo_on_cc_mapping_ids.add(m.id)
     fixo_for_budget = fixo_expected_total - fixo_on_cc
@@ -3754,16 +3808,19 @@ def get_projection(start_month_str, num_months=0, profile=None):
             if share >= Decimal('0.9'):
                 _fixo_on_cc_tpl_ids.add(ft.id)
             continue
-        # Check if this fixo template's current-month mapping links to CC transactions
+        # Current-month link wins; else infer from the template's payment history
+        # (same rule as get_metricas) so card-billed fixo stays out of projected
+        # fixo for every month, not just months that happen to be linked.
         cur_mapping = RecurringMapping.objects.filter(
             month_str=start_month_str, profile=profile, template=ft,
-        ).exclude(status='skipped').prefetch_related('transactions').first()
-        if cur_mapping:
-            linked = list(cur_mapping.transactions.all())
-            if not linked and cur_mapping.transaction:
-                linked = [cur_mapping.transaction]
-            if linked and all(t.account_id in _cc_acct_ids_proj for t in linked):
-                _fixo_on_cc_tpl_ids.add(ft.id)
+        ).exclude(status='skipped').select_related('transaction').prefetch_related('transactions').first()
+        state = (_linked_txns_cc_state(_mapping_linked_txns(cur_mapping), _cc_acct_ids_proj)
+                 if cur_mapping else None)
+        if state is None:
+            state = _template_history_is_cc_billed(
+                ft.id, start_month_str, profile, _cc_acct_ids_proj)
+        if state:
+            _fixo_on_cc_tpl_ids.add(ft.id)
 
     # Realistic variable estimate for future months (dynamic): trailing avg of
     # ACTUAL variable spend over the last 3 closed months, minus the parcela
