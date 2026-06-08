@@ -12,7 +12,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import GoogleAccount
+from .models import GoogleAccount, HealthExam
 from .serializers import GoogleAccountSerializer
 from . import google_auth
 from . import google_gmail
@@ -320,11 +320,17 @@ class CursoStreamView(APIView):
             return Response({'error': 'No Google account'},
                             status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        # Scope guard (cached) — never proxy files outside the course folder.
+        # Scope guard (cached) — never proxy arbitrary Drive files. Two narrow
+        # allowlists: (a) a Drive id explicitly registered as a HealthExam
+        # video (cheap DB check, no folder walk), or (b) a file nested under
+        # the course root. DB check first so exam videos skip the Drive walk.
         allowed = _stream_scope_cache.get(file_id)
         if allowed is None:
-            allowed = google_drive.is_descendant_of(
-                account, file_id, google_drive.CURSO_BEBE_ROOT_FOLDER)
+            allowed = (
+                HealthExam.objects.filter(valores__video_drive_id=file_id).exists()
+                or google_drive.is_descendant_of(
+                    account, file_id, google_drive.CURSO_BEBE_ROOT_FOLDER)
+            )
             _stream_scope_cache[file_id] = allowed
         if not allowed:
             return Response({'error': 'Not allowed'},

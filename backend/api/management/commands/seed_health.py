@@ -155,7 +155,7 @@ RAFA_EXAMS = [
         'medico': 'Dra. Nahara Alves Gomes Torres',
         'laboratorio': 'DASA / Lab Exame Asa Sul',
         'checkpoint_id': 'lab-1tri',
-        'arquivo_path': 'family/pregnancy/exames/2026-05-13_vitamina_d/',
+        'arquivo_path': 'https://drive.google.com/file/d/1qXPcfX1hTCjVu7HICqHPqFzZ57rZxikf/view',
         'notes': 'Resultado 19 ng/mL — INSUFICIÊNCIA (ref grupo risco 30-60). Histórico: 41 (mai/2025) → 19 (mai/2026). Discutir suplementação D3 próxima consulta Dra. Nahara. Recoletar em 8-12 semanas.',
         'valores': {
             'status': 'resultado_recebido',
@@ -169,18 +169,37 @@ RAFA_EXAMS = [
             ],
         },
     },
-    # ─── USG transvaginal datação agendada (2026-05-18) ───
+    # ─── USG transvaginal datação — realizada 2026-05-20 (agendada 18/05) ───
     {
         'tipo': 'imagem_us',
         'nome': 'USG transvaginal gestacional (datação)',
-        'data': date(2026, 5, 18),
-        'medico': 'Dra. Nahara Alves Gomes Torres (solicitante)',
-        'laboratorio': 'A confirmar',
+        'data': date(2026, 5, 20),
+        'medico': 'Dra. Alexandra Paula de Oliveira (CRM-DF 13135) · solicitante Dra. Nahara Torres',
+        'laboratorio': 'Mega Asa Norte (Biosphere)',
         'checkpoint_id': 'usg-datacao',
-        'notes': 'Agendada 18/05/2026 (~IG 7+4). Coberta pela Proasa (carências aproveitadas) desde adesão 06/05. Amil USG libera apenas 28/05.',
+        # Pasta Drive vinculada contém laudo.pdf + imagens.pdf + filmagem.mp4 (vídeo)
+        'arquivo_path': 'https://drive.google.com/drive/folders/1yJxF3YgU-sCR8jsdb6Ej6GFbBolm4yVg',
+        'notes': ('Realizada 20/05/2026 (IG 9s1d, datação por CCN 24,5mm). Gestação tópica e única, '
+                  'implantação fúndica, BCF 168 bpm, vesícula vitelínica 3,7mm, colo 35,7mm com orifícios '
+                  'fechados, corpo lúteo bem vascularizado (OD). DPP 22/12/2026. Sem anormalidades. '
+                  'Laudo + imagens + filmagem (vídeo) na pasta Drive vinculada. Coberta Proasa ADV 300. '
+                  '(Agendada originalmente 18/05.)'),
         'valores': {
-            'status': 'agendado',
+            'ig': '9s1d',
+            'bcf_bpm': 168,
+            'ccn_mm': 24.5,
+            'dpp': '2026-12-22',
+            'status': 'realizado',
+            'embriao': 'único',
+            'implantacao': 'fúndica',
+            'saco_gestacional_mm': '48,3 × 17,6 × 50,2',
+            'vesicula_vitelinica_mm': 3.7,
+            'colo_mm': 35.7,
+            'corpo_luteo': 'OD, boa vascularização',
             'cobertura': 'Proasa ADV 300 DF',
+            'protocolo': '7667707288',
+            'data_agendada': '2026-05-18',
+            'video_drive_id': '1iLps4sjiVwwtOtpdjEJ-CYNMUbJMRK6-',
         },
     },
 ]

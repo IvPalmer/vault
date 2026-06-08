@@ -20,7 +20,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useProfile } from '../context/ProfileContext'
-import api from '../api/client'
+import api, { API_BASE_URL } from '../api/client'
 import styles from './Saude.module.css'
 import widgetStyles from './saude/saude-widgets.module.css'
 import PregnancyHero from './saude/PregnancyHero'
@@ -62,8 +62,17 @@ function formatDate(iso) {
   return `${d}/${m}/${y}`
 }
 
+// Exam videos stream through the same same-origin proxy as the courses
+// (reliable regardless of Drive's preview transcoding). See CursosView.
+const examStreamUrl = (id) => `${API_BASE_URL}/google/drive/stream/${id}/`
+
 function ExamRow({ exam }) {
-  const valoresEntries = exam.valores ? Object.entries(exam.valores).slice(0, 4) : []
+  const videoDriveId = exam.valores?.video_drive_id || null
+  // video_drive_id is a player hint, not a lab value — keep it out of the chips.
+  const valoresAll = exam.valores
+    ? Object.entries(exam.valores).filter(([k]) => k !== 'video_drive_id')
+    : []
+  const valoresEntries = valoresAll.slice(0, 4)
   return (
     <div className={styles.examRow}>
       <div className={styles.examMain}>
@@ -86,12 +95,22 @@ function ExamRow({ exam }) {
                 <strong>{k}:</strong> {String(v)}
               </span>
             ))}
-            {Object.keys(exam.valores || {}).length > 4 && (
-              <span className={styles.examValor}>+{Object.keys(exam.valores).length - 4}</span>
+            {valoresAll.length > 4 && (
+              <span className={styles.examValor}>+{valoresAll.length - 4}</span>
             )}
           </div>
         )}
         {exam.notes && <div className={styles.examNotes}>{exam.notes}</div>}
+        {videoDriveId && (
+          <video
+            key={videoDriveId}
+            src={examStreamUrl(videoDriveId)}
+            controls
+            playsInline
+            preload="metadata"
+            style={{ width: '100%', maxWidth: 560, marginTop: 10, borderRadius: 8, background: '#000', display: 'block' }}
+          />
+        )}
       </div>
       {exam.arquivo_path && (() => {
         // arquivo_path can be (a) a https:// URL (Drive, etc.) — works on any
