@@ -1,10 +1,10 @@
 /**
  * GlucoseLogCard — gráfico da automonitorização de glicose capilar (gestação).
  *
- * Plota o jejum diário (linha azul) sobre a faixa-alvo 65–95 mg/dL e o maior
- * valor pós-refeição do dia (linha âmbar), com a linha de corte de 140 mg/dL.
- * Abaixo, resumo de estatísticas e a lista de picos pós-refeição (≥130) ligando
- * cada pico à refeição que o provocou.
+ * Plota as três medições diárias — jejum (azul), almoço (âmbar) e jantar (teal) —
+ * sobre a faixa-alvo de jejum 65–95 mg/dL e a linha de corte pós-refeição de
+ * 140 mg/dL. Pontos acima do alvo ficam vermelhos. Abaixo, resumo por refeição
+ * e a lista de picos (≥130) ligando cada valor à refeição que o provocou.
  */
 import { useMemo } from 'react'
 import {
@@ -13,82 +13,93 @@ import {
 } from 'recharts'
 import styles from './saude-widgets.module.css'
 
-const C_JEJUM = '#5b8bc4'   // azul — jejum
-const C_POS = '#c47e3a'     // âmbar — pós-refeição
-const C_BAND = '#5fa67a'    // verde — faixa-alvo jejum
-const C_OVER = '#b43c3c'    // vermelho — acima do limite
+const C_JEJUM = '#5b8bc4'    // azul — jejum
+const C_ALMOCO = '#c47e3a'   // âmbar — almoço (pós-almoço/tarde)
+const C_JANTAR = '#3f8f8a'   // teal — jantar (pós-jantar/noite)
+const C_BAND = '#5fa67a'     // verde — faixa-alvo jejum
+const C_POSBAND = '#d9a441'  // gold — faixa pós-refeição 120–140 (2h/1h)
+const C_OVER = '#b43c3c'     // vermelho — acima do limite
 
 function ddmm(iso) {
   const [, m, d] = iso.split('-')
   return `${d}/${m}`
 }
 
-function GlucoseTooltip({ active, payload }) {
+const isJejumOver = (v, ref) => v > ref.max || v < ref.min
+const isPosOver = (v, max) => v >= max
+
+// Fábrica de dots: vermelho quando acima do alvo, cor da série caso contrário.
+const makeDot = (color, over) => (props) => {
+  const { cx, cy, value, index } = props
+  if (cx == null || cy == null || value == null) return null
+  return (
+    <circle
+      key={index} cx={cx} cy={cy} r={3.5}
+      fill={over(value) ? C_OVER : color} stroke="#fff" strokeWidth={1}
+    />
+  )
+}
+
+function GlucoseTooltip({ active, payload, refs }) {
   const d = active ? payload?.[0]?.payload : null
   if (!d) return null
-  const pos = d.pos ?? []
+  const row = (label, color, valor, refeicao, over) => valor == null ? null : (
+    <div className={styles.glucoseTooltipPos}>
+      <div className={styles.glucoseTooltipRow}>
+        <span style={{ color }}>{label}</span>
+        <strong style={{ color: over ? C_OVER : 'inherit' }}>{valor} mg/dL</strong>
+      </div>
+      {refeicao && <div className={styles.glucoseTooltipMeal}>{refeicao}</div>}
+    </div>
+  )
   return (
     <div className={styles.glucoseTooltip}>
       <div className={styles.glucoseTooltipDate}>{ddmm(d.data)} · {d.dia}º dia</div>
-      {d.jejum != null && (
-        <div className={styles.glucoseTooltipRow}>
-          <span style={{ color: C_JEJUM }}>Jejum</span>
-          <strong style={{ color: d.jejumOver ? C_OVER : 'inherit' }}>{d.jejum} mg/dL</strong>
-        </div>
-      )}
-      {pos.map((p, i) => (
-        <div key={i} className={styles.glucoseTooltipPos}>
-          <div className={styles.glucoseTooltipRow}>
-            <span style={{ color: C_POS }}>Pós-refeição</span>
-            <strong style={{ color: p.valor >= 140 ? C_OVER : 'inherit' }}>{p.valor} mg/dL</strong>
-          </div>
-          <div className={styles.glucoseTooltipMeal}>{p.refeicao}</div>
-        </div>
-      ))}
+      {row('Jejum', C_JEJUM, d.jejum, null, d.jejum != null && isJejumOver(d.jejum, refs.jejum))}
+      {row('Almoço', C_ALMOCO, d.almoco, d.almocoMeal, d.almoco != null && isPosOver(d.almoco, refs.pos1h.max))}
+      {row('Jantar', C_JANTAR, d.jantar, d.jantarMeal, d.jantar != null && isPosOver(d.jantar, refs.pos1h.max))}
       {d.nota && <div className={styles.glucoseTooltipNote}>{d.nota}</div>}
     </div>
   )
 }
 
-function JejumDot({ cx, cy, payload }) {
-  if (cx == null || cy == null || payload.jejum == null) return null
-  const over = payload.jejumOver
-  return <circle cx={cx} cy={cy} r={3.5} fill={over ? C_OVER : C_JEJUM} stroke="#fff" strokeWidth={1} />
-}
-
-function PosDot({ cx, cy, payload }) {
-  if (cx == null || cy == null || payload.posMax == null) return null
-  const over = payload.posMax >= 140
-  return <circle cx={cx} cy={cy} r={3.5} fill={over ? C_OVER : C_POS} stroke="#fff" strokeWidth={1} />
+function avg(nums) {
+  return nums.length ? Math.round(nums.reduce((s, n) => s + n, 0) / nums.length) : null
 }
 
 export default function GlucoseLogCard({ log }) {
   const { chartData, stats, picos } = useMemo(() => {
     if (!log?.dias?.length) return { chartData: [], stats: null, picos: [] }
-    const { jejum: refJejum } = log.referencias
+    const { jejum: refJejum, pos1h } = log.referencias
 
-    const chartData = log.dias.map(d => {
-      const posMax = d.pos.length ? Math.max(...d.pos.map(p => p.valor)) : null
-      return {
-        ...d,
-        label: ddmm(d.data),
-        posMax,
-        jejumOver: d.jejum != null && (d.jejum > refJejum.max || d.jejum < refJejum.min),
-      }
-    })
+    const chartData = log.dias.map(d => ({
+      dia: d.dia,
+      data: d.data,
+      label: ddmm(d.data),
+      jejum: d.jejum,
+      almoco: d.almoco?.valor ?? null,
+      almocoMeal: d.almoco?.refeicao ?? null,
+      jantar: d.jantar?.valor ?? null,
+      jantarMeal: d.jantar?.refeicao ?? null,
+      nota: d.nota ?? null,
+    }))
 
-    const jejuns = chartData.filter(d => d.jejum != null)
-    const hasJejum = jejuns.length > 0
-    const inTarget = jejuns.filter(d => d.jejum >= refJejum.min && d.jejum <= refJejum.max).length
-    const allPos = log.dias.flatMap(d => d.pos.map(p => ({ ...p, data: d.data })))
+    const jejuns = chartData.filter(d => d.jejum != null).map(d => d.jejum)
+    const almocos = chartData.filter(d => d.almoco != null).map(d => d.almoco)
+    const jantares = chartData.filter(d => d.jantar != null).map(d => d.jantar)
+    const inTarget = jejuns.filter(v => v >= refJejum.min && v <= refJejum.max).length
+    const allPos = [
+      ...log.dias.filter(d => d.almoco).map(d => ({ ...d.almoco, data: d.data, meal: 'Almoço' })),
+      ...log.dias.filter(d => d.jantar).map(d => ({ ...d.jantar, data: d.data, meal: 'Jantar' })),
+    ]
+
     const stats = {
-      nReg: log.dias.filter(d => d.jejum != null || d.pos.length > 0).length,
-      jejumMedia: hasJejum ? Math.round(jejuns.reduce((s, d) => s + d.jejum, 0) / jejuns.length) : null,
-      jejumMin: hasJejum ? Math.min(...jejuns.map(d => d.jejum)) : null,
-      jejumMax: hasJejum ? Math.max(...jejuns.map(d => d.jejum)) : null,
-      jejumPctTarget: hasJejum ? Math.round((inTarget / jejuns.length) * 100) : null,
-      nPos: allPos.length,
-      nPosOver: allPos.filter(p => p.valor >= log.referencias.pos1h.max).length,
+      nReg: log.dias.filter(d => d.jejum != null || d.almoco || d.jantar).length,
+      jejumMedia: avg(jejuns),
+      jejumPctTarget: jejuns.length ? Math.round((inTarget / jejuns.length) * 100) : null,
+      almocoMedia: avg(almocos),
+      jantarMedia: avg(jantares),
+      nPosOver: allPos.filter(p => p.valor >= pos1h.max).length,
     }
 
     const picos = allPos
@@ -113,37 +124,38 @@ export default function GlucoseLogCard({ log }) {
 
       <div className={styles.glucoseStats}>
         <div className={styles.glucoseStat}>
-          <span className={styles.glucoseStatNum}>{stats.jejumMedia ?? '—'}</span>
+          <span className={styles.glucoseStatNum} style={{ color: C_JEJUM }}>{stats.jejumMedia ?? '—'}</span>
           <span className={styles.glucoseStatLabel}>jejum médio</span>
-        </div>
-        <div className={styles.glucoseStat}>
-          <span className={styles.glucoseStatNum}>
-            {stats.jejumMin != null ? `${stats.jejumMin}–${stats.jejumMax}` : '—'}
-          </span>
-          <span className={styles.glucoseStatLabel}>faixa jejum</span>
         </div>
         <div className={styles.glucoseStat}>
           <span className={styles.glucoseStatNum}>{stats.jejumPctTarget != null ? `${stats.jejumPctTarget}%` : '—'}</span>
           <span className={styles.glucoseStatLabel}>jejum no alvo</span>
         </div>
         <div className={styles.glucoseStat}>
-          <span className={styles.glucoseStatNum} style={stats.nPosOver ? { color: C_OVER } : undefined}>
-            {stats.nPosOver}
-          </span>
-          <span className={styles.glucoseStatLabel}>pós ≥ 140 ({stats.nPos} medições)</span>
+          <span className={styles.glucoseStatNum} style={{ color: C_ALMOCO }}>{stats.almocoMedia ?? '—'}</span>
+          <span className={styles.glucoseStatLabel}>almoço médio</span>
+        </div>
+        <div className={styles.glucoseStat}>
+          <span className={styles.glucoseStatNum} style={{ color: C_JANTAR }}>{stats.jantarMedia ?? '—'}</span>
+          <span className={styles.glucoseStatLabel}>jantar médio</span>
         </div>
       </div>
 
-      <ResponsiveContainer width="100%" height={280}>
+      <ResponsiveContainer width="100%" height={300}>
         <ComposedChart data={chartData} margin={{ top: 12, right: 12, bottom: 4, left: -12 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border, #e3e3e3)" vertical={false} />
           {/* faixa-alvo de jejum 65–95 */}
           <ReferenceArea y1={refJejum.min} y2={refJejum.max} fill={C_BAND} fillOpacity={0.12} />
           <ReferenceLine y={refJejum.max} stroke={C_BAND} strokeDasharray="4 4" strokeOpacity={0.7} />
-          {/* limite pós-refeição 1h */}
+          {/* faixa pós-refeição: 2h < 120, 1h < 140 (hora nem sempre registrada) */}
+          <ReferenceArea y1={pos2h.max} y2={pos1h.max} fill={C_POSBAND} fillOpacity={0.12} />
+          <ReferenceLine
+            y={pos2h.max} stroke={C_POSBAND} strokeDasharray="4 4" strokeOpacity={0.8}
+            label={{ value: '120 · 2h', position: 'right', fill: C_POSBAND, fontSize: 9 }}
+          />
           <ReferenceLine
             y={pos1h.max} stroke={C_OVER} strokeDasharray="4 4" strokeOpacity={0.6}
-            label={{ value: '140', position: 'right', fill: C_OVER, fontSize: 10 }}
+            label={{ value: '140 · 1h', position: 'right', fill: C_OVER, fontSize: 9 }}
           />
           <XAxis
             dataKey="label"
@@ -161,23 +173,28 @@ export default function GlucoseLogCard({ log }) {
             tickLine={false}
             width={36}
           />
-          <Tooltip content={<GlucoseTooltip />} />
+          <Tooltip content={<GlucoseTooltip refs={log.referencias} />} />
           <Line
             type="monotone" dataKey="jejum" name="Jejum" stroke={C_JEJUM} strokeWidth={2}
-            dot={<JejumDot />} activeDot={{ r: 5 }}
+            dot={makeDot(C_JEJUM, v => isJejumOver(v, refJejum))} activeDot={{ r: 5 }}
           />
           <Line
-            type="monotone" dataKey="posMax" name="Pós-refeição (maior do dia)" stroke={C_POS}
-            strokeWidth={1.5} strokeDasharray="2 3" dot={<PosDot />} activeDot={{ r: 5 }}
+            type="monotone" dataKey="almoco" name="Almoço" stroke={C_ALMOCO} strokeWidth={1.5}
+            dot={makeDot(C_ALMOCO, v => isPosOver(v, pos1h.max))} activeDot={{ r: 5 }}
+          />
+          <Line
+            type="monotone" dataKey="jantar" name="Jantar" stroke={C_JANTAR} strokeWidth={1.5}
+            dot={makeDot(C_JANTAR, v => isPosOver(v, pos1h.max))} activeDot={{ r: 5 }}
           />
         </ComposedChart>
       </ResponsiveContainer>
 
       <div className={styles.glucoseLegend}>
         <span><i style={{ background: C_JEJUM }} /> Jejum</span>
-        <span><i style={{ background: C_POS }} /> Pós-refeição (maior do dia)</span>
-        <span><i style={{ background: C_BAND, opacity: 0.5 }} /> {refJejum.label}</span>
-        <span><i style={{ background: C_OVER, opacity: 0.6 }} /> Limite pós: &lt; {pos1h.max} (1h) / &lt; {pos2h.max} (2h)</span>
+        <span><i style={{ background: C_ALMOCO }} /> Almoço</span>
+        <span><i style={{ background: C_JANTAR }} /> Jantar</span>
+        <span><i style={{ background: C_BAND, opacity: 0.5 }} /> Alvo jejum {refJejum.min}–{refJejum.max}</span>
+        <span><i style={{ background: C_POSBAND, opacity: 0.6 }} /> Faixa pós-refeição {pos2h.max}–{pos1h.max} (2h &lt; {pos2h.max} · 1h &lt; {pos1h.max})</span>
       </div>
 
       {picos.length > 0 && (
@@ -188,12 +205,14 @@ export default function GlucoseLogCard({ log }) {
               <li key={i} className={styles.glucosePicosItem}>
                 <span
                   className={styles.glucosePicosVal}
-                  style={{ color: p.valor >= pos1h.max ? C_OVER : C_POS }}
+                  style={{ color: p.valor >= pos1h.max ? C_OVER : C_ALMOCO }}
                 >
                   {p.valor}
                 </span>
                 <span className={styles.glucosePicosDate}>{ddmm(p.data)}</span>
-                <span className={styles.glucosePicosMeal}>{p.refeicao}</span>
+                <span className={styles.glucosePicosMeal}>
+                  <strong style={{ color: p.meal === 'Jantar' ? C_JANTAR : C_ALMOCO }}>{p.meal}</strong> · {p.refeicao}
+                </span>
               </li>
             ))}
           </ul>
