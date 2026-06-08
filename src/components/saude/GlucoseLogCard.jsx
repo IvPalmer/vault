@@ -34,8 +34,8 @@ const makeDot = (color, over) => (props) => {
   if (cx == null || cy == null || value == null) return null
   return (
     <circle
-      key={index} cx={cx} cy={cy} r={3.5}
-      fill={over(value) ? C_OVER : color} stroke="#fff" strokeWidth={1}
+      key={index} cx={cx} cy={cy} r={4}
+      fill={over(value) ? C_OVER : color} stroke="#fff" strokeWidth={1.25}
     />
   )
 }
@@ -175,16 +175,16 @@ export default function GlucoseLogCard({ log }) {
           />
           <Tooltip content={<GlucoseTooltip refs={log.referencias} />} />
           <Line
-            type="monotone" dataKey="jejum" name="Jejum" stroke={C_JEJUM} strokeWidth={2}
-            dot={makeDot(C_JEJUM, v => isJejumOver(v, refJejum))} activeDot={{ r: 5 }}
+            type="monotone" dataKey="jejum" name="Jejum" stroke={C_JEJUM} strokeWidth={2.5}
+            dot={makeDot(C_JEJUM, v => isJejumOver(v, refJejum))} activeDot={{ r: 5 }} connectNulls
           />
           <Line
-            type="monotone" dataKey="almoco" name="Almoço" stroke={C_ALMOCO} strokeWidth={1.5}
-            dot={makeDot(C_ALMOCO, v => isPosOver(v, pos1h.max))} activeDot={{ r: 5 }}
+            type="monotone" dataKey="almoco" name="Almoço" stroke={C_ALMOCO} strokeWidth={2}
+            dot={makeDot(C_ALMOCO, v => isPosOver(v, pos1h.max))} activeDot={{ r: 5 }} connectNulls
           />
           <Line
-            type="monotone" dataKey="jantar" name="Jantar" stroke={C_JANTAR} strokeWidth={1.5}
-            dot={makeDot(C_JANTAR, v => isPosOver(v, pos1h.max))} activeDot={{ r: 5 }}
+            type="monotone" dataKey="jantar" name="Jantar" stroke={C_JANTAR} strokeWidth={2}
+            dot={makeDot(C_JANTAR, v => isPosOver(v, pos1h.max))} activeDot={{ r: 5 }} connectNulls
           />
         </ComposedChart>
       </ResponsiveContainer>
