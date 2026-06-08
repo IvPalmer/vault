@@ -13,12 +13,14 @@ import {
 } from 'recharts'
 import styles from './saude-widgets.module.css'
 
-const C_JEJUM = '#5b8bc4'    // azul — jejum
-const C_ALMOCO = '#c47e3a'   // âmbar — almoço (pós-almoço/tarde)
-const C_JANTAR = '#3f8f8a'   // teal — jantar (pós-jantar/noite)
-const C_BAND = '#5fa67a'     // verde — faixa-alvo jejum
-const C_POSBAND = '#d9a441'  // gold — faixa pós-refeição 120–140 (2h/1h)
-const C_OVER = '#b43c3c'     // vermelho — acima do limite
+// Trio de séries em paleta acessível (Okabe-Ito): azul / laranja / rosa-roxo —
+// mutuamente distintas e fora das cores das faixas (verde + cinza) e do vermelho.
+const C_JEJUM = '#0072b2'    // azul — jejum
+const C_ALMOCO = '#e69f00'   // laranja — almoço (pós-almoço/tarde)
+const C_JANTAR = '#cc79a7'   // rosa-roxo — jantar (pós-jantar/noite)
+const C_BAND = '#5fa67a'     // verde — faixa-alvo jejum (zona boa)
+const C_POSBAND = '#8a8f99'  // cinza — faixa pós-refeição 120–140 (referência neutra)
+const C_OVER = '#c0392b'     // vermelho — acima do limite
 
 function ddmm(iso) {
   const [, m, d] = iso.split('-')
@@ -148,7 +150,7 @@ export default function GlucoseLogCard({ log }) {
           <ReferenceArea y1={refJejum.min} y2={refJejum.max} fill={C_BAND} fillOpacity={0.12} />
           <ReferenceLine y={refJejum.max} stroke={C_BAND} strokeDasharray="4 4" strokeOpacity={0.7} />
           {/* faixa pós-refeição: 2h < 120, 1h < 140 (hora nem sempre registrada) */}
-          <ReferenceArea y1={pos2h.max} y2={pos1h.max} fill={C_POSBAND} fillOpacity={0.12} />
+          <ReferenceArea y1={pos2h.max} y2={pos1h.max} fill={C_POSBAND} fillOpacity={0.16} />
           <ReferenceLine
             y={pos2h.max} stroke={C_POSBAND} strokeDasharray="4 4" strokeOpacity={0.8}
             label={{ value: '120 · 2h', position: 'right', fill: C_POSBAND, fontSize: 9 }}
