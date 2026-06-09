@@ -31,6 +31,23 @@ is disabled here. Never run:
    apps (in `/home/ubuntu/<slug>/`) need a manual `git pull && docker
    compose up -d --build` on the VPS.
 
+## Exam media (ultrasound video, etc.)
+
+Health-exam videos are served as **static files by nginx** (native byte-range
+→ reliable `<video>` playback), not through the Drive stream proxy. They are
+**not in git** — the `web` container bind-mounts a host dir:
+
+- VPS host path: `/home/ubuntu/vault-exam-media/` (override via `EXAM_MEDIA_PATH`)
+- Served at: `https://vault.grooveops.dev/exam-media/<file>`
+- Frontend: `HealthExam.valores.video_url` (e.g. `/exam-media/usg-...mp4`) takes
+  precedence over `valores.video_drive_id` (the Drive stream-proxy fallback).
+
+To add a new exam video: `scp` a faststart mp4 to that host dir, then set the
+exam's `valores.video_url`. The file survives deploys (outside the image/git).
+
+Note: the Claude-in-Chrome **automation tab cannot play media** — verify video
+playback in a normal browser tab, not the automation tab.
+
 ## Why this exists
 
 A separate Claude session (or a stale memory) tried to spin this project
