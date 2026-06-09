@@ -5,7 +5,7 @@ REST views for Google Suite — OAuth, Gmail, Drive/Sheets/Docs.
 import logging
 import re
 
-from django.http import HttpResponse
+from django.http import HttpResponse, StreamingHttpResponse
 from django.shortcuts import redirect as http_redirect
 from google.auth.transport.requests import AuthorizedSession
 from rest_framework import status
@@ -383,6 +383,36 @@ class CursoStreamView(APIView):
             f'https://www.googleapis.com/drive/v3/files/{file_id}'
             '?alt=media&supportsAllDrives=true'
         )
+
+        # No Range header → the media element's initial probe. A 206 reply here
+        # is non-conformant and Chrome rejects it (video stalls at readyState
+        # 0). Return a real 200 streaming the whole file with the true
+        # Content-Length; the element then issues Range requests (served as
+        # bounded 206s below) for buffering and seeking.
+        if not range_header:
+            try:
+                up = session.get(drive_url, stream=True, timeout=60)
+            except Exception as e:
+                logger.error(f'curso-stream upstream(200) failed for {file_id}: {e}')
+                return Response({'error': 'Upstream error'},
+                                status=status.HTTP_502_BAD_GATEWAY)
+            if up.status_code not in (200, 206):
+                logger.error(f'curso-stream drive {up.status_code} (200-path) for {file_id}')
+                return Response({'error': 'Upstream error'},
+                                status=status.HTTP_502_BAD_GATEWAY)
+            resp = StreamingHttpResponse(
+                up.iter_content(chunk_size=256 * 1024),
+                status=200, content_type=ctype,
+            )
+            resp['Accept-Ranges'] = 'bytes'
+            if total is not None:
+                resp['Content-Length'] = str(total)
+            resp['Cache-Control'] = 'private, max-age=3600'
+            return resp
+
+        # Ranged request: fetch the bounded chunk and return a complete 206.
+        # (Range is capped to <= _STREAM_CHUNK; buffering the whole chunk and
+        # returning a bounded 206 is bulletproof vs proxied streaming bodies.)
         try:
             upstream = session.get(
                 drive_url,
@@ -398,9 +428,6 @@ class CursoStreamView(APIView):
             return Response({'error': 'Upstream error'},
                             status=status.HTTP_502_BAD_GATEWAY)
 
-        # Range is capped to <= _STREAM_CHUNK, so buffer the whole chunk and
-        # return a complete 206. (Browsers stall on some proxied *streaming*
-        # bodies over HTTP/2; a bounded buffered response is bulletproof.)
         data = upstream.content
         real_end = start + len(data) - 1
         resp = HttpResponse(data, status=206, content_type=ctype)
