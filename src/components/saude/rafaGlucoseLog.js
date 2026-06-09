@@ -2,9 +2,9 @@
  * RAFA_GLUCOSE_LOG — Automonitorização de glicose capilar (gestação).
  *
  * Source: caderno manuscrito de Rafaella, fotografado em 08/06/2026
- *   (IMG_9104–IMG_9108). "Testagem de Glicose — 15 dias" → estendida a 23 dias.
+ *   (IMG_9104–IMG_9108, IMG_9112). "Testagem de Glicose — 15 dias" → estendida a 24 dias.
  *
- * Período: 16/05/2026 (1º dia) → 07/06/2026 (23º dia).
+ * Período: 16/05/2026 (1º dia) → 08/06/2026 (24º dia).
  * Contexto: controle pré-rastreio de DMG (diabetes mellitus gestacional,
  *   rastreio formal 24–28 sem). Liga-se à obs do plano alimentar
  *   (HbA1c 5,4 com tendência ↑) — ver RAFA_MEAL_PLAN.
@@ -26,8 +26,8 @@
  */
 export const RAFA_GLUCOSE_LOG = {
   titulo: 'Glicose capilar — automonitorização',
-  fonte: 'Caderno manuscrito (IMG_9104–9108), fotografado 08/06/2026',
-  periodo: { inicio: '2026-05-16', fim: '2026-06-07' },
+  fonte: 'Caderno manuscrito (IMG_9104–9108, 9112), fotografado 08/06/2026',
+  periodo: { inicio: '2026-05-16', fim: '2026-06-08' },
   referencias: {
     jejum: { min: 65, max: 95, label: 'Jejum: 65–95 mg/dL' },
     pos1h: { max: 140, label: '1h após refeição: < 140 mg/dL' },
@@ -111,5 +111,8 @@ export const RAFA_GLUCOSE_LOG = {
     { dia: 23, data: '2026-06-07', jejum: 81,
       almoco: { valor: 150, refeicao: 'Dois pratos de lasanha à bolonhesa' },
       jantar: { valor: 153, refeicao: '5 guiozas de carne + trufa zero açúcar (Cacau Show)' } },
+    { dia: 24, data: '2026-06-08', jejum: 89,
+      almoco: { valor: 114, refeicao: 'Hambúrguer de falafel, arroz cateto, cenoura e quiabo no leite de coco' },
+      jantar: { valor: 108, refeicao: 'Hambúrguer com duas carnes' } },
   ],
 }
