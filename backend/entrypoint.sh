@@ -8,4 +8,10 @@ echo "Collecting static..."
 python manage.py collectstatic --noinput
 
 echo "Starting gunicorn..."
-exec gunicorn --bind 0.0.0.0:8000 --workers 4 --timeout 120 vault_project.wsgi:application
+# gthread workers: a blocking request (Drive byte-range fetch, video stream)
+# holds one thread, not a whole worker — so streaming media can't starve the
+# 4 workers and stall the rest of the app. Longer timeout for long streams.
+exec gunicorn --bind 0.0.0.0:8000 \
+  --worker-class gthread --workers 4 --threads 8 \
+  --timeout 300 --graceful-timeout 30 \
+  vault_project.wsgi:application
