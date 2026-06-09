@@ -67,10 +67,16 @@ function formatDate(iso) {
 const examStreamUrl = (id) => `${API_BASE_URL}/google/drive/stream/${id}/`
 
 function ExamRow({ exam }) {
+  // A static /exam-media/ URL (served by nginx with native byte-range support)
+  // takes precedence — reliable playback; otherwise fall back to the Drive
+  // stream proxy by file id.
+  const videoUrl = exam.valores?.video_url || null
   const videoDriveId = exam.valores?.video_drive_id || null
-  // video_drive_id is a player hint, not a lab value — keep it out of the chips.
+  const videoSrc = videoUrl || (videoDriveId ? examStreamUrl(videoDriveId) : null)
+  // Player hints, not lab values — keep them out of the value chips.
+  const HIDDEN_KEYS = new Set(['video_url', 'video_drive_id'])
   const valoresAll = exam.valores
-    ? Object.entries(exam.valores).filter(([k]) => k !== 'video_drive_id')
+    ? Object.entries(exam.valores).filter(([k]) => !HIDDEN_KEYS.has(k))
     : []
   const valoresEntries = valoresAll.slice(0, 4)
   return (
@@ -101,10 +107,10 @@ function ExamRow({ exam }) {
           </div>
         )}
         {exam.notes && <div className={styles.examNotes}>{exam.notes}</div>}
-        {videoDriveId && (
+        {videoSrc && (
           <video
-            key={videoDriveId}
-            src={examStreamUrl(videoDriveId)}
+            key={videoSrc}
+            src={videoSrc}
             controls
             playsInline
             preload="metadata"

@@ -61,6 +61,12 @@ services:
     depends_on:
       - backend
       - chat-sidecar
+    volumes:
+      # Exam media (e.g. the ultrasound video) served as static files with
+      # native nginx byte-range support — reliable <video> playback without the
+      # streaming proxy. Host path lives outside the git checkout, so the media
+      # is not baked into the image/history and survives deploys.
+      - ${EXAM_MEDIA_PATH:-/home/ubuntu/vault-exam-media}:/usr/share/nginx/exam-media:ro
 
   cron:
     build: ./backend

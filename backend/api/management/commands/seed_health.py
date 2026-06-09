@@ -200,6 +200,10 @@ RAFA_EXAMS = [
             'protocolo': '7667707288',
             'data_agendada': '2026-05-18',
             'video_drive_id': '1iLps4sjiVwwtOtpdjEJ-CYNMUbJMRK6-',
+            # Served as a static file by nginx (host-mounted, outside git) for
+            # reliable byte-range <video> playback. Takes precedence over the
+            # Drive stream proxy in the frontend.
+            'video_url': '/exam-media/usg-20-05-163037bafc.mp4',
         },
     },
 ]
