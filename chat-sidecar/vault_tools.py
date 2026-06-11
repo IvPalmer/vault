@@ -15,20 +15,26 @@ from tool_helpers import (
 )
 from memory_store import save_fact, delete_fact, recall, save_conversation_summary
 
-# The profile_id is set per-session before tools are called
-_current_profile_id: str | None = None
+# The profile_id is set per-request. A ContextVar (not a module global) isolates
+# it per asyncio task, so concurrent chat requests from the two users can't clobber
+# each other's active profile mid-turn.
+import contextvars
+
+_current_profile_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "current_profile_id", default=None
+)
 
 
 def set_profile(profile_id: str):
-    """Set the active profile for subsequent tool calls."""
-    global _current_profile_id
-    _current_profile_id = profile_id
+    """Set the active profile for the current request/task context."""
+    _current_profile_id.set(profile_id)
 
 
 def _pid() -> str:
-    if not _current_profile_id:
+    pid = _current_profile_id.get()
+    if not pid:
         raise ValueError("No profile set — call set_profile() first")
-    return _current_profile_id
+    return pid
 
 
 def create_vault_mcp_server() -> Server:
@@ -451,10 +457,10 @@ def create_vault_mcp_server() -> Server:
                 name="create_custom_widget",
                 description="""Create a fully custom widget with HTML/CSS/JS. The widget renders in a sandboxed iframe with access to the Vault API. Use this to build ANY widget the user asks for: Pinterest boards, habit trackers, weather, countdown timers, shopping lists, embedded feeds, interactive checklists, data visualizations, etc.
 
-The HTML has access to:
-- vaultGet(path, params) — GET request to Vault API (e.g. vaultGet('/pessoal/tasks/'))
-- vaultPost(path, data) — POST request to Vault API
-- saveState(obj) / loadState(fallback) — persist widget-local state across reloads
+The HTML has access to these helpers — ALL are async and return Promises, so you MUST `await` them (the widget runs in a sandboxed iframe and talks to the parent over a message bridge):
+- await vaultGet(path, params) — GET request to Vault API (e.g. await vaultGet('/pessoal/tasks/'))
+- await vaultPost(path, data) — POST request to Vault API
+- await saveState(obj) / await loadState(fallback) — persist widget-local state across reloads (loadState resolves to the saved object or the fallback)
 - Base CSS with .card, .badge, .grid, .flex, .accent, .text-muted classes
 - Full JS capabilities (fetch external APIs, DOM manipulation, timers, etc.)
 

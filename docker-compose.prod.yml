@@ -28,6 +28,9 @@ services:
       PLUGGY_CLIENT_ID: ${PLUGGY_CLIENT_ID}
       PLUGGY_CLIENT_SECRET: ${PLUGGY_CLIENT_SECRET}
       PLUGGY_PROFILES: ${PLUGGY_PROFILES:-}
+      # Shared secret authorizing the chat-sidecar's server-to-server calls
+      # (X-Internal-Token). The API requires auth (JWT) for everyone else.
+      VAULT_INTERNAL_TOKEN: ${VAULT_INTERNAL_TOKEN:-}
     volumes:
       - vault_static:/app/staticfiles
       - vault_secrets:/app/secrets
@@ -43,6 +46,9 @@ services:
       VAULT_API_URL: http://backend:8000/api
       VAULT_API_HOST: ${VAULT_API_HOST:-vault.grooveops.dev}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Must match the backend's VAULT_INTERNAL_TOKEN so server-to-server
+      # API calls authenticate (X-Internal-Token).
+      VAULT_INTERNAL_TOKEN: ${VAULT_INTERNAL_TOKEN:-}
     volumes:
       - vault_chat_memory:/app/memory
       # Subscription auth: bind-mount Claude Code OAuth credentials from host.

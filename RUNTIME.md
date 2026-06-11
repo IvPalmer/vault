@@ -31,6 +31,15 @@ is disabled here. Never run:
    apps (in `/home/ubuntu/<slug>/`) need a manual `git pull && docker
    compose up -d --build` on the VPS.
 
+## Auth / required env
+
+The API requires authentication (JWT for the browser, `X-Internal-Token` for the
+chat-sidecar). The shared secret `VAULT_INTERNAL_TOKEN` must be set, identically,
+for both the `backend` and `chat-sidecar` services. It lives in the Dokploy compose
+env (table `compose.env`, app `vault-stack` / `eOkQuV5j3WfVpcJYi2wL9`), which Dokploy
+writes to `.env` at deploy. If it is unset, the sidecar chat breaks (401) but the
+app and the auth gate are unaffected (fails closed — no anonymous access).
+
 ## Exam media (ultrasound video, etc.)
 
 Health-exam videos are served as **static files by nginx** (native byte-range

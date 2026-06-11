@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import api, { getProfileId } from '../api/client'
+import api, { getProfileId, getAccessToken } from '../api/client'
 import { useProfile } from '../context/ProfileContext'
 import InlineEdit from './InlineEdit'
 import CalendarSettings from './CalendarSettings'
@@ -62,6 +62,11 @@ function TemplateTypeSelector({ value, onChange }) {
 
 function SalarySection({ config, projection, templates, editing, setEditing, syncing, syncResult, onSync, onSave }) {
   const [form, setForm] = useState({})
+  // Percent inputs are held as raw editable strings (e.g. "0.91") while editing,
+  // and converted back to their stored fractional form (0.0091) only on save.
+  // Storing them in form.* as fractions and re-deriving value={(form.x*100)...}
+  // reformatted every keystroke, making the fields un-typeable.
+  const [pctStr, setPctStr] = useState({})
   const incomeTemplates = templates.filter(t => t.template_type === 'Income')
 
   const startEdit = () => {
@@ -76,7 +81,26 @@ function SalarySection({ config, projection, templates, editing, setEditing, syn
       advance_num_cycles: config?.advance_num_cycles || 0,
       income_template_id: config?.income_template_id || '',
     })
+    setPctStr({
+      wise_fee_pct: String(((config?.wise_fee_pct ?? 0.0091) * 100).toFixed(2)),
+      tax_hold_pct: String(((config?.tax_hold_pct ?? 0.08) * 100).toFixed(0)),
+      advance_recoup_pct: String(((config?.advance_recoup_pct ?? 0.125) * 100).toFixed(1)),
+    })
     setEditing(true)
+  }
+
+  // Build the save payload, converting the raw percent strings back to fractions.
+  const handleSave = () => {
+    const toFraction = (s, fallback) => {
+      const n = parseFloat(s)
+      return Number.isFinite(n) ? n / 100 : fallback
+    }
+    onSave({
+      ...form,
+      wise_fee_pct: toFraction(pctStr.wise_fee_pct, form.wise_fee_pct),
+      tax_hold_pct: toFraction(pctStr.tax_hold_pct, form.tax_hold_pct),
+      advance_recoup_pct: toFraction(pctStr.advance_recoup_pct, form.advance_recoup_pct),
+    })
   }
 
   const fmtBrl = (v) => v != null ? `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '—'
@@ -132,8 +156,8 @@ function SalarySection({ config, projection, templates, editing, setEditing, syn
                   type="number"
                   step="0.01"
                   className={styles.formInput}
-                  value={(form.wise_fee_pct * 100).toFixed(2)}
-                  onChange={(e) => setForm({ ...form, wise_fee_pct: parseFloat(e.target.value) / 100 || 0 })}
+                  value={pctStr.wise_fee_pct ?? ''}
+                  onChange={(e) => setPctStr({ ...pctStr, wise_fee_pct: e.target.value })}
                 />
               </label>
               <label>
@@ -152,8 +176,8 @@ function SalarySection({ config, projection, templates, editing, setEditing, syn
                   type="number"
                   step="0.01"
                   className={styles.formInput}
-                  value={(form.tax_hold_pct * 100).toFixed(0)}
-                  onChange={(e) => setForm({ ...form, tax_hold_pct: parseFloat(e.target.value) / 100 || 0 })}
+                  value={pctStr.tax_hold_pct ?? ''}
+                  onChange={(e) => setPctStr({ ...pctStr, tax_hold_pct: e.target.value })}
                 />
               </label>
               <label>
@@ -175,8 +199,8 @@ function SalarySection({ config, projection, templates, editing, setEditing, syn
                   type="number"
                   step="0.01"
                   className={styles.formInput}
-                  value={(form.advance_recoup_pct * 100).toFixed(1)}
-                  onChange={(e) => setForm({ ...form, advance_recoup_pct: parseFloat(e.target.value) / 100 || 0 })}
+                  value={pctStr.advance_recoup_pct ?? ''}
+                  onChange={(e) => setPctStr({ ...pctStr, advance_recoup_pct: e.target.value })}
                 />
               </label>
               <label>
@@ -200,7 +224,7 @@ function SalarySection({ config, projection, templates, editing, setEditing, syn
               </label>
             </div>
             <div className={styles.salaryFormActions}>
-              <button className={styles.formSaveBtn} onClick={() => onSave(form)}>Salvar</button>
+              <button className={styles.formSaveBtn} onClick={handleSave}>Salvar</button>
               <button className={styles.cancelBtn} onClick={() => setEditing(false)}>Cancelar</button>
             </div>
           </div>
@@ -567,7 +591,11 @@ function Settings({ onOpenWizard }) {
 
     try {
       const profileId = getProfileId()
-      const headers = profileId ? { 'X-Profile-ID': profileId } : {}
+      const token = getAccessToken()
+      const headers = {
+        ...(profileId && { 'X-Profile-ID': profileId }),
+        ...(token && { Authorization: `Bearer ${token}` }),
+      }
       const res = await fetch(`${API_BASE}/import/?action=upload`, {
         method: 'POST',
         body: formData,
@@ -585,6 +613,7 @@ function Settings({ onOpenWizard }) {
             headers: {
               'Content-Type': 'application/json',
               ...(profileId && { 'X-Profile-ID': profileId }),
+              ...(token && { Authorization: `Bearer ${token}` }),
             },
           })
           const importData = await importRes.json()
@@ -620,11 +649,13 @@ function Settings({ onOpenWizard }) {
     setImportResult(null)
     try {
       const profileId = getProfileId()
+      const token = getAccessToken()
       const res = await fetch(`${API_BASE}/import/?action=run`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(profileId && { 'X-Profile-ID': profileId }),
+          ...(token && { Authorization: `Bearer ${token}` }),
         },
       })
       const data = await res.json()
