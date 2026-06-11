@@ -411,6 +411,7 @@ function TaskList({ activeProject, config, onConfigChange }) {
     const data = { title: newTitle.trim() }
     if (newProject) data.project = newProject
     if (activeProject) data.project = activeProject
+    if (effectiveProject) data.project = effectiveProject
     addMutation.mutate(data)
   }
 
@@ -950,7 +951,7 @@ function UpcomingEvents({ config, onConfigChange }) {
   const timeMax = `${future.getFullYear()}-${String(future.getMonth() + 1).padStart(2, '0')}-${String(future.getDate()).padStart(2, '0')}`
 
   const { data, isLoading } = useQuery({
-    queryKey: ['pessoal-calendar', timeMin],
+    queryKey: ['pessoal-calendar', timeMin, timeMax],
     queryFn: () => api.get(`/calendar/events/?context=personal&time_min=${timeMin}&time_max=${timeMax}`),
     staleTime: 60000,
   })
@@ -988,7 +989,7 @@ function UpcomingEvents({ config, onConfigChange }) {
       groups[key].push(evt)
     })
     return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b))
-  }, [events])
+  }, [events, maxEvents])
 
   const calendarLabel = (cal) => {
     if (!cal) return ''
@@ -1992,7 +1993,8 @@ function PersonalOrganizerInner({ profileId }) {
   if (dashLoading) return <div className={styles.emptyState}>Carregando dashboard...</div>
 
   // KPI computations
-  const todayStr = new Date().toISOString().slice(0, 10)
+  const _now = new Date()
+  const todayStr = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`
   const activeTasks = tasks.filter((t) => t.status !== 'done')
   const todayCount = activeTasks.filter((t) => t.due_date === todayStr).length
   const overdueCount = activeTasks.filter((t) => t.due_date && t.due_date < todayStr).length

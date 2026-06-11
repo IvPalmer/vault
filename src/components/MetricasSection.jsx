@@ -645,7 +645,7 @@ function MetricasSection() {
       const bi = cardOrder.indexOf(b)
       if (ai === -1 && bi === -1) return 0
       if (ai === -1) return 1
-      if (bi === -1) return 1
+      if (bi === -1) return -1
       return ai - bi
     })
     return { ...group, visibleCards: groupCardIds }

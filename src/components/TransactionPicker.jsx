@@ -181,9 +181,9 @@ function TransactionPicker({
       const dir = sortDir === 'asc' ? 1 : -1
       switch (sortBy) {
         case 'date':
-          return dir * b.date.localeCompare(a.date)
+          return dir * a.date.localeCompare(b.date)
         case 'amount':
-          return dir * (Math.abs(b.amount) - Math.abs(a.amount))
+          return dir * (Math.abs(a.amount) - Math.abs(b.amount))
         case 'name':
           return dir * a.description.localeCompare(b.description)
         default: // 'relevance' — backend order (amount match)
@@ -257,21 +257,25 @@ function TransactionPicker({
     const idsToRemove = [...localLinkedIds]
     // Optimistic clear
     setLocalLinkedIds(new Set())
-    try {
-      for (const txnId of idsToRemove) {
+    // Track only the ids whose DELETE actually failed, so we revert just those
+    const failedIds = []
+    for (const txnId of idsToRemove) {
+      try {
         await api.delete('/analytics/recurring/map/', {
           transaction_id: txnId,
           mapping_id: mappingId,
         })
+      } catch (err) {
+        console.error('Clear all failed for transaction', txnId, err)
+        failedIds.push(txnId)
       }
-      invalidateWithCandidates()
-    } catch (err) {
-      console.error('Clear all failed:', err)
-      // Revert
-      setLocalLinkedIds(new Set(idsToRemove))
-    } finally {
-      setSaving(false)
     }
+    // Restore only the links that didn't unlink server-side
+    if (failedIds.length > 0) {
+      setLocalLinkedIds(new Set(failedIds))
+    }
+    invalidateWithCandidates()
+    setSaving(false)
   }, [localLinkedIds, mappingId, invalidateWithCandidates])
 
   // Switch to category mode (actually persists to backend — only called when user selects a category)

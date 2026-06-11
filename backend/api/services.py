@@ -13,7 +13,7 @@ from dateutil.relativedelta import relativedelta
 from .models import (
     Transaction, Category, Subcategory, Account, BalanceOverride, BalanceAnchor,
     RecurringMapping, RecurringTemplate, BudgetConfig, CategorizationRule,
-    MetricasOrderConfig, CustomMetric, SalaryConfig,
+    MetricasOrderConfig, CustomMetric, SalaryConfig, RenameRule,
 )
 
 
@@ -719,6 +719,7 @@ def get_recurring_data(month_str, profile=None):
             Transaction.objects.filter(
                 month_str=month_str, profile=profile,
                 account__in=_checking_accounts, amount__gt=0,
+                is_internal_transfer=False,
             ).aggregate(total=Sum('amount'))['total'] or 0
         ))
         income_ref = _total_income if _total_income > 0 else income_expected
@@ -2082,8 +2083,9 @@ def _compute_custom_metrics(month_str, metricas_data, profile=None):
     # Batch: category spending for referenced categories (1 query)
     cat_spending = {}
     if cat_ids_needed:
-        cat_spending = dict(
-            Transaction.objects.filter(
+        cat_spending = {
+            str(cat_id): total
+            for cat_id, total in Transaction.objects.filter(
                 month_str=month_str,
                 category_id__in=cat_ids_needed,
                 amount__lt=0,
@@ -2092,7 +2094,7 @@ def _compute_custom_metrics(month_str, metricas_data, profile=None):
             ).values('category_id').annotate(
                 total=Sum('amount')
             ).values_list('category_id', 'total')
-        )
+        }
 
     # Pre-compute mapping totals by template type (batch queries)
     def _compute_mapping_totals(mappings_qs, is_income=False):
@@ -2184,7 +2186,7 @@ def _compute_custom_metrics(month_str, metricas_data, profile=None):
         if cm.metric_type == 'category_total':
             cat_id = cm.config.get('category_id')
             if cat_id:
-                spent_agg = cat_spending.get(cat_id, Decimal('0.00'))
+                spent_agg = cat_spending.get(str(cat_id), Decimal('0.00'))
                 spent = abs(spent_agg)
                 value = f'R$ {int(spent):,}'.replace(',', '.')
                 subtitle = 'gasto na categoria'
@@ -2198,7 +2200,7 @@ def _compute_custom_metrics(month_str, metricas_data, profile=None):
                 # Get budget (override or default)
                 limit = budget_overrides.get(str(cat_id), float(cat.default_limit))
 
-                spent_agg = cat_spending.get(cat_id, Decimal('0.00'))
+                spent_agg = cat_spending.get(str(cat_id), Decimal('0.00'))
                 spent = float(abs(spent_agg))
                 remaining = max(0, limit - spent)
                 pct = (spent / limit * 100) if limit > 0 else 0
@@ -2250,7 +2252,7 @@ def _compute_custom_metrics(month_str, metricas_data, profile=None):
                                 profile=profile,
                             ).aggregate(t=Sum('amount'))['t'] or Decimal('0.00')
                         else:
-                            agg = cat_spending.get(cat_key, Decimal('0.00'))
+                            agg = cat_spending.get(str(cat_key), Decimal('0.00'))
                         actual = abs(agg)
                     # Respect template contract bounds (e.g. car financing
                     # ended) — _mapping_expected_amount returns 0 if the
