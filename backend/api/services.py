@@ -2636,6 +2636,10 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
         'total': float(sum(r['amount'] for r in results)),
         'invoice_total': invoice_total,
         'invoice_by_account': invoice_by_account,
+        # Lets the panel decide where first installments (1/N) belong: in
+        # transaction mode they count as current-month purchases (COMPRAS); in
+        # invoice mode they stay in the bill's PARCELAS table.
+        'cc_display_mode': 'transaction' if _cc_month_field(profile) == 'month_str' else 'invoice',
     }
 
 
@@ -2760,61 +2764,91 @@ def _project_installment_complement(month_str, profile=None, exclude_purchase_id
     return projected
 
 
+def _parcela_position(parcela):
+    """Installment position (numerator) from a 'k/N' string; 1 if unparseable."""
+    if not parcela:
+        return 1
+    m = re.match(r'(\d+)\s*/\s*(\d+)', str(parcela))
+    return int(m.group(1)) if m else 1
+
+
 def get_installment_details(month_str, profile=None):
     """
-    INSTALLMENT BREAKDOWN — installments being charged on this month's bill.
+    INSTALLMENT BREAKDOWN for the CONTROLE CARTÕES panel.
 
-    Uses invoice_month to get the actual CC statement for this month.
+    Month model follows the profile's CC display mode, matching
+    get_card_transactions so the COMPRAS and PARCELAS tables in the same panel
+    agree on which month a row belongs to:
+
+    - invoice mode (invoice_month): installments on the bill paid this month.
+    - transaction mode (month_str): purchase-anchored. First installments (1/N)
+      are part of "what you bought this month" and live in COMPRAS (the purchase
+      month), so this table shows only the LATER positions (>=2/N) that land in
+      this month. An installment's display month = invoice_month - 1 (un-lag the
+      bill: position 1 lands in the purchase month, each later position one month
+      after). So a month's carry-over installments are exactly the bill for
+      month+1, minus its first installments.
+
+    The cash-flow metric metricas['parcelas'] stays invoice-anchored via the
+    separate _compute_installment_schedule — this is display only.
+    """
+    if _cc_month_field(profile) != 'month_str':
+        return _get_installment_details_invoice(month_str, profile=profile)
+
+    # Transaction mode: carry-over installments (>=2/N) landing in this month =
+    # next month's bill minus its first installments.
+    # Assumes a next-month billing cycle (purchase month N → bill N+1), i.e. the
+    # display month = invoice_month - 1. True for the only transaction-mode cards
+    # today (Itaú: close 30 / due 5). COMPRAS stays month_str-anchored ("current
+    # month purchases"); for all current/future data month_str == invoice_month-1
+    # for first installments, so the two tables line up. A same-month-cycle card
+    # in transaction mode would need a per-account offset here.
+    bill_month = _month_str_add(month_str, 1)
+    detail = _get_installment_details_invoice(bill_month, profile=profile)
+    items = [it for it in detail['items'] if _parcela_position(it.get('parcela')) >= 2]
+    for it in items:
+        it['source_month'] = month_str
+    items.sort(key=lambda x: (x['account'], x['date']))
+    total = sum(i['amount'] for i in items)
+    return {
+        'month_str': month_str,
+        'source': detail['source'],
+        'items': items,
+        'count': len(items),
+        'total': round(total, 2),
+    }
+
+
+def _get_installment_details_invoice(month_str, profile=None):
+    """
+    Installments on the bill (invoice_month) for `month_str`.
 
     CC statements may list ALL future positions for a purchase (01/03, 02/03,
-    03/03 all on the same bill).  Only the LOWEST position per purchase is the
+    03/03 all on the same bill). Only the LOWEST position per purchase is the
     actual charge for this bill — higher positions are previews of future bills.
     We deduplicate by (base_desc, account, amount, total) and keep only the
-    lowest position per purchase.
-
-    For months without a CC statement, projects installments from older
+    lowest position per purchase. Months without a statement project from older
     statements.
 
-    Returns: dict with 'source' ('real' or 'projected'), deduped installment
-    items, count, and total.
+    Returns: dict with 'source' ('real'/'mixed'/'projected'), deduped items,
+    count, and total.
     """
-    # Month semantics follow the profile's CC display mode, matching
-    # get_card_transactions so the COMPRAS and PARCELAS tables in the same
-    # panel agree on which month a row belongs to:
-    #   - transaction mode (month_str): installments keyed by PURCHASE month;
-    #     each installment purchase shows once (lowest position) in the month
-    #     it was made. No bill projection — in this model an installment
-    #     belongs to its purchase month, not to future bills.
-    #   - invoice mode (invoice_month): installments belong to the bill they
-    #     appear on; falls back to month_str for legacy rows and complements
-    #     with projected future positions (matches _compute_installment_schedule).
-    cc_field = _cc_month_field(profile)
-    project = cc_field != 'month_str'
+    real_installments = Transaction.objects.filter(
+        invoice_month=month_str,
+        is_installment=True,
+        amount__lt=0,
+        profile=profile,
+    ).select_related('account', 'category', 'subcategory')
 
-    if cc_field == 'month_str':
+    if not real_installments.exists():
+        # Fall back to month_str for legacy data without invoice_month
         real_installments = Transaction.objects.filter(
             month_str=month_str,
+            invoice_month='',
             is_installment=True,
             amount__lt=0,
             profile=profile,
         ).select_related('account', 'category', 'subcategory')
-    else:
-        real_installments = Transaction.objects.filter(
-            invoice_month=month_str,
-            is_installment=True,
-            amount__lt=0,
-            profile=profile,
-        ).select_related('account', 'category', 'subcategory')
-
-        if not real_installments.exists():
-            # Fall back to month_str for legacy data without invoice_month
-            real_installments = Transaction.objects.filter(
-                month_str=month_str,
-                invoice_month='',
-                is_installment=True,
-                amount__lt=0,
-                profile=profile,
-            ).select_related('account', 'category', 'subcategory')
 
     if real_installments.exists():
         # Group by purchase identity, keep only the lowest position per group
@@ -2878,14 +2912,12 @@ def get_installment_details(month_str, profile=None):
 
         items.extend(non_parseable_items)
 
-        # Complement with projected installments from older bills (invoice mode
-        # only). Matches _compute_installment_schedule Step 2 so the total
-        # agrees with metricas['parcelas']. Items get projected=True so the UI
-        # can flag them. In transaction mode there is no projection — an
-        # installment lives in its purchase month.
+        # Complement with projected installments from older bills.
+        # Matches _compute_installment_schedule Step 2 so the total agrees with
+        # metricas['parcelas']. Items get projected=True so the UI can flag them.
         projected_items = _project_installment_complement(
             month_str, profile=profile, exclude_purchase_ids=real_purchase_ids,
-        ) if project else []
+        )
         items.extend(projected_items)
 
         items.sort(key=lambda x: (x['account'], x['date']))
@@ -2899,15 +2931,13 @@ def get_installment_details(month_str, profile=None):
             'total': round(total, 2),
         }
 
-    # No real data. In invoice mode, project from older CC statements via the
-    # shared helper. In transaction mode there is nothing to project — the
-    # month simply has no installment purchases.
-    items = _project_installment_complement(month_str, profile=profile) if project else []
+    # No real data — project from older CC statements via the shared helper.
+    items = _project_installment_complement(month_str, profile=profile)
     items.sort(key=lambda x: (x['account'], x['date']))
     total = sum(i['amount'] for i in items)
     return {
         'month_str': month_str,
-        'source': 'projected' if project else 'real',
+        'source': 'projected',
         'items': items,
         'count': len(items),
         'total': round(total, 2),

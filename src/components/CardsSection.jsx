@@ -13,6 +13,12 @@ function fmt(n) {
   return Math.abs(n).toLocaleString('pt-BR', { maximumFractionDigits: 2, minimumFractionDigits: 2 })
 }
 
+/** Installment position (numerator) from a 'k/N' string; 1 if unparseable. */
+function instPos(parcela) {
+  const m = (parcela || '').match(/(\d+)\s*\/\s*(\d+)/)
+  return m ? parseInt(m[1], 10) : 1
+}
+
 /** Amount cell with semantic color */
 function AmountCell({ value }) {
   const cls = value > 0 ? tableStyles.positive : tableStyles.negative
@@ -253,11 +259,17 @@ function CardsSection() {
     },
   ], [invalidate])
 
-  // Filter transactions by active tab, excluding installments (shown in Parcelas)
+  // COMPRAS = what was bought this month. In transaction mode the first
+  // installment (1/N) of a purchase counts as a current-month purchase and
+  // stays here; later positions (>=2/N) move to the PARCELAS table. In invoice
+  // mode every installment lives in the bill's PARCELAS table.
   const filteredData = useMemo(() => {
     if (!data?.transactions) return []
     const currentTab = TABS.find(t => t.key === effectiveTab)
-    let txns = data.transactions.filter(t => !t.is_installment)
+    const keepFirstInst = data.cc_display_mode === 'transaction'
+    let txns = data.transactions.filter(
+      t => !t.is_installment || (keepFirstInst && instPos(t.parcela) <= 1)
+    )
     if (currentTab?.filter) {
       txns = txns.filter(t => t.account === currentTab.filter)
     }
