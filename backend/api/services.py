@@ -14,6 +14,7 @@ from .models import (
     Transaction, Category, Subcategory, Account, BalanceOverride, BalanceAnchor,
     RecurringMapping, RecurringTemplate, BudgetConfig, CategorizationRule,
     MetricasOrderConfig, CustomMetric, SalaryConfig, RenameRule,
+    InstallmentSeriesOverride,
 )
 
 
@@ -32,6 +33,22 @@ def _extract_base_desc(description):
     # Itau format: "STORE NAME 01/06"
     cleaned = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', desc).strip()
     return cleaned.lower()
+
+
+def _installment_overrides(profile):
+    """Operator-marked cancelled/shortened installment series, keyed the SAME way
+    the projection groups installments: (base_desc, account_name, amount_group,
+    total_inst) -> effective_total. account_name is resolved from the override's
+    account FK at read time (the FK is the stable key; renames are tracked since
+    the projection groups by the current name too). Returns {} when none."""
+    if profile is None:
+        return {}
+    out = {}
+    for ov in InstallmentSeriesOverride.objects.filter(
+        profile=profile).select_related('account'):
+        acct_name = ov.account.name if ov.account else ''
+        out[(ov.base_desc, acct_name, ov.amount_group, ov.total_inst)] = ov.effective_total
+    return out
 
 
 _PLUGGY_NOISE_PREFIXES = (
@@ -2812,6 +2829,29 @@ def _project_installment_complement(month_str, profile=None, exclude_purchase_id
 
     target_dt = _parse_month(month_str)
 
+    # Cancelled/shortened series cap (effective_total, never below highest real
+    # position). Empty overrides → no-op.
+    overrides = _installment_overrides(profile)
+    max_real_pos = {}
+    if overrides:
+        _all_real = list(_lb_invoice_txns)
+        for _ts in _lb_by_fallback.values():
+            _all_real.extend(_ts)
+        for _t in _all_real:
+            _m = re.match(r'(\d+)/(\d+)', _t.installment_info or '') or \
+                re.search(r'(\d{1,2})/(\d{1,2})', _t.description)
+            if not _m:
+                continue
+            _k = (_extract_base_desc(_t.description),
+                  _t.account.name if _t.account else '',
+                  round(float(abs(_t.amount)), 0), int(_m.group(2)))
+            max_real_pos[_k] = max(max_real_pos.get(_k, 0), int(_m.group(1)))
+
+    def _eff_total(group_key, total_inst):
+        if not overrides:
+            return total_inst
+        return max(overrides.get(group_key, total_inst), max_real_pos.get(group_key, 0))
+
     for lookback in range(1, 13):
         source_month = lookback_months_list[lookback - 1]
         inst_txns = _lb_by_invoice.get(source_month) or _lb_by_fallback.get(source_month) or []
@@ -2842,12 +2882,13 @@ def _project_installment_complement(month_str, profile=None, exclude_purchase_id
 
         for group_key, (current, total_inst, txn, amt) in purchase_groups.items():
             base_desc, acct, amt_group, _ = group_key
+            eff_total = _eff_total(group_key, total_inst)
             # Source-side Itaú-style: if all positions appeared on the source
             # bill, the purchase was fully charged there. No projection needed.
-            if purchase_max_pos.get(group_key, current) >= total_inst:
+            if purchase_max_pos.get(group_key, current) >= eff_total:
                 continue
             position = current + lookback
-            if position > total_inst:
+            if position > eff_total:
                 continue
             if group_key in exclude:
                 continue
@@ -2981,10 +3022,12 @@ def _get_installment_details_invoice(month_str, profile=None):
         # Build items from deduplicated purchase groups (lowest position only)
         items = []
         real_purchase_ids = set()
+        _ov = _installment_overrides(profile)
         for (base_desc, acct, amt_group, total_inst), (current, _, txn, amt) in purchase_groups.items():
             parcela_str = f'{current}/{total_inst}'
             # Use original description for display (base_desc is lowered for dedup)
             display_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', txn.description).strip()
+            _series = (base_desc, acct, amt_group, total_inst)
             items.append({
                 'id': str(txn.id),
                 'date': txn.date.strftime('%Y-%m-%d'),
@@ -2998,6 +3041,8 @@ def _get_installment_details_invoice(month_str, profile=None):
                 'parcela': parcela_str,
                 'source_month': month_str,
                 'projected': False,
+                'capped': _series in _ov,
+                'effective_total': _ov.get(_series),
             })
             real_purchase_ids.add((base_desc, acct, amt_group, total_inst))
 
@@ -3110,6 +3155,85 @@ def categorize_installment_siblings(transaction_id, category_id, subcategory_id=
         'updated': updated,
         'sibling_ids': [str(sid) for sid in sibling_ids],
     }
+
+
+# ---------------------------------------------------------------------------
+# Installment series overrides (cancel / shorten)
+# ---------------------------------------------------------------------------
+
+def _series_fields_from_txn(txn):
+    """Canonical series fields from a real installment txn:
+    {base_desc, account, amount_group, total_inst, position} or None."""
+    m = re.match(r'(\d+)/(\d+)', txn.installment_info or '') or \
+        re.search(r'(\d{1,2})/(\d{1,2})', txn.description)
+    if not m:
+        return None
+    return {
+        'base_desc': _extract_base_desc(txn.description),
+        'account': txn.account,
+        'amount_group': int(round(float(abs(txn.amount)), 0)),
+        'total_inst': int(m.group(2)),
+        'position': int(m.group(1)),
+    }
+
+
+def list_installment_overrides(profile):
+    return [
+        {
+            'id': str(ov.id), 'account': ov.account.name if ov.account else '',
+            'base_desc': ov.base_desc, 'amount_group': ov.amount_group,
+            'total_inst': ov.total_inst, 'effective_total': ov.effective_total,
+            'note': ov.note,
+        }
+        for ov in InstallmentSeriesOverride.objects.filter(
+            profile=profile).select_related('account')
+    ]
+
+
+def set_installment_override(transaction_id, effective_total, profile, note=''):
+    """Mark the installment series of a representative REAL txn as ending at
+    effective_total. Validates max_real_position <= effective_total < total_inst."""
+    txn = Transaction.objects.select_related('account').get(
+        id=transaction_id, profile=profile, is_installment=True)
+    key = _series_fields_from_txn(txn)
+    if not key:
+        raise ValueError('Transação não é uma parcela com N/M reconhecível.')
+    total_inst = key['total_inst']
+    effective_total = int(effective_total)
+    # Highest real billed position for this series (same base/account/amount/total).
+    max_real = 0
+    for t in Transaction.objects.filter(
+            profile=profile, account=key['account'], is_installment=True, amount__lt=0):
+        mk = _series_fields_from_txn(t)
+        if (mk and mk['base_desc'] == key['base_desc']
+                and mk['amount_group'] == key['amount_group']
+                and mk['total_inst'] == total_inst):
+            max_real = max(max_real, mk['position'])
+    if effective_total < max_real:
+        raise ValueError(
+            f'Corte ({effective_total}) abaixo da maior parcela já faturada ({max_real}).')
+    if effective_total >= total_inst:
+        raise ValueError(
+            f'Corte ({effective_total}) deve ser menor que o total original ({total_inst}).')
+    ov, _created = InstallmentSeriesOverride.objects.update_or_create(
+        profile=profile, account=key['account'], base_desc=key['base_desc'],
+        amount_group=key['amount_group'], total_inst=total_inst,
+        defaults={'effective_total': effective_total, 'note': note or ''},
+    )
+    return {'id': str(ov.id), 'effective_total': ov.effective_total, 'total_inst': total_inst}
+
+
+def delete_installment_override(transaction_id, profile):
+    """Remove the override for the series of a representative txn (reactivate)."""
+    txn = Transaction.objects.select_related('account').get(
+        id=transaction_id, profile=profile, is_installment=True)
+    key = _series_fields_from_txn(txn)
+    if not key:
+        raise ValueError('Transação inválida.')
+    n, _ = InstallmentSeriesOverride.objects.filter(
+        profile=profile, account=key['account'], base_desc=key['base_desc'],
+        amount_group=key['amount_group'], total_inst=key['total_inst']).delete()
+    return {'deleted': n}
 
 
 # ---------------------------------------------------------------------------
@@ -3682,6 +3806,28 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
     # (e.g., current month installments should project into future months).
     seen_per_month = {}
 
+    # Cancelled/shortened series: cap projection at effective_total (never below
+    # the highest real position seen — real rows win). Empty overrides → no-op.
+    overrides = _installment_overrides(profile)
+    max_real_pos = {}
+    if overrides:
+        _all_real = list(invoice_txns)
+        for _ts in txns_by_fallback_month.values():
+            _all_real.extend(_ts)
+        for _t in _all_real:
+            _m = _parse_installment(_t)
+            if not _m:
+                continue
+            _k = (_extract_base_desc(_t.description),
+                  _t.account.name if _t.account else '',
+                  round(float(abs(_t.amount)), 0), int(_m.group(2)))
+            max_real_pos[_k] = max(max_real_pos.get(_k, 0), int(_m.group(1)))
+
+    def _eff_total(group_key, total_inst):
+        if not overrides:
+            return total_inst
+        return max(overrides.get(group_key, total_inst), max_real_pos.get(group_key, 0))
+
     # Build source list: (source_month, source_type, source_param)
     # - lookback months: source_param = lookback distance (1..12)
     # - target months with real data: source_param = target index
@@ -3719,16 +3865,15 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
             )
 
         for (base_desc, acct, amt_group, total_inst), (current, amt) in purchase_groups.items():
+            purchase_id = (base_desc, acct, amt_group, total_inst)
+            eff_total = _eff_total(purchase_id, total_inst)
             # If all positions appear on the same bill (e.g., Itau shows 01/03,
             # 02/03, 03/03 together), the full purchase was charged on that bill.
-            # Don't project future installments -- there are none.
-            max_pos = purchase_max_pos.get(
-                (base_desc, acct, amt_group, total_inst), current
-            )
-            if max_pos >= total_inst:
+            # Don't project future installments -- there are none. (effective_total
+            # caps a cancelled/shortened series.)
+            max_pos = purchase_max_pos.get(purchase_id, current)
+            if max_pos >= eff_total:
                 continue
-
-            purchase_id = (base_desc, acct, amt_group, total_inst)
 
             for target_offset in range(num_future_months + 1):
                 check_month = target_months[target_offset]
@@ -3745,7 +3890,7 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
                 else:
                     delta = target_offset - source_param
                 position = current + delta
-                if position <= total_inst:
+                if position <= eff_total:
                     if check_month not in seen_per_month:
                         seen_per_month[check_month] = set()
                     if purchase_id in seen_per_month[check_month]:
@@ -3785,7 +3930,9 @@ def get_last_installment_month(profile=None):
     # Group by (source_month, base_desc, acct, amt, total) → lowest position
     # Use configured CC display mode to pick month field
     _last_cc_field = _cc_month_field(profile)
+    overrides = _installment_overrides(profile)
     purchase_groups = {}  # (source_month, base_desc, acct, amt, total) -> lowest_current
+    max_real_pos = {}     # (base_desc, acct, amt, total) -> highest real position
     for inv_month, txn_month, inst_info, desc, amount, acct_name in inst_txns:
         if _last_cc_field == 'month_str':
             month_str = txn_month
@@ -3811,10 +3958,18 @@ def get_last_installment_month(profile=None):
         key = (month_str, base_desc, acct, amt_group, total)
         if key not in purchase_groups or current < purchase_groups[key]:
             purchase_groups[key] = current
+        _ok = (base_desc, acct, amt_group, total)
+        max_real_pos[_ok] = max(max_real_pos.get(_ok, 0), current)
 
     furthest = None
     for (month_str, base_desc, acct, amt_group, total), current in purchase_groups.items():
-        remaining = total - current
+        # Cancelled/shortened series: cap at effective_total (never below the
+        # highest real position). Override key strips source_month.
+        eff = total
+        if overrides:
+            _ok = (base_desc, acct, amt_group, total)
+            eff = max(overrides.get(_ok, total), max_real_pos.get(_ok, 0))
+        remaining = eff - current
         if remaining > 0:
             end_month = _month_str_add(month_str, remaining)
             if furthest is None or end_month > furthest:

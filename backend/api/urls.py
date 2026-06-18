@@ -14,7 +14,7 @@ from .views import (
     RecurringInitializeView, RecurringExpectedView, RecurringUpdateView,
     RecurringCustomView, RecurringSkipView, BalanceSaveView,
     ProjectionView, OrcamentoView, AnalyticsTrendsView, SpendingInsightsView, SubscriptionsControlView,
-    SmartCategorizeView, InstallmentDetailsView,
+    SmartCategorizeView, InstallmentDetailsView, InstallmentOverrideView,
     RecurringTemplatesView, ReapplyTemplateView,
     CheckingTransactionsView,
     MonthCategoriesView,
@@ -120,6 +120,7 @@ urlpatterns = [
     path('analytics/orcamento/', OrcamentoView.as_view(), name='analytics-orcamento'),
     # Installment details
     path('analytics/installments/', InstallmentDetailsView.as_view(), name='analytics-installments'),
+    path('installment-overrides/', InstallmentOverrideView.as_view(), name='installment-overrides'),
     # Smart categorization
     path('analytics/smart-categorize/', SmartCategorizeView.as_view(), name='smart-categorize'),
     # Recurring templates (Settings)

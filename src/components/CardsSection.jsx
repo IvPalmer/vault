@@ -100,6 +100,32 @@ function CardsSection() {
     queryClient.invalidateQueries({ queryKey: ['analytics-variable', selectedMonth] })
   }, [queryClient, selectedMonth])
 
+  // Cancelling/shortening a series affects every future month → invalidate broadly.
+  const invalidateSeries = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['analytics-installments'] })
+    queryClient.invalidateQueries({ queryKey: ['analytics-metricas'] })
+    queryClient.invalidateQueries({ queryKey: ['analytics-projection'] })
+    queryClient.invalidateQueries({ queryKey: ['analytics-cards'] })
+  }, [queryClient])
+
+  const capSeries = useCallback(async (r) => {
+    const pos = parseInt(String(r.parcela || '').split('/')[0], 10)
+    if (!r.id || !pos) return
+    if (!window.confirm(`Encerrar esta série na parcela ${r.parcela}? A projeção para de prever as próximas parcelas.`)) return
+    try {
+      await api.post('/installment-overrides/', { transaction_id: r.id, effective_total: pos })
+      invalidateSeries()
+    } catch (e) { window.alert(e?.message || 'Erro ao encerrar série') }
+  }, [invalidateSeries])
+
+  const uncapSeries = useCallback(async (r) => {
+    if (!r.id) return
+    try {
+      await api.delete('/installment-overrides/', { transaction_id: r.id })
+      invalidateSeries()
+    } catch (e) { window.alert(e?.message || 'Erro ao reativar série') }
+  }, [invalidateSeries])
+
   // Build columns with inline category editing
   const cardColumns = useMemo(() => [
     {
@@ -267,7 +293,26 @@ function CardsSection() {
       size: 90,
       cell: ({ getValue }) => <ParcelaCell value={getValue()} />,
     },
-  ], [invalidate])
+    {
+      accessorKey: 'cap',
+      header: '',
+      size: 120,
+      cell: ({ row }) => {
+        const r = row.original
+        if (r.projected || !r.id) return null
+        if (r.capped) {
+          return (
+            <button className={styles.capBtn} title="Série encerrada — reativar projeção"
+              onClick={() => uncapSeries(r)}>encerrada · reativar</button>
+          )
+        }
+        return (
+          <button className={styles.capBtn} title="Encerrar série nesta parcela (para a projeção)"
+            onClick={() => capSeries(r)}>encerrar série</button>
+        )
+      },
+    },
+  ], [invalidate, capSeries, uncapSeries])
 
   // COMPRAS = à vista (non-installment) purchases of the month. Every installment
   // — including the first (1/N) — lives in the PARCELAS table (the bill that

@@ -89,6 +89,7 @@ from .services import (
     skip_recurring, unskip_recurring, save_balance_override,
     get_projection, get_orcamento,
     smart_categorize, get_installment_details,
+    list_installment_overrides, set_installment_override, delete_installment_override,
     get_recurring_templates, update_recurring_template,
     create_recurring_template, delete_recurring_template,
     get_last_installment_month,
@@ -1606,6 +1607,50 @@ class CategorizeInstallmentView(APIView):
             )
         except Exception as e:
             logger.exception('CategorizeInstallmentView error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class InstallmentOverrideView(APIView):
+    """
+    GET/POST/DELETE /api/installment-overrides/ — cancel/shorten an installment series.
+
+    GET → list overrides for the profile.
+    POST { transaction_id, effective_total, note? } → mark the series of that REAL
+          installment row as ending at effective_total (projection stops beyond it).
+    DELETE { transaction_id } → remove the override (reactivate the series).
+    """
+    def get(self, request):
+        return Response(list_installment_overrides(request.profile))
+
+    def post(self, request):
+        txn_id = request.data.get('transaction_id')
+        eff = request.data.get('effective_total')
+        if not txn_id or eff is None:
+            return Response(
+                {'error': 'transaction_id e effective_total são obrigatórios'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            return Response(set_installment_override(
+                txn_id, eff, request.profile, request.data.get('note', '')))
+        except Transaction.DoesNotExist:
+            return Response({'error': 'Parcela não encontrada'}, status=status.HTTP_404_NOT_FOUND)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.exception('InstallmentOverrideView POST error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request):
+        txn_id = request.data.get('transaction_id') or request.query_params.get('transaction_id')
+        if not txn_id:
+            return Response({'error': 'transaction_id obrigatório'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            return Response(delete_installment_override(txn_id, request.profile))
+        except Transaction.DoesNotExist:
+            return Response({'error': 'Parcela não encontrada'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.exception('InstallmentOverrideView DELETE error')
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 

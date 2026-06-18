@@ -1005,3 +1005,30 @@ class PrenatalConsultation(models.Model):
 
     def __str__(self):
         return f'Consulta {self.data} ({self.ig_semanas})'
+
+
+class InstallmentSeriesOverride(models.Model):
+    """Operator-marked cancellation/shortening of an installment series.
+
+    Identifies a series by the SAME canonical key the projection groups on
+    (_extract_base_desc + account + rounded amount + original total). When set,
+    the projection (_compute_installment_schedule, _project_installment_complement,
+    get_last_installment_month) stops forecasting positions beyond
+    effective_total. Real already-billed rows are never removed — effective_total
+    is clamped on read to at least the highest real position seen.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='installment_overrides')
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='installment_overrides')
+    base_desc = models.CharField(max_length=255)
+    amount_group = models.IntegerField(help_text='round(abs(per-installment amount)) — matches projection dedup')
+    total_inst = models.IntegerField(help_text='original N in k/N')
+    effective_total = models.IntegerField(help_text='series stops here; projection forecasts no further')
+    note = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('profile', 'account', 'base_desc', 'amount_group', 'total_inst')
+
+    def __str__(self):
+        return f'{self.base_desc} {self.amount_group} {self.effective_total}/{self.total_inst}'
