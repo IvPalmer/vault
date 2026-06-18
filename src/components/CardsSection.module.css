@@ -22,6 +22,13 @@
   color: var(--color-text-secondary);
 }
 
+.subtitleHint {
+  padding-left: var(--space-md);
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+  opacity: 0.75;
+}
+
 .capBtn {
   background: transparent;
   border: 1px solid var(--color-border, rgba(0,0,0,0.15));

@@ -2765,6 +2765,14 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
         invoice_by_account[row['account__name']] = abs(float(row['total'] or 0))
     invoice_total = sum(invoice_by_account.values())
 
+    # The bill this panel feeds into (cash-flow truth, shown in the projection):
+    # transaction mode → next month's bill (M's purchases are paid in M+1);
+    # invoice mode → this month's bill. Lets the panel show a reconciliation
+    # caption ("Fatura paga em <mês>: R$X") without forcing panel total == fatura.
+    _cc_field = _cc_month_field(profile)
+    bill_month = _month_str_add(month_str, 1) if _cc_field == 'month_str' else month_str
+    bill_total = float(_fatura_total_for_month(bill_month, profile)['total'])
+
     return {
         'month_str': month_str,
         'transactions': results,
@@ -2775,7 +2783,9 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
         # Lets the panel decide where first installments (1/N) belong: in
         # transaction mode they count as current-month purchases (COMPRAS); in
         # invoice mode they stay in the bill's PARCELAS table.
-        'cc_display_mode': 'transaction' if _cc_month_field(profile) == 'month_str' else 'invoice',
+        'cc_display_mode': 'transaction' if _cc_field == 'month_str' else 'invoice',
+        'bill_month': bill_month,
+        'bill_total': bill_total,
     }
 
 

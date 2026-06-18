@@ -361,11 +361,18 @@ function CardsSection() {
     <div className={styles.section}>
       <h3 className={styles.title}>CONTROLE CARTÕES</h3>
       {data?.cc_display_mode === 'transaction' ? (
-        <div className={styles.subtitle}>
-          Compras e parcelas de {monthLabel(selectedMonth)} — entram na fatura paga em {monthLabel(addMonths(selectedMonth, 1))}
-        </div>
+        <>
+          <div className={styles.subtitle}>
+            Compras e parcelas de {monthLabel(selectedMonth)} — entram na fatura paga em {monthLabel(data?.bill_month || addMonths(selectedMonth, 1))}: <strong>R$ {fmt(data?.bill_total || 0)}</strong> (CARTÃO na projeção)
+          </div>
+          <div className={styles.subtitleHint}>
+            Visão por mês da compra. O total abaixo pode diferir da fatura (compras de outro mês, estornos e projeção).
+          </div>
+        </>
       ) : (
-        <div className={styles.subtitle}>Fatura paga em {monthLabel(selectedMonth)}</div>
+        <div className={styles.subtitle}>
+          Fatura de {monthLabel(selectedMonth)}: <strong>R$ {fmt(data?.bill_total || 0)}</strong>
+        </div>
       )}
 
       {/* Tab bar — hidden when only 1 card */}
@@ -392,7 +399,7 @@ function CardsSection() {
           Compras: <span className={tableStyles.negative}>R$ {fmt(variableTotal)}</span>
         </span>
         <span>
-          Total: <span className={tableStyles.negative}>R$ {fmt(instTotal + variableTotal)}</span>
+          Controle do mês: <span className={tableStyles.negative}>R$ {fmt(instTotal + variableTotal)}</span>
         </span>
       </div>
 
