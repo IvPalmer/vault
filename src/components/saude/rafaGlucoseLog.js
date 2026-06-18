@@ -1,10 +1,12 @@
 /**
  * RAFA_GLUCOSE_LOG — Automonitorização de glicose capilar (gestação).
  *
- * Source: caderno manuscrito de Rafaella, fotografado em 08/06/2026
- *   (IMG_9104–IMG_9108, IMG_9112). "Testagem de Glicose — 15 dias" → estendida a 24 dias.
+ * Source: caderno manuscrito de Rafaella.
+ *   1º lote (dias 1–24): fotografado em 08/06/2026 (IMG_9104–9108, 9112).
+ *   2º lote (dias 25–32): fotografado em 18/06/2026 (IMG_9200, IMG_9201).
+ *   "Testagem de Glicose — 15 dias" → estendida a 32 dias.
  *
- * Período: 16/05/2026 (1º dia) → 08/06/2026 (24º dia).
+ * Período: 16/05/2026 (1º dia) → 16/06/2026 (32º dia).
  * Contexto: controle pré-rastreio de DMG (diabetes mellitus gestacional,
  *   rastreio formal 24–28 sem). Liga-se à obs do plano alimentar
  *   (HbA1c 5,4 com tendência ↑) — ver RAFA_MEAL_PLAN.
@@ -26,8 +28,8 @@
  */
 export const RAFA_GLUCOSE_LOG = {
   titulo: 'Glicose capilar — automonitorização',
-  fonte: 'Caderno manuscrito (IMG_9104–9108, 9112), fotografado 08/06/2026',
-  periodo: { inicio: '2026-05-16', fim: '2026-06-08' },
+  fonte: 'Caderno manuscrito (IMG_9104–9108/9112 + IMG_9200/9201), fotografado 08/06 e 18/06/2026',
+  periodo: { inicio: '2026-05-16', fim: '2026-06-16' },
   referencias: {
     jejum: { min: 65, max: 95, label: 'Jejum: 65–95 mg/dL' },
     pos1h: { max: 140, label: '1h após refeição: < 140 mg/dL' },
@@ -38,6 +40,8 @@ export const RAFA_GLUCOSE_LOG = {
     'Primeiros 3 dias com jejum acima do alvo (113 → 108 → 108); estabiliza na faixa a partir do 6º dia.',
     'Picos pós-refeição associados a refeições de carboidrato refinado / fast-food (ver lista abaixo do gráfico).',
     'Dias sem medição: 4º dia (19/05) sem registro; 5º dia (20/05) sem jejum; alguns almoços/jantares não medidos (esqueceu a máquina / vômito).',
+    'Manhã do 27º dia (11/06) anômala: jejum anotado 160 e remedições 132/163/146 — confirmar com a Rafaella (provável variação de medidor/punção). Almoço do 26º dia (157) também elevado.',
+    'A partir do 29º dia (13/06) a própria anotou "aqui começa pra valer" (controle alimentar mais rígido); jejuns seguintes voltam à faixa (84–94).',
   ],
   // Cada dia: jejum (número|null), almoco/jantar ({ valor, refeicao }|null).
   dias: [
@@ -114,5 +118,33 @@ export const RAFA_GLUCOSE_LOG = {
     { dia: 24, data: '2026-06-08', jejum: 89,
       almoco: { valor: 114, refeicao: 'Hambúrguer de falafel, arroz cateto, cenoura e quiabo no leite de coco' },
       jantar: { valor: 108, refeicao: 'Hambúrguer com duas carnes' } },
+    { dia: 25, data: '2026-06-09', jejum: 82,
+      almoco: null,
+      jantar: { valor: 104, refeicao: 'Patinho grelhado, feijão azuki e arroz cateto' },
+      nota: 'Tarde: não mediu (não levou o glicosímetro pro estágio).' },
+    { dia: 26, data: '2026-06-10', jejum: 99,
+      almoco: { valor: 157, refeicao: 'Arroz cateto, feijão azuki, hambúrguer de grão de bico c/ molho de iogurte, salsa e cenoura' },
+      jantar: { valor: 122, refeicao: 'Caldo de abóbora com linguiça de frango, leite de coco e temperos' } },
+    { dia: 27, data: '2026-06-11', jejum: 160,
+      almoco: { valor: 117, refeicao: 'Arroz cateto, feijão azuki, chuchu grelhado, alface, tomate e ervilha' },
+      jantar: { valor: 132, refeicao: 'Sopa de abóbora e linguiça de frango' },
+      nota: 'Manhã instável: jejum anotado 160; remedições na sequência 132, 163, 146 — confirmar (provável variação de medição).' },
+    { dia: 28, data: '2026-06-12', jejum: 84,
+      almoco: { valor: 120, refeicao: 'Arroz cateto, feijão azuki, carne vermelha grelhada, salada e tomate' },
+      jantar: { valor: 154, refeicao: 'Pipoca grande + cachorro-quente (cinema)' },
+      nota: 'Dia dos Namorados.' },
+    { dia: 29, data: '2026-06-13', jejum: 86,
+      almoco: { valor: 114, refeicao: 'Arroz vermelho, feijão azuki, patinho grelhado, alface e tomate' },
+      jantar: { valor: 80, refeicao: 'Caldo de abóbora com linguiça (2h depois) + bolo de banana e farinha de amêndoas' },
+      nota: '"Aqui começa pra valer" — início do controle mais rígido (anotação dela).' },
+    { dia: 30, data: '2026-06-14', jejum: 85,
+      almoco: { valor: 95, refeicao: 'Patinho grelhado, arroz vermelho, feijão azuki, salada (tomate e limão), sorvete zero açúcar (chocolate/pistache)' },
+      jantar: { valor: 94, refeicao: 'Lasanha caseira (berinjela, carne moída, tomate, muçarela, parmesão) + 1 maçã' } },
+    { dia: 31, data: '2026-06-15', jejum: 94,
+      almoco: { valor: 87, refeicao: 'Lasanha caseira low carb de berinjela com muçarela + panhoca' },
+      jantar: { valor: 107, refeicao: 'Lasanha caseira low carb de berinjela, castanha, pêra' } },
+    { dia: 32, data: '2026-06-16', jejum: 87,
+      almoco: { valor: 95, refeicao: 'Arroz vermelho, coxão mole grelhado, feijão azuki' },
+      jantar: { valor: 94, refeicao: 'Jantar (refeição não anotada)' } },
   ],
 }
