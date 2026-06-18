@@ -1220,6 +1220,196 @@ def _template_history_is_cc_billed(template_id, month_str, profile, cc_account_i
     return len(evidence) >= FIXO_CC_HISTORY_MIN_EVIDENCE and all(evidence)
 
 
+def _cc_billed_card_for_mapping(mapping, cc_accounts, month_str, profile):
+    """Which CC card a Fixo mapping is billed to.
+
+    Returns the account NAME when CC-billed and attributable to a single card,
+    '' when CC-billed but the card is ambiguous (multiple/unknown), or None when
+    not CC-billed (paid from checking). Mirrors the boolean detection used by
+    get_metricas (current link wins, else conservative template history)."""
+    cc_ids = set(cc_accounts)
+    linked = _mapping_linked_txns(mapping)
+    state = _linked_txns_cc_state(linked, cc_ids)
+    if state is True:
+        cards = {cc_accounts.get(t.account_id) for t in linked if t.account_id in cc_ids}
+        return next(iter(cards)) if len(cards) == 1 else ''
+    if state is False:
+        return None
+    # No current link → infer CC billing from history, and resolve the card from
+    # the most recent CC-linked history mapping.
+    if not mapping.template_id or not _template_history_is_cc_billed(
+        mapping.template_id, month_str, profile, cc_ids):
+        return None
+    qs = (RecurringMapping.objects
+          .filter(profile=profile, template_id=mapping.template_id, month_str__lt=month_str)
+          .exclude(status='skipped').order_by('-month_str')
+          .select_related('transaction').prefetch_related('transactions'))
+    for hm in qs:
+        hl = _mapping_linked_txns(hm)
+        if _linked_txns_cc_state(hl, cc_ids) is True:
+            cards = {cc_accounts.get(t.account_id) for t in hl if t.account_id in cc_ids}
+            return next(iter(cards)) if len(cards) == 1 else ''
+    return ''
+
+
+def _cc_billed_fixo(month_str, profile):
+    """Single source of truth for recurring Fixo billed to a credit card.
+
+    Shared by get_metricas (fixo_on_cc / a_pagar skip) and get_projection (the
+    CC-fixo CARTAO component + Fixo-column exclusion) so the two surfaces can
+    never diverge. Returns:
+      by_card: {account_name: Decimal}  attributable to a specific card
+      unassigned: Decimal               CC-billed but card unknown (category-share, ambiguous)
+      total: Decimal                    == sum(by_card) + unassigned (== old fixo_on_cc)
+      mapping_ids: set                  CC-billed RecurringMapping ids
+      template_ids: set                 CC-billed template ids
+    """
+    cc_accounts = {
+        a.id: a.name for a in
+        Account.objects.filter(profile=profile, account_type='credit_card')
+    }
+    cc_ids = set(cc_accounts)
+    by_card = {}
+    unassigned = Decimal('0.00')
+    mapping_ids = set()
+    template_ids = set()
+
+    fixo_mappings = RecurringMapping.objects.filter(
+        month_str=month_str, profile=profile,
+    ).filter(
+        Q(template__template_type='Fixo') | Q(is_custom=True, custom_type='Fixo')
+    ).exclude(status='skipped').select_related(
+        'template', 'category', 'transaction').prefetch_related('transactions')
+
+    for m in fixo_mappings:
+        amt = _mapping_expected_amount(m)
+        if amt <= 0:
+            continue
+        # Category-based recurring (e.g. Assinaturas): treat as CC-billed when the
+        # category spend is (near-)entirely on cards. Cannot attribute to one card.
+        if m.match_mode == 'category' and m.category_id:
+            share = _category_cc_share(
+                m.category, month_str, profile=profile, cc_account_ids=cc_ids)
+            if share >= Decimal('0.9'):
+                unassigned += amt
+                mapping_ids.add(m.id)
+                if m.template_id:
+                    template_ids.add(m.template_id)
+            continue
+        card = _cc_billed_card_for_mapping(m, cc_accounts, month_str, profile)
+        if card is None:
+            continue
+        mapping_ids.add(m.id)
+        if m.template_id:
+            template_ids.add(m.template_id)
+        if card:
+            by_card[card] = by_card.get(card, Decimal('0.00')) + amt
+        else:
+            unassigned += amt
+
+    total = sum(by_card.values(), Decimal('0.00')) + unassigned
+    return {
+        'by_card': by_card, 'unassigned': unassigned, 'total': total,
+        'mapping_ids': mapping_ids, 'template_ids': template_ids,
+    }
+
+
+def _fatura_total_for_month(month_str, profile):
+    """Pure, cascade-independent CC bill total for a month — the single source
+    consumed by both get_metricas (fatura_total) and get_projection (CARTAO), so
+    they always agree.
+
+    For a pure-projection future month (no Pluggy bill and no real CC purchases
+    yet) the CC-billed recurring fixos (insurance, etc.) are projected onto the
+    bill so they aren't lost — for the current/past month and for months with a
+    real bill the actual transactions already carry them, so behavior is byte-
+    identical. Returns {total, by_card, sub_cards}.
+    """
+    now = datetime.now()
+    current_ms = f'{now.year}-{now.month:02d}'
+    is_future = month_str > current_ms
+
+    cc_accounts = list(
+        Account.objects.filter(profile=profile, account_type='credit_card'))
+
+    cartao_bill_mappings = {
+        m.template.name: m.expected_amount
+        for m in RecurringMapping.objects.filter(
+            month_str=month_str, profile=profile,
+            template__template_type='Cartao', template__is_active=True,
+        ).select_related('template')
+        if m.expected_amount > 0
+    }
+    cartao_account_names = set(
+        RecurringTemplate.objects.filter(
+            profile=profile, template_type='Cartao', is_active=True,
+        ).values_list('name', flat=True))
+    has_pluggy_bills = bool(cartao_bill_mappings)
+
+    schedule = _compute_installment_schedule(month_str, num_future_months=0, profile=profile)
+    parcelas_by_card = schedule.get('_by_card', {}).get(month_str, {})
+
+    # Per-card real purchase sums (non-Pluggy cards only).
+    purchases_by_card = {}
+    for cc_acct in cc_accounts:
+        if cc_acct.name in cartao_bill_mappings:
+            continue
+        q = _build_cc_fatura_query_single(cc_acct.id, month_str, profile)
+        purchases_by_card[cc_acct.name] = abs(
+            Transaction.objects.filter(q).aggregate(total=Sum('amount'))['total']
+            or Decimal('0.00'))
+    total_real_purchases = sum(purchases_by_card.values(), Decimal('0.00'))
+
+    # Project CC-billed fixos onto the bill only for a pure-projection month:
+    # future + no Pluggy bill + no real purchases (else the real bill carries them).
+    do_cc = is_future and not has_pluggy_bills and total_real_purchases == 0
+    cc = _cc_billed_fixo(month_str, profile) if do_cc else None
+    cc_by_card = cc['by_card'] if cc else {}
+
+    fatura_by_card = {}
+    fatura_sub_cards = {}
+    counted = set()
+    for cc_acct in cc_accounts:
+        name = cc_acct.name
+        if name in cartao_bill_mappings:
+            fatura_by_card[name] = cartao_bill_mappings[name]
+            counted.add(name)
+            continue
+        purchases = purchases_by_card.get(name, Decimal('0.00'))
+        card_parcelas = Decimal(str(parcelas_by_card.get(name, 0)))
+        extra = Decimal(str(cc_by_card.get(name, 0)))
+        if cartao_account_names and name in cartao_account_names:
+            est = max(purchases, card_parcelas + extra)
+            if est > 0:
+                fatura_by_card[name] = est
+                counted.add(name)
+        else:
+            tot = max(purchases, card_parcelas + extra)
+            if tot > 0:
+                fatura_sub_cards[name] = tot
+                if extra > 0:
+                    counted.add(name)  # sub-card cc represented in its own line
+
+    sub_card_total = (Decimal('0.00') if has_pluggy_bills
+                      else sum(fatura_sub_cards.values(), Decimal('0.00')))
+    fatura_total = sum(fatura_by_card.values(), Decimal('0.00')) + sub_card_total
+
+    # Add committed CC-fixos not represented on any card line (unassigned, or a
+    # card with no bill line). Per-amount: only what isn't covered by a card line.
+    if cc:
+        leftover = cc['unassigned']
+        for nm, amt in cc_by_card.items():
+            if nm not in counted:
+                leftover += Decimal(str(amt))
+        fatura_total += leftover
+
+    return {
+        'total': fatura_total,
+        'by_card': fatura_by_card,
+        'sub_cards': fatura_sub_cards,
+    }
+
+
 def get_metricas(month_str, profile=None):
     """
     MÉTRICAS — unified dashboard metrics replacing both get_summary_metrics
@@ -1333,38 +1523,17 @@ def get_metricas(month_str, profile=None):
         fixo_expected_total += _mapping_expected_amount(m)
 
     # Identify fixo items billed to a CC account (e.g. insurance, gym).
-    # These amounts are already inside fatura_total, so subtract from fixo
-    # for budget calculations to avoid double-counting.
+    # These amounts are inside fatura_total (real txns this month, or projected
+    # onto the bill for future months via _fatura_total_for_month), so subtract
+    # from fixo for budget calculations to avoid double-counting. Single source
+    # of truth shared with the projection.
     cc_account_ids = set(
         Account.objects.filter(profile=profile, account_type='credit_card')
         .values_list('id', flat=True)
     )
-    fixo_on_cc = Decimal('0.00')
-    _fixo_on_cc_mapping_ids = set()
-    for m in fixo_mappings_all:
-        # Category-based recurring (e.g. Assinaturas): treat as CC-billed when the
-        # category's spend is predominantly on credit cards, so its expected amount
-        # is subtracted from the budget envelope (it's already inside fatura_total).
-        if m.match_mode == 'category' and m.category_id:
-            share = _category_cc_share(
-                m.category, month_str, profile=profile, cc_account_ids=cc_account_ids
-            )
-            # Only treat as CC-billed when the category is (near-)entirely on cards,
-            # so the binary subtract-from-budget + skip-in-a_pagar stays accurate.
-            if share >= Decimal('0.9'):
-                fixo_on_cc += _mapping_expected_amount(m)
-                _fixo_on_cc_mapping_ids.add(m.id)
-            continue
-        # Current-month links win; if this month isn't linked yet, infer from the
-        # template's recent payment history so card-billed fixo (insurance, etc.)
-        # isn't double-counted (once in a_pagar, once in the fatura).
-        state = _linked_txns_cc_state(_mapping_linked_txns(m), cc_account_ids)
-        if state is None:
-            state = _template_history_is_cc_billed(
-                m.template_id, month_str, profile, cc_account_ids)
-        if state:
-            fixo_on_cc += _mapping_expected_amount(m)
-            _fixo_on_cc_mapping_ids.add(m.id)
+    _cc_fixo = _cc_billed_fixo(month_str, profile)
+    fixo_on_cc = _cc_fixo['total']
+    _fixo_on_cc_mapping_ids = _cc_fixo['mapping_ids']
     fixo_for_budget = fixo_expected_total - fixo_on_cc
 
     invest_mappings_all = RecurringMapping.objects.filter(
@@ -1509,66 +1678,16 @@ def get_metricas(month_str, profile=None):
     # =====================================================================
     cc_accounts = Account.objects.filter(profile=profile, account_type='credit_card')
 
-    # Use Pluggy bill totals from Cartao mappings (exact bank amounts).
-    # Falls back to summing CC purchases if no Cartao mapping exists.
-    cartao_bill_mappings = {
-        m.template.name: m.expected_amount
-        for m in RecurringMapping.objects.filter(
-            month_str=month_str, profile=profile,
-            template__template_type='Cartao', template__is_active=True,
-        ).select_related('template')
-        if m.expected_amount > 0
-    }
-
-    # Cards with active Cartao templates have their own bill (counted in total).
-    # Additional cards (e.g. Rafa on MC Black) shown for visibility only.
-    cartao_account_names = set(
-        RecurringTemplate.objects.filter(
-            profile=profile, template_type='Cartao', is_active=True,
-        ).values_list('name', flat=True)
-    )
-
-    fatura_by_card = {}       # Cards with own bill (counted in fatura_total)
-    fatura_sub_cards = {}     # Additional cards (visibility only, NOT counted)
-    for cc_acct in cc_accounts:
-        if cc_acct.name in cartao_bill_mappings:
-            # Authoritative Pluggy bill total
-            fatura_by_card[cc_acct.name] = cartao_bill_mappings[cc_acct.name]
-        elif cartao_account_names and cc_acct.name in cartao_account_names:
-            # Active Cartao template but no Pluggy bill — use purchase sum
-            # or projected installments for THIS card only.
-            q = _build_cc_fatura_query_single(cc_acct.id, month_str, profile)
-            purchases = abs(Transaction.objects.filter(q).aggregate(
-                total=Sum('amount'))['total'] or Decimal('0.00'))
-            card_parcelas = Decimal(str(parcelas_by_card.get(cc_acct.name, 0)))
-            # Real purchases already include installment txns — use whichever
-            # is larger (purchases for imported months, parcelas for future).
-            estimated_total = max(purchases, card_parcelas)
-            if estimated_total > 0:
-                fatura_by_card[cc_acct.name] = estimated_total
-        else:
-            # Additional card (no own bill) — visibility only
-            q = _build_cc_fatura_query_single(cc_acct.id, month_str, profile)
-            purchases = abs(Transaction.objects.filter(q).aggregate(
-                total=Sum('amount'))['total'] or Decimal('0.00'))
-            card_parcelas = Decimal(str(parcelas_by_card.get(cc_acct.name, 0)))
-            # Real purchases already include installment txns — use whichever
-            # is larger (purchases for imported months, parcelas for future).
-            total = max(purchases, card_parcelas)
-            if total > 0:
-                fatura_sub_cards[cc_acct.name] = total
-
     # =====================================================================
-    # 8. PARCELAS + GASTOS PROJETADOS
-    #    fatura_by_card = CC bills that are paid from checking (own bills).
-    #    fatura_sub_cards = additional cards whose charges are already
-    #    included in another card's bill (visibility only).
+    # 8. FATURA + GASTOS PROJETADOS — shared, pure bill total (also consumed by
+    #    get_projection, so projection CARTAO == metricas fatura by construction).
+    #    For pure-projection future months it projects CC-billed fixos (insurance)
+    #    onto the bill; current/past/Pluggy months are byte-identical.
     # =====================================================================
-    # Sub-card charges are included in the parent's Pluggy bill total, so only
-    # add sub_cards when NO main card used a Pluggy bill (i.e. purchase-sum mode).
-    has_pluggy_bills = bool(cartao_bill_mappings)
-    sub_card_total = Decimal('0.00') if has_pluggy_bills else sum(fatura_sub_cards.values(), Decimal('0.00'))
-    fatura_total = sum(fatura_by_card.values(), Decimal('0.00')) + sub_card_total
+    _fatura = _fatura_total_for_month(month_str, profile)
+    fatura_by_card = _fatura['by_card']       # cards with own bill (counted)
+    fatura_sub_cards = _fatura['sub_cards']   # additional cards (visibility only)
+    fatura_total = _fatura['total']
     # When the bill has an authoritative Pluggy total, use it.
     # Otherwise fatura_by_card already includes projected installments.
     projected_cc = parcelas_total if fatura_total == 0 else fatura_total
@@ -3830,38 +3949,11 @@ def get_projection(start_month_str, num_months=0, profile=None):
     # Savings target percentage for dynamic investment goal
     savings_target_pct = float(profile.savings_target_pct) if profile else 20.0
 
-    # Compute fixo_on_cc for projection: CC-billed fixo templates whose amounts
-    # are already inside fatura, to avoid double-counting in every month.
-    # For the current month we use metricas; for future months we use template defaults.
-    _cc_acct_ids_proj = set(
-        Account.objects.filter(profile=profile, account_type='credit_card')
-        .values_list('id', flat=True)
-    )
-    _fixo_on_cc_tpl_ids = set()
-    for ft in fixo_tpls:
-        # Category-based recurring billed to CC (e.g. Assinaturas): exclude from the
-        # projection's fixo, same as other CC-billed fixos — its cost rides on the
-        # fatura side, so counting it in fixo too would double-count.
-        if getattr(ft, 'match_mode', 'manual') == 'category' and ft.category_id:
-            share = _category_cc_share(
-                ft.category, start_month_str, profile=profile, cc_account_ids=_cc_acct_ids_proj
-            )
-            if share >= Decimal('0.9'):
-                _fixo_on_cc_tpl_ids.add(ft.id)
-            continue
-        # Current-month link wins; else infer from the template's payment history
-        # (same rule as get_metricas) so card-billed fixo stays out of projected
-        # fixo for every month, not just months that happen to be linked.
-        cur_mapping = RecurringMapping.objects.filter(
-            month_str=start_month_str, profile=profile, template=ft,
-        ).exclude(status='skipped').select_related('transaction').prefetch_related('transactions').first()
-        state = (_linked_txns_cc_state(_mapping_linked_txns(cur_mapping), _cc_acct_ids_proj)
-                 if cur_mapping else None)
-        if state is None:
-            state = _template_history_is_cc_billed(
-                ft.id, start_month_str, profile, _cc_acct_ids_proj)
-        if state:
-            _fixo_on_cc_tpl_ids.add(ft.id)
+    # CC-billed fixos (insurance etc.) are excluded from the projection's Fixo
+    # column and instead ride on the CARTAO column (fatura), computed per-month
+    # below via the shared _cc_billed_fixo / _fatura_total_for_month — so the
+    # Fixo and CARTAO columns use the SAME CC-fixo set every month and reconcile
+    # with get_metricas.
 
     # Realistic variable estimate for future months (dynamic): trailing avg of
     # ACTUAL variable spend over the last 3 closed months, minus the parcela
@@ -3883,26 +3975,6 @@ def get_projection(start_month_str, num_months=0, profile=None):
         realistic_variable = max(0.0, (sum(_rv_gv) / len(_rv_gv)) - (sum(_rv_parc) / len(_rv_parc)))
     else:
         realistic_variable = 0.0
-
-    def _estimate_committed_card_for_month(m):
-        """Future-month card outflow = COMMITTED components only: parcelas +
-        CC-billed fixos (Assinaturas, seguros no cartão). The discretionary CC
-        spend is already counted in the realistic `variable`, so using the FULL
-        bill here would double-count it. (Current month uses metricas.fatura_total.)"""
-        parcelas = Decimal(str(installment_schedule.get(m, 0) or 0))
-        cc_fixos = Decimal('0.00')
-        for tpl in fixo_tpls:
-            amount = Decimal(str(_tpl_amount(tpl, m)))
-            if getattr(tpl, 'match_mode', 'manual') == 'category' and tpl.category_id:
-                share = _category_cc_share(
-                    tpl.category, m, profile=profile, cc_account_ids=_cc_acct_ids_proj,
-                )
-                if share >= Decimal('0.9'):
-                    cc_fixos += amount
-                continue
-            if tpl.id in _fixo_on_cc_tpl_ids:
-                cc_fixos += amount
-        return float(parcelas + cc_fixos)
 
     # Build projection rows
     rows = []
@@ -3943,13 +4015,15 @@ def get_projection(start_month_str, num_months=0, profile=None):
         else:
             # Future months: use defaults, applying BudgetConfig overrides per template
             income = sum(_tpl_amount(t, month) for t in income_tpls)
-            # Exclude CC-billed fixo templates (their cost is in fatura)
-            fixo = sum(_tpl_amount(t, month) for t in fixo_tpls if t.id not in _fixo_on_cc_tpl_ids)
+            # Exclude CC-billed fixo templates (their cost rides on the CARTAO
+            # column / fatura). Same per-month CC-fixo set as _fatura_total_for_month,
+            # so the Fixo and CARTAO columns never double-count or diverge.
+            _cc_tpl_ids_m = _cc_billed_fixo(month, profile)['template_ids']
+            fixo = sum(_tpl_amount(t, month) for t in fixo_tpls if t.id not in _cc_tpl_ids_m)
             invest = sum(_tpl_amount(t, month) for t in invest_tpls)
-            # Future card outflow = committed components only (parcelas + CC-billed
-            # fixos). The discretionary CC spend is already in `variable`
-            # (realistic), so the FULL bill here would double-count it.
-            installments = _estimate_committed_card_for_month(month)
+            # Card outflow = the shared bill total (parcelas + projected CC-billed
+            # fixos), identical to metricas.fatura_total for this month.
+            installments = float(_fatura_total_for_month(month, profile)['total'])
             variable = 0.0
 
         # Savings target kept for the display tooltip only. The actual invest is
