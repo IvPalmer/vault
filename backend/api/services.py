@@ -3194,7 +3194,7 @@ def set_installment_override(transaction_id, effective_total, profile, note=''):
     """Mark the installment series of a representative REAL txn as ending at
     effective_total. Validates max_real_position <= effective_total < total_inst."""
     txn = Transaction.objects.select_related('account').get(
-        id=transaction_id, profile=profile, is_installment=True)
+        id=transaction_id, profile=profile, is_installment=True, amount__lt=0)
     key = _series_fields_from_txn(txn)
     if not key:
         raise ValueError('Transação não é uma parcela com N/M reconhecível.')
