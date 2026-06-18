@@ -2778,25 +2778,43 @@ def get_installment_details(month_str, profile=None):
     Returns: dict with 'source' ('real' or 'projected'), deduped installment
     items, count, and total.
     """
-    # Check if this month has real installment data.
-    # Always use invoice_month — installments belong to the bill they appear
-    # on, regardless of cc_display_mode (matches _compute_installment_schedule).
-    real_installments = Transaction.objects.filter(
-        invoice_month=month_str,
-        is_installment=True,
-        amount__lt=0,
-        profile=profile,
-    ).select_related('account', 'category', 'subcategory')
+    # Month semantics follow the profile's CC display mode, matching
+    # get_card_transactions so the COMPRAS and PARCELAS tables in the same
+    # panel agree on which month a row belongs to:
+    #   - transaction mode (month_str): installments keyed by PURCHASE month;
+    #     each installment purchase shows once (lowest position) in the month
+    #     it was made. No bill projection — in this model an installment
+    #     belongs to its purchase month, not to future bills.
+    #   - invoice mode (invoice_month): installments belong to the bill they
+    #     appear on; falls back to month_str for legacy rows and complements
+    #     with projected future positions (matches _compute_installment_schedule).
+    cc_field = _cc_month_field(profile)
+    project = cc_field != 'month_str'
 
-    if not real_installments.exists():
-        # Fall back to month_str for legacy data without invoice_month
+    if cc_field == 'month_str':
         real_installments = Transaction.objects.filter(
             month_str=month_str,
-            invoice_month='',
             is_installment=True,
             amount__lt=0,
             profile=profile,
         ).select_related('account', 'category', 'subcategory')
+    else:
+        real_installments = Transaction.objects.filter(
+            invoice_month=month_str,
+            is_installment=True,
+            amount__lt=0,
+            profile=profile,
+        ).select_related('account', 'category', 'subcategory')
+
+        if not real_installments.exists():
+            # Fall back to month_str for legacy data without invoice_month
+            real_installments = Transaction.objects.filter(
+                month_str=month_str,
+                invoice_month='',
+                is_installment=True,
+                amount__lt=0,
+                profile=profile,
+            ).select_related('account', 'category', 'subcategory')
 
     if real_installments.exists():
         # Group by purchase identity, keep only the lowest position per group
@@ -2860,12 +2878,14 @@ def get_installment_details(month_str, profile=None):
 
         items.extend(non_parseable_items)
 
-        # Complement with projected installments from older bills.
-        # Matches _compute_installment_schedule Step 2 so the total agrees with
-        # metricas['parcelas']. Items get projected=True so the UI can flag them.
+        # Complement with projected installments from older bills (invoice mode
+        # only). Matches _compute_installment_schedule Step 2 so the total
+        # agrees with metricas['parcelas']. Items get projected=True so the UI
+        # can flag them. In transaction mode there is no projection — an
+        # installment lives in its purchase month.
         projected_items = _project_installment_complement(
             month_str, profile=profile, exclude_purchase_ids=real_purchase_ids,
-        )
+        ) if project else []
         items.extend(projected_items)
 
         items.sort(key=lambda x: (x['account'], x['date']))
@@ -2879,13 +2899,15 @@ def get_installment_details(month_str, profile=None):
             'total': round(total, 2),
         }
 
-    # No real data — project from older CC statements via the shared helper.
-    items = _project_installment_complement(month_str, profile=profile)
+    # No real data. In invoice mode, project from older CC statements via the
+    # shared helper. In transaction mode there is nothing to project — the
+    # month simply has no installment purchases.
+    items = _project_installment_complement(month_str, profile=profile) if project else []
     items.sort(key=lambda x: (x['account'], x['date']))
     total = sum(i['amount'] for i in items)
     return {
         'month_str': month_str,
-        'source': 'projected',
+        'source': 'projected' if project else 'real',
         'items': items,
         'count': len(items),
         'total': round(total, 2),
