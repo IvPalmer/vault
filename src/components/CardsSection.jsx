@@ -13,11 +13,6 @@ function fmt(n) {
   return Math.abs(n).toLocaleString('pt-BR', { maximumFractionDigits: 2, minimumFractionDigits: 2 })
 }
 
-/** Installment position (numerator) from a 'k/N' string; 1 if unparseable. */
-function instPos(parcela) {
-  const m = (parcela || '').match(/(\d+)\s*\/\s*(\d+)/)
-  return m ? parseInt(m[1], 10) : 1
-}
 
 /** "2026-07" → "julho/26" (pt-BR). */
 function monthLabel(monthStr) {
@@ -274,17 +269,13 @@ function CardsSection() {
     },
   ], [invalidate])
 
-  // COMPRAS = what was bought this month. In transaction mode the first
-  // installment (1/N) of a purchase counts as a current-month purchase and
-  // stays here; later positions (>=2/N) move to the PARCELAS table. In invoice
-  // mode every installment lives in the bill's PARCELAS table.
+  // COMPRAS = à vista (non-installment) purchases of the month. Every installment
+  // — including the first (1/N) — lives in the PARCELAS table (the bill that
+  // closes with this month's purchases).
   const filteredData = useMemo(() => {
     if (!data?.transactions) return []
     const currentTab = TABS.find(t => t.key === effectiveTab)
-    const keepFirstInst = data.cc_display_mode === 'transaction'
-    let txns = data.transactions.filter(
-      t => !t.is_installment || (keepFirstInst && instPos(t.parcela) <= 1)
-    )
+    let txns = data.transactions.filter(t => !t.is_installment)
     if (currentTab?.filter) {
       txns = txns.filter(t => t.account === currentTab.filter)
     }
@@ -326,8 +317,7 @@ function CardsSection() {
       <h3 className={styles.title}>CONTROLE CARTÕES</h3>
       {data?.cc_display_mode === 'transaction' ? (
         <div className={styles.subtitle}>
-          Compras feitas em {monthLabel(selectedMonth)} (cobradas na fatura de {monthLabel(addMonths(selectedMonth, 1))})
-          {' · '}Parcelas pagas na fatura de {monthLabel(selectedMonth)}
+          Compras e parcelas de {monthLabel(selectedMonth)} — entram na fatura paga em {monthLabel(addMonths(selectedMonth, 1))}
         </div>
       ) : (
         <div className={styles.subtitle}>Fatura paga em {monthLabel(selectedMonth)}</div>

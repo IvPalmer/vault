@@ -2019,13 +2019,6 @@ def get_metricas(month_str, profile=None):
     ).aggregate(s=Sum('amount'))['s'] or Decimal('0.00'))
     outras_entradas = max(Decimal('0.00'), entradas_atuais - _salario_recebido) + _captacao
 
-    # PARCELAS card mirrors the CONTROLE CARTÕES panel (same function), so the two
-    # never disagree: carry-over installments only in transaction mode (first
-    # installments are shown as purchases), all positions in invoice mode.
-    # parcelas_bill keeps the full bill-installment total for internal consumers
-    # (CC fallback when fatura is 0, and the projection's variable estimate).
-    _panel_parcelas = get_installment_details(month_str, profile=profile)['total']
-
     result_dict = {
         'month_str': month_str,
         'balance_override': balance_override,
@@ -2049,8 +2042,7 @@ def get_metricas(month_str, profile=None):
         ) if not is_future else 0.0,
         'fatura_by_card': {name: float(val) for name, val in fatura_by_card.items()},
         'fatura_sub_cards': {name: float(val) for name, val in fatura_sub_cards.items()},
-        'parcelas': float(_panel_parcelas),
-        'parcelas_bill': float(parcelas_total),
+        'parcelas': float(parcelas_total),
         'parcelas_by_card': {name: float(val) for name, val in parcelas_by_card.items()},
         'a_entrar': float(a_entrar),
         'a_pagar': float(a_pagar),
@@ -2891,46 +2883,31 @@ def _project_installment_complement(month_str, profile=None, exclude_purchase_id
     return projected
 
 
-def _parcela_position(parcela):
-    """Installment position (numerator) from a 'k/N' string; 1 if unparseable."""
-    if not parcela:
-        return 1
-    m = re.match(r'(\d+)\s*/\s*(\d+)', str(parcela))
-    return int(m.group(1)) if m else 1
-
-
 def get_installment_details(month_str, profile=None):
     """
     INSTALLMENT BREAKDOWN for the CONTROLE CARTÕES panel.
 
-    Two tables in the panel answer different questions:
-    - COMPRAS = purchases MADE this month (month_str), paid on next month's bill.
-      In transaction mode the first installment (1/N) of a purchase counts here.
-    - PARCELAS (this function, transaction mode) = installments PAID this month =
-      this month's bill (invoice_month == M), keeping only positions >= 2. The
-      first installments (1/N) are dropped because they're shown as purchases in
-      COMPRAS. For a future month (no new purchases yet, so the bill has no 1/N),
-      this equals metricas['parcelas'] — the two reconcile.
+    Transaction mode (Palmer): the panel for month M shows the bill that CLOSES
+    with month M's purchases (paid in M+1) — M's purchases' first installments
+    (1/N) plus prior purchases' later installments on that same bill, all
+    positions. e.g. the May panel = May purchases' 1/2, 1/3 + April purchases'
+    2/4, 2/5 (the bill paid in June). This deliberately does NOT equal the
+    METRICAS parcelas card, which is the bill PAID this month (the previous
+    month's purchases) — a different month.
 
-    Invoice mode (Rafa): the bill paid this month, all positions (unchanged).
-    metricas['parcelas'] stays invoice-anchored via _compute_installment_schedule.
+    Invoice mode (Rafa): the bill paid this month, all positions.
     """
     if _cc_month_field(profile) != 'month_str':
         return _get_installment_details_invoice(month_str, profile=profile)
 
-    # Transaction mode: installments paid on THIS month's bill (invoice_month==M),
-    # minus the first installments (1/N) that are shown as purchases in COMPRAS.
-    detail = _get_installment_details_invoice(month_str, profile=profile)
-    items = [it for it in detail['items'] if _parcela_position(it.get('parcela')) >= 2]
-    items.sort(key=lambda x: (x['account'], x['date']))
-    total = sum(i['amount'] for i in items)
-    return {
-        'month_str': month_str,
-        'source': detail['source'],
-        'items': items,
-        'count': len(items),
-        'total': round(total, 2),
-    }
+    # Transaction mode: the bill containing THIS month's purchases (paid M+1),
+    # all positions (first installments of M's purchases + prior carry-overs).
+    bill_month = _month_str_add(month_str, 1)
+    detail = _get_installment_details_invoice(bill_month, profile=profile)
+    for it in detail['items']:
+        it['source_month'] = month_str
+    detail['month_str'] = month_str
+    return detail
 
 
 def _get_installment_details_invoice(month_str, profile=None):
@@ -3976,9 +3953,7 @@ def get_projection(start_month_str, num_months=0, profile=None):
             _gv = float(_mm.get('gastos_variaveis', 0) or 0)
             if _gv > 0:
                 _rv_gv.append(_gv)
-                # Full bill-installment total (not the carry-over display value),
-                # so this estimate is unchanged by the PARCELAS card alignment.
-                _rv_parc.append(float(_mm.get('parcelas_bill', _mm.get('parcelas', 0)) or 0))
+                _rv_parc.append(float(_mm.get('parcelas', 0) or 0))
         except Exception:
             pass
     if _rv_gv:
