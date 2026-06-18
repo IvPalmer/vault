@@ -94,7 +94,9 @@ function buildCards(data) {
   const investPending = data.a_pagar_invest || 0
   const faturaTotal = data.fatura_total || 0
   const faturaRemaining = data.fatura_remaining || 0
-  const ccForProjection = faturaTotal > 0 ? faturaTotal : (data.parcelas || 0)
+  // Use the full bill-installment total as the CC fallback (data.parcelas is now
+  // the carry-over display value that mirrors the cards panel).
+  const ccForProjection = faturaTotal > 0 ? faturaTotal : (data.parcelas_bill ?? data.parcelas ?? 0)
   // Fixo billed to the card (insurance, subscriptions) rides on the fatura, so
   // projection uses fixo_for_budget (= expected − on-card), not the full fixo.
   const fixoForBudget = data.fixo_for_budget != null ? data.fixo_for_budget : fixoExpected

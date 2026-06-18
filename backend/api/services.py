@@ -2019,6 +2019,13 @@ def get_metricas(month_str, profile=None):
     ).aggregate(s=Sum('amount'))['s'] or Decimal('0.00'))
     outras_entradas = max(Decimal('0.00'), entradas_atuais - _salario_recebido) + _captacao
 
+    # PARCELAS card mirrors the CONTROLE CARTÕES panel (same function), so the two
+    # never disagree: carry-over installments only in transaction mode (first
+    # installments are shown as purchases), all positions in invoice mode.
+    # parcelas_bill keeps the full bill-installment total for internal consumers
+    # (CC fallback when fatura is 0, and the projection's variable estimate).
+    _panel_parcelas = get_installment_details(month_str, profile=profile)['total']
+
     result_dict = {
         'month_str': month_str,
         'balance_override': balance_override,
@@ -2042,7 +2049,8 @@ def get_metricas(month_str, profile=None):
         ) if not is_future else 0.0,
         'fatura_by_card': {name: float(val) for name, val in fatura_by_card.items()},
         'fatura_sub_cards': {name: float(val) for name, val in fatura_sub_cards.items()},
-        'parcelas': float(parcelas_total),
+        'parcelas': float(_panel_parcelas),
+        'parcelas_bill': float(parcelas_total),
         'parcelas_by_card': {name: float(val) for name, val in parcelas_by_card.items()},
         'a_entrar': float(a_entrar),
         'a_pagar': float(a_pagar),
@@ -3968,7 +3976,9 @@ def get_projection(start_month_str, num_months=0, profile=None):
             _gv = float(_mm.get('gastos_variaveis', 0) or 0)
             if _gv > 0:
                 _rv_gv.append(_gv)
-                _rv_parc.append(float(_mm.get('parcelas', 0) or 0))
+                # Full bill-installment total (not the carry-over display value),
+                # so this estimate is unchanged by the PARCELAS card alignment.
+                _rv_parc.append(float(_mm.get('parcelas_bill', _mm.get('parcelas', 0)) or 0))
         except Exception:
             pass
     if _rv_gv:
