@@ -366,6 +366,7 @@ function CardsSection() {
               <span className={styles.summaryCount}>
                 {effectiveTab === 'all' && instData?.count != null ? instData.count : filteredInstallments.length} parcelas
               </span>
+              <span className={tableStyles.negative}>R$ {fmt(instTotal)}</span>
             </span>
             <span className={styles.chevron}>{showInstallments ? '▾' : '▸'}</span>
           </button>
@@ -387,6 +388,7 @@ function CardsSection() {
           <span className={styles.installmentTitle}>
             COMPRAS
             <span className={styles.summaryCount}>{filteredData.length} transações</span>
+            <span className={tableStyles.negative}>R$ {fmt(variableTotal)}</span>
           </span>
         </div>
         <VaultTable
