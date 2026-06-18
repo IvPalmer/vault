@@ -19,6 +19,21 @@ function instPos(parcela) {
   return m ? parseInt(m[1], 10) : 1
 }
 
+/** "2026-07" → "julho/26" (pt-BR). */
+function monthLabel(monthStr) {
+  if (!monthStr) return ''
+  const d = new Date(monthStr + '-01T00:00:00')
+  return d.toLocaleDateString('pt-BR', { month: 'long', year: '2-digit' })
+}
+
+/** Add n months to "YYYY-MM". */
+function addMonths(monthStr, n) {
+  if (!monthStr) return ''
+  const [y, m] = monthStr.split('-').map(Number)
+  const idx = (y * 12 + (m - 1)) + n
+  return `${String(Math.floor(idx / 12)).padStart(4, '0')}-${String((idx % 12) + 1).padStart(2, '0')}`
+}
+
 /** Amount cell with semantic color */
 function AmountCell({ value }) {
   const cls = value > 0 ? tableStyles.positive : tableStyles.negative
@@ -309,6 +324,14 @@ function CardsSection() {
   return (
     <div className={styles.section}>
       <h3 className={styles.title}>CONTROLE CARTÕES</h3>
+      {data?.cc_display_mode === 'transaction' ? (
+        <div className={styles.subtitle}>
+          Compras feitas em {monthLabel(selectedMonth)} (cobradas na fatura de {monthLabel(addMonths(selectedMonth, 1))})
+          {' · '}Parcelas pagas na fatura de {monthLabel(selectedMonth)}
+        </div>
+      ) : (
+        <div className={styles.subtitle}>Fatura paga em {monthLabel(selectedMonth)}</div>
+      )}
 
       {/* Tab bar — hidden when only 1 card */}
       {TABS.length > 1 && (

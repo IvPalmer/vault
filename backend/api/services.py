@@ -2776,38 +2776,25 @@ def get_installment_details(month_str, profile=None):
     """
     INSTALLMENT BREAKDOWN for the CONTROLE CARTÕES panel.
 
-    Month model follows the profile's CC display mode, matching
-    get_card_transactions so the COMPRAS and PARCELAS tables in the same panel
-    agree on which month a row belongs to:
+    Two tables in the panel answer different questions:
+    - COMPRAS = purchases MADE this month (month_str), paid on next month's bill.
+      In transaction mode the first installment (1/N) of a purchase counts here.
+    - PARCELAS (this function, transaction mode) = installments PAID this month =
+      this month's bill (invoice_month == M), keeping only positions >= 2. The
+      first installments (1/N) are dropped because they're shown as purchases in
+      COMPRAS. For a future month (no new purchases yet, so the bill has no 1/N),
+      this equals metricas['parcelas'] — the two reconcile.
 
-    - invoice mode (invoice_month): installments on the bill paid this month.
-    - transaction mode (month_str): purchase-anchored. First installments (1/N)
-      are part of "what you bought this month" and live in COMPRAS (the purchase
-      month), so this table shows only the LATER positions (>=2/N) that land in
-      this month. An installment's display month = invoice_month - 1 (un-lag the
-      bill: position 1 lands in the purchase month, each later position one month
-      after). So a month's carry-over installments are exactly the bill for
-      month+1, minus its first installments.
-
-    The cash-flow metric metricas['parcelas'] stays invoice-anchored via the
-    separate _compute_installment_schedule — this is display only.
+    Invoice mode (Rafa): the bill paid this month, all positions (unchanged).
+    metricas['parcelas'] stays invoice-anchored via _compute_installment_schedule.
     """
     if _cc_month_field(profile) != 'month_str':
         return _get_installment_details_invoice(month_str, profile=profile)
 
-    # Transaction mode: carry-over installments (>=2/N) landing in this month =
-    # next month's bill minus its first installments.
-    # Assumes a next-month billing cycle (purchase month N → bill N+1), i.e. the
-    # display month = invoice_month - 1. True for the only transaction-mode cards
-    # today (Itaú: close 30 / due 5). COMPRAS stays month_str-anchored ("current
-    # month purchases"); for all current/future data month_str == invoice_month-1
-    # for first installments, so the two tables line up. A same-month-cycle card
-    # in transaction mode would need a per-account offset here.
-    bill_month = _month_str_add(month_str, 1)
-    detail = _get_installment_details_invoice(bill_month, profile=profile)
+    # Transaction mode: installments paid on THIS month's bill (invoice_month==M),
+    # minus the first installments (1/N) that are shown as purchases in COMPRAS.
+    detail = _get_installment_details_invoice(month_str, profile=profile)
     items = [it for it in detail['items'] if _parcela_position(it.get('parcela')) >= 2]
-    for it in items:
-        it['source_month'] = month_str
     items.sort(key=lambda x: (x['account'], x['date']))
     total = sum(i['amount'] for i in items)
     return {

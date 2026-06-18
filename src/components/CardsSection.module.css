@@ -15,6 +15,13 @@
   border-left: 3px solid var(--color-accent);
 }
 
+.subtitle {
+  margin-top: calc(-1 * var(--space-xs));
+  padding-left: var(--space-md);
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+}
+
 .loading {
   text-align: center;
   color: var(--color-text-secondary);
