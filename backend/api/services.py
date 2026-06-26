@@ -1435,6 +1435,53 @@ def _fatura_total_for_month(month_str, profile):
     }
 
 
+def _month_actual_income_expense(month_str, profile):
+    """Deduped actual income & expense for a month, including cross-month-linked
+    transactions. Returns (entradas, gastos) as Decimals, gastos positive.
+
+    MIRRORS the entradas_atuais / gastos_atuais computation inside get_metricas
+    (the "ENTRADAS ATUAIS" / "GASTOS ATUAIS" blocks). It exists so
+    get_analytics_trends can reconcile EXACTLY with the Metricas page without
+    paying for a full get_metricas evaluation per month (which also runs the
+    installment schedule, fatura and projection — ~600ms each). KEEP IN SYNC:
+    if the metricas income/expense definition changes, change it here too.
+    """
+    # Transactions of THIS month claimed by ANOTHER month's mapping → exclude.
+    # Only mappings that actually carry cross-month links matter (rare), so filter
+    # to those — mappings without them contribute nothing and scanning all ~360
+    # per month is what made this slow.
+    cross_exclude_ids = set()
+    for om in RecurringMapping.objects.filter(profile=profile).exclude(
+        month_str=month_str
+    ).filter(cross_month_transactions__isnull=False).distinct().prefetch_related(
+        'cross_month_transactions'
+    ):
+        for t in om.cross_month_transactions.filter(month_str=month_str):
+            cross_exclude_ids.add(t.id)
+
+    txns = Transaction.objects.filter(
+        month_str=month_str, is_internal_transfer=False, profile=profile,
+    ).exclude(id__in=cross_exclude_ids)
+
+    # Transactions from OTHER months linked TO this month's mappings → include.
+    cross_inc = Decimal('0.00')
+    cross_exp = Decimal('0.00')
+    for m in RecurringMapping.objects.filter(
+        month_str=month_str, profile=profile,
+    ).filter(cross_month_transactions__isnull=False).distinct().prefetch_related(
+        'cross_month_transactions'
+    ):
+        for t in m.cross_month_transactions.all():
+            if t.amount > 0:
+                cross_inc += t.amount
+            else:
+                cross_exp += t.amount
+
+    entradas = _deduped_transaction_sum(txns.filter(amount__gt=0)) + cross_inc
+    gastos = abs(_deduped_transaction_sum(txns.filter(amount__lt=0)) + cross_exp)
+    return entradas, gastos
+
+
 def get_metricas(month_str, profile=None):
     """
     MÉTRICAS — unified dashboard metrics replacing both get_summary_metrics
@@ -5688,8 +5735,10 @@ def get_checking_transactions(month_str, profile=None):
 
 def get_analytics_trends(start_month=None, end_month=None, category_ids=None, account_filter=None, profile=None):
     """
-    Aggregate data for the Analytics page charts.
-    All queries are batched (no N+1).
+    Aggregate data for the Analytics page charts. Chart queries are batched; the
+    unfiltered headline (spending_trends/savings_rate/summary_kpis) is sourced
+    from the _month_actual_income_expense helper (the same deduped + cross-month
+    logic as get_metricas) so it matches the Metricas page exactly.
 
     Params:
         start_month: 'YYYY-MM' or None (earliest available)
@@ -5733,6 +5782,18 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
 
     month_list = [m for m in all_months if eff_start <= m <= eff_end]
 
+    # Reconcile the headline income/expenses with the Metricas page (single source
+    # of truth) so Analytics can't diverge. Uses the shared
+    # _month_actual_income_expense helper — the SAME deduped + cross-month logic
+    # as get_metricas, but lightweight (no installment schedule / fatura /
+    # projection), so ~7 months is fast. Only for the UNFILTERED view — a
+    # category/account filter has no metricas equivalent, so that path keeps the
+    # raw filtered sums.
+    income_expense_by_month = (
+        {} if (category_ids or account_filter)
+        else {m: _month_actual_income_expense(m, profile) for m in month_list}
+    )
+
     # -- 2. Base querysets ---------------------------------------------------
     # Defense in depth: exclude Transferencias (account movements like CC bill
     # payments). is_internal_transfer should catch these, but legacy ingest
@@ -5750,31 +5811,57 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     ).exclude(category_id__in=_transfer_cat_ids)
     if category_ids:
         base_qs = base_qs.filter(category_id__in=category_ids)
+    # Account pill (mastercard|visa|checking) — applied to every transaction-level
+    # chart fed by base_qs, so the pill actually filters them (same mapping the
+    # card_analysis section uses). When set, the headline above also takes the raw
+    # branch (income_expense_by_month is {}), so trends/savings/KPIs filter too.
+    if account_filter == 'mastercard':
+        base_qs = base_qs.filter(
+            account__account_type='credit_card', account__name__icontains='Mastercard')
+    elif account_filter == 'visa':
+        base_qs = base_qs.filter(
+            account__account_type='credit_card', account__name__icontains='Visa')
+    elif account_filter == 'checking':
+        base_qs = base_qs.filter(account__account_type='checking')
 
     # -- 3. Spending trends (income vs expenses per month) ------------------
-    income_by_month = dict(
-        base_qs.filter(amount__gt=0)
-        .values('month_str')
-        .annotate(total=Sum('amount'))
-        .values_list('month_str', 'total')
-    )
-    expenses_by_month = dict(
-        base_qs.filter(amount__lt=0)
-        .values('month_str')
-        .annotate(total=Sum('amount'))
-        .values_list('month_str', 'total')
-    )
-
+    #    Unfiltered: sourced from get_metricas so income/expenses match the
+    #    Metricas page EXACTLY (deduped sums + cross-month adjustments, not raw
+    #    aggregates — raw month_str sums diverged by the fatura/cross-month
+    #    amount). Filtered (category/account): fall back to raw sums of the
+    #    filtered base_qs, since metricas has no per-filter equivalent.
     spending_trends = []
-    for m in month_list:
-        inc = float(income_by_month.get(m, 0) or 0)
-        exp = float(expenses_by_month.get(m, 0) or 0)
-        spending_trends.append({
-            'month': m,
-            'income': round(inc, 2),
-            'expenses': round(abs(exp), 2),
-            'net': round(inc + exp, 2),
-        })
+    if category_ids or account_filter:
+        income_by_month = dict(
+            base_qs.filter(amount__gt=0)
+            .values('month_str').annotate(total=Sum('amount'))
+            .values_list('month_str', 'total')
+        )
+        expenses_by_month = dict(
+            base_qs.filter(amount__lt=0)
+            .values('month_str').annotate(total=Sum('amount'))
+            .values_list('month_str', 'total')
+        )
+        for m in month_list:
+            inc = float(income_by_month.get(m, 0) or 0)
+            exp = float(expenses_by_month.get(m, 0) or 0)
+            spending_trends.append({
+                'month': m,
+                'income': round(inc, 2),
+                'expenses': round(abs(exp), 2),
+                'net': round(inc + exp, 2),
+            })
+    else:
+        for m in month_list:
+            inc_d, exp_d = income_expense_by_month[m]
+            inc = float(inc_d)
+            exp = float(exp_d)
+            spending_trends.append({
+                'month': m,
+                'income': round(inc, 2),
+                'expenses': round(exp, 2),
+                'net': round(inc - exp, 2),
+            })
 
     # -- 4. Category breakdown (total expenses per category, full range) ----
     cat_totals = (
@@ -5990,6 +6077,10 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     }
 
     # -- 10. Expense composition (fixo/variavel/parcelas/investimento) -----
+    #    Transaction-level by category_type (purchase month), de-overlapped so the
+    #    bars don't double-count installments. NOT sourced from get_metricas: the
+    #    metricas buckets mix invoice-month (parcelas/fatura) with purchase-month
+    #    (variável), so they overlap and would over-sum the monthly total.
     type_month_qs = (
         base_qs.filter(amount__lt=0, category__isnull=False)
         .values('month_str', 'category__category_type')

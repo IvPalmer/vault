@@ -68,6 +68,8 @@ def _detect_internal_transfer(description, amount, raw_description=''):
     combined = desc_lower + ' ' + raw_lower
     patterns = [
         'pagamento de fatura',
+        'fatura paga',  # CC bill payment (legacy Itaú description) — settles the
+                        # already-counted fatura, so it's an internal transfer
         'pgto debito conta',
         'transf entre contas',
         'resgate',
