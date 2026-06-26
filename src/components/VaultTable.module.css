@@ -208,6 +208,12 @@
   color: var(--color-blue);
 }
 
+.badgeCartao {
+  background: rgba(127, 127, 127, 0.12);
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
 .suggested {
   font-style: italic;
   color: var(--color-text-secondary);

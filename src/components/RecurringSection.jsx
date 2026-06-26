@@ -284,7 +284,11 @@ function RecurringSection() {
       accessorKey: 'status',
       header: 'STATUS',
       size: 90,
-      cell: ({ getValue }) => <StatusBadge value={getValue()} />,
+      cell: ({ getValue, row }) => (
+        row.original.cc_billed
+          ? <span className={`${tableStyles.badge} ${tableStyles.badgeCartao}`}>No cartão</span>
+          : <StatusBadge value={getValue()} />
+      ),
     },
     {
       accessorKey: 'matched_desc',
@@ -382,6 +386,15 @@ function RecurringSection() {
         return []
     }
   }, [recData, activeTab])
+
+  // CC-billed recorrentes (seguros, assinaturas) hit the card's fatura, not this
+  // month's cash — split them into their own sub-section so "Faltando" doesn't mislead.
+  const mainData = useMemo(() => tabData.filter((i) => !i.cc_billed), [tabData])
+  const cartaoFixoData = useMemo(() => tabData.filter((i) => i.cc_billed), [tabData])
+  const cartaoSubtotal = useMemo(
+    () => cartaoFixoData.reduce((s, i) => s + (i.expected || 0), 0),
+    [cartaoFixoData]
+  )
 
   // Drag-to-reorder handler
   const handleReorder = useCallback(async (newData) => {
@@ -508,7 +521,7 @@ function RecurringSection() {
       <div className={styles.tabContent}>
         <VaultTable
           columns={recurringColumns}
-          data={tabData || []}
+          data={mainData || []}
           emptyMessage="Nenhum item recorrente."
           searchable={false}
           maxHeight={450}
@@ -516,6 +529,23 @@ function RecurringSection() {
           draggable
           onReorder={handleReorder}
         />
+
+        {cartaoFixoData.length > 0 && (
+          <div className={styles.cartaoSubsection}>
+            <div className={styles.cartaoSubheader}>
+              <span>No cartão · entra na fatura</span>
+              <span className={styles.cartaoHint}>
+                não é caixa deste mês · subtotal R$ {fmt(cartaoSubtotal)}
+              </span>
+            </div>
+            <VaultTable
+              columns={recurringColumns}
+              data={cartaoFixoData}
+              searchable={false}
+              rowClassName={rowClassName}
+            />
+          </div>
+        )}
       </div>
     </div>
   )

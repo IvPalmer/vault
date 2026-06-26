@@ -647,6 +647,13 @@ def get_recurring_data(month_str, profile=None):
     investimento_items = []
     cartao_items = []
 
+    # Mark Fixo items billed to a credit card (same source the budget uses to
+    # keep them out of "a pagar"), so the UI can group them under a separate
+    # "no cartão · entra na fatura" sub-section instead of showing "Faltando".
+    _cc_billed_mapping_ids = {
+        str(i) for i in _cc_billed_fixo(month_str, profile)['mapping_ids']
+    }
+
     for mapping in mappings:
         cat_type = _get_type(mapping)
         name = _get_name(mapping)
@@ -683,6 +690,7 @@ def get_recurring_data(month_str, profile=None):
             'is_skipped': mapping.status == 'skipped',
             'has_cross_month': mapping.cross_month_transactions.exists(),
             'cross_month_count': mapping.cross_month_transactions.count(),
+            'cc_billed': str(mapping.id) in _cc_billed_mapping_ids,
         }
 
         if cat_type == 'Income':

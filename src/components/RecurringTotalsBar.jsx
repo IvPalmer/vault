@@ -57,7 +57,10 @@ function RecurringTotalsBar() {
   const totals = useMemo(() => {
     if (!recData) return null
     const income = computeGroup(recData.income || [])
-    const fixo = computeGroup(recData.fixo || [])
+    // Exclude CC-billed fixo (seguros/assinaturas) — they ride the fatura, not
+    // this month's cash. Keeps the "Fixos" row consistent with the table's
+    // "No cartão" sub-section and with sobra's fixo_for_budget.
+    const fixo = computeGroup((recData.fixo || []).filter((i) => !i.cc_billed))
     const invest = computeGroup(recData.investimento || [])
     const cartao = computeGroup(recData.cartao || [])
     return { income, fixo, invest, cartao }
