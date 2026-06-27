@@ -41,8 +41,14 @@ function AnalyticsFilters({ filters, setFilters, months, availableCategories }) 
   const [catOpen, setCatOpen] = useState(false)
   const catRef = useRef(null)
 
-  // Filter months to only show from MIN_MONTH onwards, sorted ascending
-  const visibleMonths = (months || []).filter(m => m >= MIN_MONTH).sort()
+  // Filter months to MIN_MONTH..current, sorted ascending. The `months` context
+  // includes FUTURE projection months (through Dec/26+); without the upper cap,
+  // latestMonth would be a future month and the quick periods would anchor there
+  // (e.g. 6M from Dec/26 → start Jul/26, which has no data → empty page).
+  const currentMonth = new Date().toISOString().slice(0, 7)
+  const visibleMonths = (months || [])
+    .filter(m => m >= MIN_MONTH && m <= currentMonth)
+    .sort()
 
   const latestMonth = visibleMonths.length ? visibleMonths[visibleMonths.length - 1] : null
 
