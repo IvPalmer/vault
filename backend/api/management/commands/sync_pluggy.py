@@ -255,6 +255,7 @@ class Command(BaseCommand):
         total_new = 0
         total_skipped = 0
         total_updated = 0
+        synced_account_ids = set()
 
         # Process each Pluggy item
         for item_id in item_ids:
@@ -310,6 +311,7 @@ class Command(BaseCommand):
                     continue
 
                 vault_acct = vault_accounts[vault_name]
+                synced_account_ids.add(vault_acct.id)
                 self.stdout.write(f'\n--- {vault_name} ({pluggy_acct_id[:8]}...) ---')
 
                 txns = client.get_transactions(pluggy_acct_id, from_date, to_date)
@@ -332,6 +334,20 @@ class Command(BaseCommand):
                 ).update(expected_amount=bill_total)
                 if updated and self.verbosity >= 2:
                     self.stdout.write(f'  Updated {card_name} {inv_month} fatura = R$ {bill_total}')
+
+        # Reconcile installment-series categorization so forward/later positions
+        # inherit the category+subcategory of their earlier siblings (Pluggy
+        # categorizes each position independently and drops the subcategory on
+        # forward-listed positions).
+        if not self.dry_run:
+            from api.services import reconcile_installment_series_categories
+            # Scope to the accounts actually synced (honours --accounts; a series
+            # never spans accounts, so this loses nothing on a full sync).
+            rec = reconcile_installment_series_categories(
+                self.profile, account_ids=(synced_account_ids or None))
+            if rec['updated']:
+                self.stdout.write(
+                    f'  Reconciled {rec["updated"]} installment categorizations')
 
         # Save checking balance as BalanceAnchor
         if options['save_balance'] and not self.dry_run:

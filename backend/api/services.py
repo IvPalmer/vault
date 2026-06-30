@@ -3222,6 +3222,183 @@ def categorize_installment_siblings(transaction_id, category_id, subcategory_id=
     }
 
 
+def reconcile_installment_series_categories(profile, dry_run=False, account_ids=None):
+    """
+    Propagate categorization across installment siblings of the same purchase so
+    later/forward positions inherit the category+subcategory of their earlier
+    siblings.
+
+    Pluggy categorizes each installment position independently from that row's own
+    (unstable) categoryId, and forward-listed positions (Itaú lists 01/12..12/12 on
+    one bill) often arrive parent-only — losing the subcategory — or in a generic
+    bucket. Neither sync nor smart_categorize repairs them (smart_categorize only
+    touches category IS NULL rows; sync skips already-synced rows by external_id),
+    so this reconciliation closes that gap.
+
+    Series key (same grouping as categorize_installment_siblings and
+    _compute_installment_schedule): (base_desc, account_id, amount_group, total_inst).
+
+    Canonical (category, subcategory) per series, in priority:
+      1. Manual siblings (is_manually_categorized=True). If they agree on a category
+         that wins; subcategory = most common manual sub for it. If manual siblings
+         disagree on category the series is left untouched (ambiguous intent).
+      2. Otherwise a STRICT majority (>50%, one vote per distinct position) among
+         non-manual categorized positions.
+
+    Applied to NON-manual rows only (never overwrites is_manually_categorized=True):
+      - category None                    -> set canonical category+subcategory
+      - category == canonical, no sub     -> fill canonical subcategory
+      - category == canonical, wrong sub  -> overwrite only when canonical is
+                                             manual-backed (manual = ground truth)
+      - category != canonical             -> overwrite category+sub (canonical only
+                                             exists when manual-backed or strict
+                                             majority, so this is safe)
+
+    Rows propagated FROM a manual sibling are marked is_manually_categorized=True so
+    future Pluggy syncs won't re-diverge them; consensus-only fills stay non-manual
+    so they remain improvable. Restricted to real purchases (amount__lt=0) to avoid
+    sweeping refunds/estornos. InstallmentSeriesOverride is intentionally ignored —
+    it caps projection/display, not categorization.
+    """
+    # System/junk buckets must never WIN propagation: Pluggy frequently mislabels
+    # forward installment positions into Transferencias / Triagem / uncategorized,
+    # and an installment can never legitimately be income/investment. These rows
+    # are left in place (and manual ones are still never overwritten) but they
+    # never dictate a sibling's category.
+    _JUNK_NAMES = {'triagem', 'transferencias', 'nao categorizado', 'sem categoria',
+                   'renda', 'rendas', 'investimento', 'investimentos'}
+
+    def _norm_cat_name(name):
+        return unicodedata.normalize('NFKD', name or '').encode(
+            'ASCII', 'ignore').decode().lower().strip()
+
+    junk_ids = {
+        cid for cid, name in Category.objects.filter(
+            profile=profile).values_list('id', 'name')
+        if _norm_cat_name(name) in _JUNK_NAMES
+    }
+
+    # Subcategory -> owning category, to never apply a sub that belongs to a
+    # different category than the canonical one.
+    sub_to_cat = dict(
+        Subcategory.objects.values_list('id', 'category_id'))
+
+    qs = Transaction.objects.filter(
+        profile=profile, is_installment=True, amount__lt=0,
+    ).select_related('category', 'subcategory', 'account')
+    if account_ids:
+        qs = qs.filter(account_id__in=account_ids)
+
+    series = defaultdict(list)  # key -> [(position, txn), ...]
+    for t in qs:
+        m = re.match(r'(\d+)/(\d+)', t.installment_info or '') or \
+            re.search(r'(\d{1,2})/(\d{1,2})', t.description)
+        if not m:
+            continue
+        pos, total = int(m.group(1)), int(m.group(2))
+        # amount_group rounded to whole reais — matches _compute_installment_schedule
+        # (the installment-series grouping authority) and tolerates the bank's
+        # first-installment cent remainder (e.g. 326.76 vs 326.72 across positions),
+        # which a 1-decimal key would split. (categorize_installment_siblings uses
+        # 1-decimal; for whole installment series the whole-real key is correct.)
+        key = (_extract_base_desc(t.description), t.account_id,
+               round(float(abs(t.amount)), 0), total)
+        series[key].append((pos, t))
+
+    updates = []  # (txn, new_category_id, new_subcategory_id, from_manual)
+    for rows in series.values():
+        # Manual authority, ignoring junk buckets (a manual "Triagem" is not intent).
+        manual = [(p, t) for p, t in rows
+                  if t.is_manually_categorized and t.category_id
+                  and t.category_id not in junk_ids]
+        canonical_cat = None
+        canonical_sub = None
+        from_manual = False
+
+        if manual:
+            if len({t.category_id for _, t in manual}) > 1:
+                continue  # ambiguous manual intent — leave the series alone
+            canonical_cat = manual[0][1].category_id
+            sub_votes = Counter()
+            seen = set()
+            for p, t in manual:
+                if p in seen:
+                    continue
+                seen.add(p)
+                if t.subcategory_id:
+                    sub_votes[t.subcategory_id] += 1
+            canonical_sub = sub_votes.most_common(1)[0][0] if sub_votes else None
+            from_manual = True
+        else:
+            cat_votes = Counter()
+            seen = set()
+            for p, t in rows:
+                if not t.category_id or t.category_id in junk_ids or p in seen:
+                    continue
+                seen.add(p)
+                cat_votes[t.category_id] += 1
+            if not cat_votes:
+                continue
+            best_cat, best_n = cat_votes.most_common(1)[0]
+            if best_n <= sum(cat_votes.values()) * 0.5:
+                continue  # no strict majority — don't guess
+            canonical_cat = best_cat
+            sub_votes = Counter()
+            seen = set()
+            for p, t in rows:
+                if t.category_id == best_cat and p not in seen:
+                    seen.add(p)
+                    if t.subcategory_id:
+                        sub_votes[t.subcategory_id] += 1
+            canonical_sub = sub_votes.most_common(1)[0][0] if sub_votes else None
+
+        # Guard: never carry a subcategory that doesn't belong to canonical_cat.
+        if canonical_sub is not None and sub_to_cat.get(canonical_sub) != canonical_cat:
+            canonical_sub = None
+
+        for p, t in rows:
+            if t.is_manually_categorized:
+                continue
+            new_cat = t.category_id
+            new_sub = t.subcategory_id
+            changed = False
+            if t.category_id is None:
+                new_cat, new_sub = canonical_cat, canonical_sub
+                changed = True
+            elif t.category_id == canonical_cat:
+                if canonical_sub is not None and t.subcategory_id != canonical_sub \
+                        and (t.subcategory_id is None or from_manual):
+                    new_sub = canonical_sub
+                    changed = True
+            else:
+                new_cat, new_sub = canonical_cat, canonical_sub
+                changed = True
+            if changed:
+                updates.append((t, new_cat, new_sub, from_manual))
+
+    details = []
+    for t, new_cat, new_sub, from_manual in updates:
+        details.append({
+            'transaction_id': str(t.id),
+            'description': t.description,
+            'old_category_id': str(t.category_id) if t.category_id else None,
+            'new_category_id': str(new_cat) if new_cat else None,
+            'old_subcategory_id': str(t.subcategory_id) if t.subcategory_id else None,
+            'new_subcategory_id': str(new_sub) if new_sub else None,
+            'from_manual': from_manual,
+        })
+        if not dry_run:
+            t.category_id = new_cat
+            t.subcategory_id = new_sub
+            fields = ['category', 'subcategory', 'updated_at']
+            if from_manual:
+                t.is_manually_categorized = True
+                fields.append('is_manually_categorized')
+            t.save(update_fields=fields)
+
+    return {'updated': len(updates), 'dry_run': dry_run, 'details': details[:200]}
+
+
 # ---------------------------------------------------------------------------
 # Installment series overrides (cancel / shorten)
 # ---------------------------------------------------------------------------
@@ -4883,9 +5060,14 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
 
     uncategorized = list(qs)
     if not uncategorized:
+        # Still reconcile installment series — most repairs target already-
+        # categorized rows (parent-only subs, bogus Transferencias), so this
+        # path must not skip it.
+        inst_rec = reconcile_installment_series_categories(profile, dry_run=dry_run)
         return {
             'categorized': 0, 'total_uncategorized': 0,
             'by_strategy': {}, 'inconsistencies': [],
+            'installment_reconciled': inst_rec['updated'],
             'details': [], 'dry_run': dry_run,
             'message': 'No uncategorized transactions',
         }
@@ -5179,6 +5361,12 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
                     txn.subcategory = matched_subcategory
                 txn.save(update_fields=['category', 'subcategory', 'updated_at'])
 
+    # ── Installment-series inheritance ──
+    # Forward/later installment positions inherit the category+subcategory of
+    # their earlier siblings. Runs globally (a series spans months) regardless of
+    # the month_str scope so a manual/consensus sibling in any month propagates.
+    inst_rec = reconcile_installment_series_categories(profile, dry_run=dry_run)
+
     # ── Inconsistency Detection ──
     inconsistencies = _detect_inconsistencies(profile=profile)
 
@@ -5186,6 +5374,7 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
         'categorized': len(results),
         'total_uncategorized': len(uncategorized),
         'by_strategy': dict(by_strategy),
+        'installment_reconciled': inst_rec['updated'],
         'inconsistencies': inconsistencies,
         'details': results[:100],
         'dry_run': dry_run,
