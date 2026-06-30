@@ -1463,7 +1463,16 @@ def _month_actual_income_expense(month_str, profile):
         month_str=month_str, is_internal_transfer=False, profile=profile,
     ).exclude(id__in=cross_exclude_ids)
 
+    # CC refunds/estornos are not income — net them against spending, mirroring
+    # get_metricas (KEEP IN SYNC). Genuine bill payments are is_internal_transfer.
+    _cc_acct_ids = set(
+        Account.objects.filter(profile=profile, account_type='credit_card')
+        .values_list('id', flat=True)
+    )
+
     # Transactions from OTHER months linked TO this month's mappings → include.
+    # A positive credit-card cross-month txn is a refund, so it nets against
+    # spending (cross_exp), not income.
     cross_inc = Decimal('0.00')
     cross_exp = Decimal('0.00')
     for m in RecurringMapping.objects.filter(
@@ -1472,13 +1481,17 @@ def _month_actual_income_expense(month_str, profile):
         'cross_month_transactions'
     ):
         for t in m.cross_month_transactions.all():
-            if t.amount > 0:
+            if t.amount > 0 and t.account_id not in _cc_acct_ids:
                 cross_inc += t.amount
             else:
                 cross_exp += t.amount
 
-    entradas = _deduped_transaction_sum(txns.filter(amount__gt=0)) + cross_inc
-    gastos = abs(_deduped_transaction_sum(txns.filter(amount__lt=0)) + cross_exp)
+    entradas = _deduped_transaction_sum(
+        txns.filter(amount__gt=0).exclude(account_id__in=_cc_acct_ids)) + cross_inc
+    gastos = max(Decimal('0.00'), -(
+        _deduped_transaction_sum(txns.filter(amount__lt=0))
+        + _deduped_transaction_sum(txns.filter(amount__gt=0, account_id__in=_cc_acct_ids))
+        + cross_exp))
     return entradas, gastos
 
 
@@ -1522,7 +1535,17 @@ def get_metricas(month_str, profile=None):
         id__in=cross_month_exclude_ids
     ).select_related('category', 'account')
 
-    income_txns = txns.filter(amount__gt=0)
+    # Positive credit-card transactions are refunds/estornos — genuine bill
+    # payments are is_internal_transfer=True and already excluded above. A refund
+    # nets against the card bill (the Pluggy bill total already reflects it), so it
+    # is NOT income: exclude it from income and net it into actual spending so it
+    # reduces gastos instead of inflating renda.
+    _cc_acct_ids = set(
+        Account.objects.filter(profile=profile, account_type='credit_card')
+        .values_list('id', flat=True)
+    )
+    income_txns = txns.filter(amount__gt=0).exclude(account_id__in=_cc_acct_ids)
+    cc_credit_txns = txns.filter(amount__gt=0, account_id__in=_cc_acct_ids)
     expense_txns = txns.filter(amount__lt=0)
 
     # Unfiltered pools for recurring matching (includes internal transfers,
@@ -1533,7 +1556,10 @@ def get_metricas(month_str, profile=None):
     ).exclude(
         id__in=cross_month_exclude_ids
     ).select_related('category', 'account')
-    all_income = all_txns.filter(amount__gt=0)
+    # Exclude positive credit-card txns (refunds) from the income matching pool so
+    # a recurring Income mapping can never count a refund as received salary
+    # (which would wrongly reduce a_entrar and inflate saldo).
+    all_income = all_txns.filter(amount__gt=0).exclude(account_id__in=_cc_acct_ids)
     all_expense = all_txns.filter(amount__lt=0)
 
     # --- Cross-month INCLUSIONS ---
@@ -1548,7 +1574,8 @@ def get_metricas(month_str, profile=None):
     ).prefetch_related('cross_month_transactions')
     for m in this_month_mappings_cm:
         for t in m.cross_month_transactions.all():
-            if t.amount > 0:
+            # Positive CC cross-month txn = refund → nets against spending.
+            if t.amount > 0 and t.account_id not in _cc_acct_ids:
                 cross_month_include_income += t.amount
             else:
                 cross_month_include_expense += t.amount
@@ -1577,7 +1604,13 @@ def get_metricas(month_str, profile=None):
     # 3. GASTOS ATUAIS — total actual expenses (CC + checking)
     #    Includes cross-month expense transactions linked TO this month
     # =====================================================================
-    gastos_atuais = abs(_deduped_transaction_sum(expense_txns) + cross_month_include_expense)
+    # CC refunds (cc_credit_txns) net against spending; clamp at 0 so a month whose
+    # refunds exceed purchases can't produce negative "spending".
+    gastos_atuais = max(Decimal('0.00'), -(
+        _deduped_transaction_sum(expense_txns)
+        + _deduped_transaction_sum(cc_credit_txns)
+        + cross_month_include_expense
+    ))
 
     # =====================================================================
     # 4. GASTOS PROJETADOS — expected total expenses for the month
@@ -6021,8 +6054,19 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     #    filtered base_qs, since metricas has no per-filter equivalent.
     spending_trends = []
     if category_ids or account_filter:
+        # Positive CC txns are refunds, not income — exclude from income and net
+        # them into expenses (mirrors get_metricas / _month_actual_income_expense).
+        _cc_acct_ids = set(
+            Account.objects.filter(profile=profile, account_type='credit_card')
+            .values_list('id', flat=True)
+        )
         income_by_month = dict(
-            base_qs.filter(amount__gt=0)
+            base_qs.filter(amount__gt=0).exclude(account_id__in=_cc_acct_ids)
+            .values('month_str').annotate(total=Sum('amount'))
+            .values_list('month_str', 'total')
+        )
+        cc_credit_by_month = dict(
+            base_qs.filter(amount__gt=0, account_id__in=_cc_acct_ids)
             .values('month_str').annotate(total=Sum('amount'))
             .values_list('month_str', 'total')
         )
@@ -6033,7 +6077,9 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
         )
         for m in month_list:
             inc = float(income_by_month.get(m, 0) or 0)
-            exp = float(expenses_by_month.get(m, 0) or 0)
+            # CC refunds reduce expenses; clamp so refunds > spend can't flip sign.
+            exp = min(0.0, float(expenses_by_month.get(m, 0) or 0)
+                      + float(cc_credit_by_month.get(m, 0) or 0))
             spending_trends.append({
                 'month': m,
                 'income': round(inc, 2),
