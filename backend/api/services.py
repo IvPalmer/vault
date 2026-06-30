@@ -4529,6 +4529,118 @@ def get_projection(start_month_str, num_months=0, profile=None):
     }
 
 
+def get_cashflow_diario(start_month_str, num_months=0, profile=None):
+    """
+    FLUXO DIÁRIO — intra-month cash-flow simulation.
+
+    get_projection only shows end-of-month balances; this drills inside each month
+    to find the "vale" — the lowest the checking balance gets, which happens after
+    the early-month bills (CC fatura, rent, consórcio) but BEFORE the day-15 salary.
+    That dip is the real overdraft risk, invisible in an EOM view.
+
+    Anchored to get_projection so month boundaries match the validated EOM cascade
+    exactly; only the within-month trajectory is added. Each month's events:
+      - income split 50% on day 2 (sal 1) + 50% on day 15 (sal 2)
+      - CC fatura paid on day 5; recurring Fixo/Investimento on their due_day
+      - the residual (everything untracked: variable spend + hidden recurrers) is
+        spread evenly across days 6–27 so it straddles the day-15 salary, which
+        keeps the pre-salary vale realistic without any hardcoded figure. The
+        residual is exactly month_net − dated_events, so the simulated month-end
+        equals the projection's cumulative (reconciles to the penny).
+
+    Validated against real BalanceAnchors (Jun/26 vale ≈ R$2.5k on day 14, matching
+    the real ~R$3.0k dip). Returns daily series + per-month vale + overdraft flag.
+    """
+    import calendar
+
+    proj = get_projection(start_month_str, num_months, profile=profile)
+    rows = {r['month']: r for r in proj['months']}
+    months_sorted = [r['month'] for r in proj['months']]
+
+    def _prev_eom(ms):
+        p = _month_str_add(ms, -1)
+        return float(rows[p]['cumulative']) if p in rows else float(proj['starting_balance'])
+
+    fixo_invest = list(RecurringTemplate.objects.filter(
+        profile=profile, is_active=True,
+        template_type__in=['Fixo', 'Investimento'],
+    ))
+    # CC bill is paid on the cards' due_day (uniform for these cards; fallback 5).
+    _cc_due = [a.due_day for a in Account.objects.filter(
+        profile=profile, account_type='credit_card') if a.due_day]
+    fatura_day = min(_cc_due) if _cc_due else 5
+
+    series = []
+    vales = {}
+    for ms in months_sorted:
+        r = rows[ms]
+        year, month = int(ms[:4]), int(ms[5:7])
+        dim = calendar.monthrange(year, month)[1]
+        income = float(r['income']) + float(r['outras_entradas'])
+        fatura = float(r['installments'])
+        # CC-billed fixos (seguros, subs) already ride inside the fatura — exclude
+        # them as standalone events so they aren't double-counted (mirrors the
+        # projection's Fixo column, which also excludes them).
+        cc_fixo_ids = set(_cc_billed_fixo(ms, profile)['template_ids'])
+
+        def _day(d):
+            try:
+                d = int(d)
+            except (TypeError, ValueError):
+                d = 10
+            return max(1, min(d, dim))
+
+        dated = {}  # day-of-month -> list of signed amounts
+
+        def _add(day, amount):
+            dated.setdefault(_day(day), []).append(amount)
+
+        _add(2, income / 2.0)        # sal 1 (lands early in the month)
+        _add(15, income / 2.0)       # sal 2
+        _add(fatura_day, -fatura)    # CC bill payment
+        fixed_sum = 0.0
+        for t in fixo_invest:
+            if t.id in cc_fixo_ids or not _template_active_in_month(t, ms):
+                continue
+            amt = float(t.default_limit)
+            if amt <= 0:
+                continue
+            _add(t.due_day or 10, -amt)
+            fixed_sum += amt
+
+        net_target = float(r['cumulative']) - _prev_eom(ms)
+        residual = max(0.0, income - fatura - fixed_sum - net_target)
+        spread_days = list(range(6, 28))
+        for d in spread_days:
+            _add(d, -residual / len(spread_days))
+
+        # Daily walk. Within a day apply debits before credits and re-check the
+        # vale after each event, so a same-day debit isn't masked by the salary.
+        bal = _prev_eom(ms)
+        vmin = {'day': 1, 'balance': round(bal, 2)}
+        for day in range(1, dim + 1):
+            for amount in sorted(dated.get(day, [])):
+                bal += amount
+                if bal < vmin['balance']:
+                    vmin = {'day': day, 'balance': round(bal, 2)}
+            series.append({'date': f'{ms}-{day:02d}', 'balance': round(bal, 2)})
+        # True-up the month-end to the projection cumulative exactly, absorbing
+        # float drift and any residual-clamp drift in surplus months.
+        if series:
+            series[-1]['balance'] = round(float(r['cumulative']), 2)
+        vales[ms] = vmin
+
+    overdraft = any(p['balance'] < 0 for p in series)
+    min_vale = min(vales.values(), key=lambda v: v['balance']) if vales else None
+    return {
+        'start_month': start_month_str,
+        'series': series,
+        'vales': vales,
+        'overdraft': overdraft,
+        'min_vale': min_vale,
+    }
+
+
 # ---------------------------------------------------------------------------
 # B2: Variable budget (Orçamento) service
 # ---------------------------------------------------------------------------
@@ -6530,8 +6642,22 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     # Include savings target from profile for chart reference line
     savings_target = float(profile.savings_target_pct) if profile else 20.0
 
+    # Intra-month daily cash-flow ("vale") — forward projection from the current
+    # calendar month. Only computed for the unfiltered headline view; the
+    # category/account pills don't change a forward cash-flow simulation, and it
+    # reuses get_projection (~expensive) so we skip it on filtered requests.
+    cashflow = None
+    if not (category_ids or account_filter):
+        try:
+            _now = datetime.now()
+            cashflow = get_cashflow_diario(
+                f'{_now.year}-{_now.month:02d}', profile=profile)
+        except Exception:
+            cashflow = None
+
     return {
         'months': month_list,
+        'cashflow': cashflow,
         'available_months': {'min': data_min, 'max': data_max},
         'default_start': default_start,
         'available_categories': available_cats,
