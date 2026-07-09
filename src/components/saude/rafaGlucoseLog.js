@@ -36,7 +36,7 @@
 export const RAFA_GLUCOSE_LOG = {
   titulo: 'Glicose capilar — automonitorização',
   fonte: 'Caderno manuscrito (fotografado 08/06 e 18/06/2026) + reportes por WhatsApp (17/06–08/07/2026)',
-  periodo: { inicio: '2026-05-16', fim: '2026-07-08' },
+  periodo: { inicio: '2026-05-16', fim: '2026-07-09' },
   referencias: {
     jejum: { min: 65, max: 95, label: 'Jejum: 65–95 mg/dL' },
     pos1h: { max: 140, label: '1h após refeição: < 140 mg/dL' },
@@ -214,5 +214,6 @@ export const RAFA_GLUCOSE_LOG = {
       almoco: null,
       jantar: { valor: 92, refeicao: 'Macarrão (medido 2h depois, ~23h)' },
       nota: 'Ela rotulou como "2h dps do almoço", mas a refeição da noite foi macarrão (~21h); lançado como jantar — conferir.' },
+    { dia: 55, data: '2026-07-09', jejum: 79, almoco: null, jantar: null },
   ],
 }
