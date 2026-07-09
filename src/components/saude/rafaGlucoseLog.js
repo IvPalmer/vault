@@ -1,12 +1,19 @@
 /**
  * RAFA_GLUCOSE_LOG — Automonitorização de glicose capilar (gestação).
  *
- * Source: caderno manuscrito de Rafaella.
+ * Source: caderno manuscrito de Rafaella (dias 1–32) + reportes por WhatsApp (dias 33+).
  *   1º lote (dias 1–24): fotografado em 08/06/2026 (IMG_9104–9108, 9112).
  *   2º lote (dias 25–32): fotografado em 18/06/2026 (IMG_9200, IMG_9201).
- *   "Testagem de Glicose — 15 dias" → estendida a 32 dias.
+ *   3º lote (dias 33–54): mensagens da Rafaella no WhatsApp (conversa com o Palmer),
+ *     17/06 → 08/07/2026. Ela passou a mandar as medições por mensagem em vez do caderno.
+ *   "Testagem de Glicose — 15 dias" → estendida (caderno até o 32º dia; WhatsApp depois).
  *
- * Período: 16/05/2026 (1º dia) → 16/06/2026 (32º dia).
+ * Período: 16/05/2026 (1º dia) → 08/07/2026 (54º dia).
+ *
+ * Convenção de data (dias 33+): medição enviada de madrugada (≈00h–05h) é lançada no
+ *   jantar/lanche do dia ANTERIOR (foi a refeição da noite, medida já depois da meia-noite).
+ *   Muitas mensagens vêm só com o número e o rótulo da refeição; quando a refeição não foi
+ *   descrita, o campo `refeicao` traz um rótulo genérico ("Almoço"/"Jantar").
  * Contexto: controle pré-rastreio de DMG (diabetes mellitus gestacional,
  *   rastreio formal 24–28 sem). Liga-se à obs do plano alimentar
  *   (HbA1c 5,4 com tendência ↑) — ver RAFA_MEAL_PLAN.
@@ -28,8 +35,8 @@
  */
 export const RAFA_GLUCOSE_LOG = {
   titulo: 'Glicose capilar — automonitorização',
-  fonte: 'Caderno manuscrito (IMG_9104–9108/9112 + IMG_9200/9201), fotografado 08/06 e 18/06/2026',
-  periodo: { inicio: '2026-05-16', fim: '2026-06-16' },
+  fonte: 'Caderno manuscrito (fotografado 08/06 e 18/06/2026) + reportes por WhatsApp (17/06–08/07/2026)',
+  periodo: { inicio: '2026-05-16', fim: '2026-07-08' },
   referencias: {
     jejum: { min: 65, max: 95, label: 'Jejum: 65–95 mg/dL' },
     pos1h: { max: 140, label: '1h após refeição: < 140 mg/dL' },
@@ -42,6 +49,10 @@ export const RAFA_GLUCOSE_LOG = {
     'Dias sem medição: 4º dia (19/05) sem registro; 5º dia (20/05) sem jejum; alguns almoços/jantares não medidos (esqueceu a máquina / vômito).',
     'Manhã do 27º dia (11/06) anômala: jejum anotado 160 e remedições 132/163/146 — confirmar com a Rafaella (provável variação de medidor/punção). Almoço do 26º dia (157) também elevado.',
     'A partir do 29º dia (13/06) a própria anotou "aqui começa pra valer" (controle alimentar mais rígido); jejuns seguintes voltam à faixa (84–94).',
+    'Dias 33+ (17/06 em diante): medições vêm por WhatsApp, mais esparsas — muitos dias só com jejum, alguns sem registro (20–21/06, 05–06/07). Jejuns seguem bem controlados (76–91, todos na faixa).',
+    'Único pico do trecho WhatsApp: jantar de 30/06 = 149 ("dois pães"), acima do corte de 140. Demais pós-refeições ≤ 121.',
+    '26/06: jantou McDonald’s e disse que mediria 2h depois, mas não enviou o valor — jantar fica sem registro.',
+    '08/07: valor 92 rotulado por ela como "2h dps do almoço", mas o único registro de refeição da noite é macarrão (~21h) — lançado como jantar; conferir com a Rafaella.',
   ],
   // Cada dia: jejum (número|null), almoco/jantar ({ valor, refeicao }|null).
   dias: [
@@ -146,5 +157,62 @@ export const RAFA_GLUCOSE_LOG = {
     { dia: 32, data: '2026-06-16', jejum: 87,
       almoco: { valor: 95, refeicao: 'Arroz vermelho, coxão mole grelhado, feijão azuki' },
       jantar: { valor: 94, refeicao: 'Jantar (refeição não anotada)' } },
+    // ── Dias 33+ por WhatsApp (mensagens da Rafaella) ──
+    { dia: 33, data: '2026-06-17', jejum: 86,
+      almoco: null,
+      jantar: { valor: 117, refeicao: 'Mini toast (lanche noturno, medido ~00:30)' },
+      nota: 'Lanche/jantar medido já na madrugada de 18/06.' },
+    { dia: 34, data: '2026-06-18', jejum: 76, almoco: null, jantar: null },
+    { dia: 35, data: '2026-06-19', jejum: 86,
+      almoco: { valor: 88, refeicao: 'Almoço' },
+      jantar: { valor: 106, refeicao: 'Hambúrguer (pedido à noite)' },
+      nota: 'Almoço e jantar reportados juntos na madrugada de 20/06.' },
+    { dia: 36, data: '2026-06-20', jejum: null, almoco: null, jantar: null,
+      nota: 'Sem registro de glicose neste dia (só os pós-refeição do dia 19, medidos na madrugada).' },
+    { dia: 37, data: '2026-06-21', jejum: null, almoco: null, jantar: null,
+      nota: 'Sem registro de glicose neste dia.' },
+    { dia: 38, data: '2026-06-22', jejum: null,
+      almoco: null,
+      jantar: { valor: 95, refeicao: 'Jantar fora (medido ~03:00)' },
+      nota: 'Aniversário de amiga, jantou fora; mediu na madrugada de 23/06.' },
+    { dia: 39, data: '2026-06-23', jejum: 86, almoco: null, jantar: null },
+    { dia: 40, data: '2026-06-24', jejum: 85, almoco: null, jantar: null },
+    { dia: 41, data: '2026-06-25', jejum: null,
+      almoco: { valor: 107, refeicao: 'Almoço' },
+      jantar: null },
+    { dia: 42, data: '2026-06-26', jejum: 90, almoco: null, jantar: null,
+      nota: 'Jantar McDonald’s — disse que mediria 2h depois; valor não enviado.' },
+    { dia: 43, data: '2026-06-27', jejum: 84,
+      almoco: null,
+      jantar: { valor: 89, refeicao: 'Jantar (2h depois, medido na madrugada)' } },
+    { dia: 44, data: '2026-06-28', jejum: 91, almoco: null, jantar: null },
+    { dia: 45, data: '2026-06-29', jejum: 87, almoco: null, jantar: null },
+    { dia: 46, data: '2026-06-30', jejum: 84,
+      almoco: { valor: 104, refeicao: 'Almoço' },
+      jantar: { valor: 149, refeicao: 'Jantar — dois pães' },
+      nota: 'Jantar (149) reportado na madrugada de 01/07; único pico acima de 140 no trecho WhatsApp.' },
+    { dia: 47, data: '2026-07-01', jejum: 82,
+      almoco: null,
+      jantar: { valor: 109, refeicao: 'Jantar' },
+      nota: 'Jantar reportado na madrugada de 02/07.' },
+    { dia: 48, data: '2026-07-02', jejum: 81,
+      almoco: { valor: 121, refeicao: 'Almoço' },
+      jantar: null },
+    { dia: 49, data: '2026-07-03', jejum: 80, almoco: null, jantar: null },
+    { dia: 50, data: '2026-07-04', jejum: 87,
+      almoco: { valor: 107, refeicao: 'Almoço (medido ~2h depois)' },
+      jantar: { valor: 109, refeicao: 'Jantar' },
+      nota: 'Jantar reportado na madrugada de 05/07.' },
+    { dia: 51, data: '2026-07-05', jejum: null, almoco: null, jantar: null,
+      nota: 'Sem registro de glicose neste dia.' },
+    { dia: 52, data: '2026-07-06', jejum: null, almoco: null, jantar: null,
+      nota: 'Sem registro de glicose neste dia.' },
+    { dia: 53, data: '2026-07-07', jejum: 88,
+      almoco: { valor: 106, refeicao: 'Almoço' },
+      jantar: null },
+    { dia: 54, data: '2026-07-08', jejum: 82,
+      almoco: null,
+      jantar: { valor: 92, refeicao: 'Macarrão (medido 2h depois, ~23h)' },
+      nota: 'Ela rotulou como "2h dps do almoço", mas a refeição da noite foi macarrão (~21h); lançado como jantar — conferir.' },
   ],
 }
