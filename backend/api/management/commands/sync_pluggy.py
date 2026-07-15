@@ -9,6 +9,7 @@ Usage:
     python manage.py sync_pluggy --profile Rafa --item 68058e60-...
 """
 
+import json
 import os
 import re
 import logging
@@ -26,28 +27,24 @@ from api.pluggy import PluggyClient
 
 logger = logging.getLogger(__name__)
 
-# Per-profile Pluggy item IDs and account mappings.
+# Per-profile Pluggy item IDs and account mappings, read from the PLUGGY_PROFILES
+# env var as JSON. Real item/account IDs stay out of this file because the repo is
+# public. Shape:
+#   {"<profile>": {"item_ids": ["<uuid>"], "account_map": {"<uuid>": "<account name>"}}}
 # Maps pluggy_account_id -> vault_account_name.
 # Items without explicit mapping use auto-discovery (match by account type).
-PROFILE_CONFIG = {
-    'Palmer': {
-        # MeuPluggy proxy (refreshes daily, works post-trial)
-        'item_ids': ['efd32560-e14d-41ac-9ea8-f788f073ca57'],
-        'account_map': {
-            'ccffdde0-6624-4fa2-8e16-4826b38072b4': 'Checking',
-            '8a92ed78-9961-4a7c-88ed-e13c21d3ceea': 'Mastercard Black',
-            '7e611459-0243-4f30-8c21-e788200114c4': 'Visa Infinite',
-        },
-    },
-    'Rafa': {
-        # MeuPluggy proxy (refreshes daily, works post-trial)
-        'item_ids': ['a97e5072-fb66-4352-97e9-1d54620d4eeb'],
-        'account_map': {
-            'ef7d504f-c4ef-44b9-afe0-8086e5a4f846': 'NuBank Conta',
-            'eaa5556b-f38b-4b1e-9e68-fffdca6f1a9a': 'NuBank Cartão',
-        },
-    },
-}
+def _load_profile_config():
+    raw = os.environ.get('PLUGGY_PROFILES', '').strip()
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except ValueError as exc:
+        logger.error('PLUGGY_PROFILES is not valid JSON (%s) — treating as unset', exc)
+        return {}
+
+
+PROFILE_CONFIG = _load_profile_config()
 
 
 def _detect_installment(description):
@@ -166,7 +163,7 @@ class Command(BaseCommand):
         if not item_ids:
             self.stderr.write(self.style.ERROR(
                 f'No Pluggy item IDs configured for profile "{profile_name}". '
-                f'Use --item or add to PROFILE_CONFIG.'))
+                f'Use --item, or add the profile to the PLUGGY_PROFILES env var.'))
             return
 
         # Date range

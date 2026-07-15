@@ -82,5 +82,5 @@ If asked to edit a specific widget or component, edit ONLY that widget or compon
 - Auth: Google OAuth → JWT (SimpleJWT)
 - Chat sidecar: FastAPI + Claude Agent SDK (port 5178)
 - Reminders sidecar: macOS EventKit bridge (HTTP :5177, HTTPS :5179)
-- Profile ID (Palmer): `a29184ea-9d4d-4c65-8300-386ed5b07fca`
-- Profile ID (Rafa): `59bcdef7-49b1-4296-a512-aadfdf515a54`
+- Profile ID (Palmer): `<profile-id-a>`
+- Profile ID (Rafa): `<profile-id-b>`

@@ -42,6 +42,8 @@ services:
       VAULT_API: http://backend:8000
       VAULT_API_URL: http://backend:8000/api
       VAULT_API_HOST: ${VAULT_API_HOST:-vault.grooveops.dev}
+      CHAT_PROFILE_META: ${CHAT_PROFILE_META:-}
+      CHAT_DEFAULT_HINT: ${CHAT_DEFAULT_HINT:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - vault_chat_memory:/app/memory
@@ -77,6 +79,7 @@ services:
       POSTGRES_PORT: 5432
       PLUGGY_CLIENT_ID: ${PLUGGY_CLIENT_ID}
       PLUGGY_CLIENT_SECRET: ${PLUGGY_CLIENT_SECRET}
+      PLUGGY_PROFILES: ${PLUGGY_PROFILES:-}
       SYNC_PROFILES: ${SYNC_PROFILES:-Palmer,Rafa}
       SYNC_SCHEDULE: ${SYNC_SCHEDULE:-0 8 * * *}
     entrypoint: ["/bin/sh", "-c"]

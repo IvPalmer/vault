@@ -28,7 +28,7 @@
    - `Profile.google_email` = primary login email
    - `Profile.google_picture` = avatar URL
    - Palmer → raphaelpalmer42@gmail.com
-   - Rafa → rafaellarezendegalvao@gmail.com
+   - Rafa → profile-b@example.com
 
 2. **Google token verification** — `POST /api/auth/google/`
    - Frontend sends Google ID token

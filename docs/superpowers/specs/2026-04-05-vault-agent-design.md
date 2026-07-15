@@ -213,7 +213,7 @@ The system prompt also receives injected context (already built in the sidecar):
 Rafa has 4 Google accounts. Tools that access Google Suite accept an optional `account_email` parameter. If omitted, the agent uses the first connected account. Claude can ask Rafa which account to use when ambiguous.
 
 Available accounts (from DB):
-- rafaellarezendegalvao@gmail.com (primary)
+- profile-b@example.com (primary)
 - cinebrasiliaprogramacao@gmail.com
 - rafaelarezend@gmail.com
 - rafaellagalvao@sempreceub.com

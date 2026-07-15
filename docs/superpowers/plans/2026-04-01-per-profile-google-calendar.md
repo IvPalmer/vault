@@ -139,7 +139,7 @@ import os
 
 from django.db import migrations
 
-PALMER_PROFILE_ID = 'a29184ea-9d4d-4c65-8300-386ed5b07fca'
+PALMER_PROFILE_ID = '<profile-id-a>'
 TOKEN_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'token.json')
 CREDENTIALS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'credentials.json')
 
@@ -921,7 +921,7 @@ docker compose restart backend
 
 Then verify:
 ```bash
-curl -s http://localhost:8001/api/calendar/accounts/ -H 'X-Profile-ID: a29184ea-9d4d-4c65-8300-386ed5b07fca' | python3 -m json.tool
+curl -s http://localhost:8001/api/calendar/accounts/ -H 'X-Profile-ID: <profile-id-a>' | python3 -m json.tool
 ```
 
 Expected: `{"accounts": [{"id": "...", "email": "raphaelpalmer42@gmail.com", ...}]}`

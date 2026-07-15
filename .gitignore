@@ -60,3 +60,6 @@ postgres_data/
 # TLS certs
 certs/
 chat-sidecar/memory/
+
+# Auto-written by api/signals.py; holds real budget/recurring data — keep out of this public repo.
+backend/backups/

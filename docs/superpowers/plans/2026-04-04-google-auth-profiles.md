@@ -44,7 +44,7 @@ Proposed:
    - `Profile.google_email` = primary login email
    - `Profile.google_picture` = avatar URL from Google
    - Palmer: raphaelpalmer42@gmail.com → Palmer profile
-   - Rafa: rafaellarezendegalvao@gmail.com → Rafa profile
+   - Rafa: profile-b@example.com → Rafa profile
 
 3. **Server-side widget state** (replaces localStorage)
    - New model: `DashboardState` — stores tabs, widgets, configs per profile
@@ -81,7 +81,7 @@ Proposed:
 
 - Existing Profiles keep their data
 - Link Palmer's profile to raphaelpalmer42@gmail.com
-- Link Rafa's profile to rafaellarezendegalvao@gmail.com
+- Link Rafa's profile to profile-b@example.com
 - Migrate current localStorage widget state → DashboardState model (one-time)
 - Old X-Profile-ID header still works as fallback during migration
 

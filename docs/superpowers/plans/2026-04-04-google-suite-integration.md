@@ -349,7 +349,7 @@ Keep all calendar-specific functions (list_calendars, get_events, etc.) in `goog
 ```bash
 docker compose restart backend
 # Test from browser: Settings → Calendarios should still show connected accounts
-curl -s http://localhost:8001/api/calendar/accounts/ -H "X-Profile-ID: a29184ea-9d4d-4c65-8300-386ed5b07fca"
+curl -s http://localhost:8001/api/calendar/accounts/ -H "X-Profile-ID: <profile-id-a>"
 ```
 
 - [ ] **Step 4: Commit**
@@ -1012,7 +1012,7 @@ Go to console.cloud.google.com → OAuth consent screen and:
 
 ```bash
 docker compose restart backend
-curl -s http://localhost:8001/api/google/accounts/ -H "X-Profile-ID: a29184ea-9d4d-4c65-8300-386ed5b07fca"
+curl -s http://localhost:8001/api/google/accounts/ -H "X-Profile-ID: <profile-id-a>"
 ```
 
 - [ ] **Step 5: Commit**
@@ -1123,7 +1123,7 @@ Go to `console.cloud.google.com` → APIs & Services → Library:
 Go to OAuth consent screen:
 - Add scopes: `gmail.modify`, `gmail.send`, `gmail.readonly`, `drive`, `spreadsheets`, `documents`, `userinfo.email`
 - If app is in "Testing" mode, add Rafa's emails as test users:
-  - rafaellarezendegalvao@gmail.com
+  - profile-b@example.com
   - cinebrasiliaprogramacao@gmail.com
   - rafaelarezend@gmail.com
   - rafaellagalvao@sempreceub.com
