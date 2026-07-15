@@ -74,7 +74,7 @@ Expected: migration creates 3 nullable fields on Profile.
 docker compose exec backend python manage.py shell -c "
 from api.models import Profile
 Profile.objects.filter(name='Palmer').update(google_email='raphaelpalmer42@gmail.com')
-Profile.objects.filter(name='Rafa').update(google_email='rafaellarezendegalvao@gmail.com')
+Profile.objects.filter(name='Rafa').update(google_email='profile-b@example.com')
 print('Done:', list(Profile.objects.values_list('name', 'google_email')))
 "
 ```
@@ -417,7 +417,7 @@ class ProfileMiddleware:
 
 ```bash
 docker compose restart backend
-curl -s -H "X-Profile-ID: a29184ea-9d4d-4c65-8300-386ed5b07fca" http://localhost:8001/api/profiles/ | python3 -m json.tool
+curl -s -H "X-Profile-ID: <profile-id-a>" http://localhost:8001/api/profiles/ | python3 -m json.tool
 ```
 
 Expected: profiles list returns normally (backward compatible).
@@ -498,11 +498,11 @@ Add to `urlpatterns`:
 ```bash
 docker compose restart backend
 # GET (empty)
-curl -s -H "X-Profile-ID: a29184ea-9d4d-4c65-8300-386ed5b07fca" http://localhost:8001/api/dashboard-state/ | python3 -m json.tool
+curl -s -H "X-Profile-ID: <profile-id-a>" http://localhost:8001/api/dashboard-state/ | python3 -m json.tool
 # PUT
-curl -s -X PUT -H "Content-Type: application/json" -H "X-Profile-ID: a29184ea-9d4d-4c65-8300-386ed5b07fca" -d '{"state":{"tabs":[{"id":"default","name":"Principal"}]}}' http://localhost:8001/api/dashboard-state/ | python3 -m json.tool
+curl -s -X PUT -H "Content-Type: application/json" -H "X-Profile-ID: <profile-id-a>" -d '{"state":{"tabs":[{"id":"default","name":"Principal"}]}}' http://localhost:8001/api/dashboard-state/ | python3 -m json.tool
 # GET (populated)
-curl -s -H "X-Profile-ID: a29184ea-9d4d-4c65-8300-386ed5b07fca" http://localhost:8001/api/dashboard-state/ | python3 -m json.tool
+curl -s -H "X-Profile-ID: <profile-id-a>" http://localhost:8001/api/dashboard-state/ | python3 -m json.tool
 ```
 
 Expected: first GET returns empty state, PUT saves, second GET returns saved state.
@@ -1687,7 +1687,7 @@ Open `http://localhost:5175` in browser:
 - [ ] **Step 3: Test fallback (X-Profile-ID still works)**
 
 ```bash
-curl -s -H "X-Profile-ID: a29184ea-9d4d-4c65-8300-386ed5b07fca" http://localhost:8001/api/analytics/metricas/?month_str=2026-04 | python3 -m json.tool | head -5
+curl -s -H "X-Profile-ID: <profile-id-a>" http://localhost:8001/api/analytics/metricas/?month_str=2026-04 | python3 -m json.tool | head -5
 ```
 
 Expected: metricas data returns normally.

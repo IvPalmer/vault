@@ -58,16 +58,25 @@ _vault_mcp = create_vault_mcp_server()
 VAULT_API = os.environ.get("VAULT_API", "http://localhost:8001")
 _VAULT_API_HOST = os.environ.get("VAULT_API_HOST")
 
-# Profile metadata for personalized responses
-PROFILE_META = {
-    "a29184ea-9d4d-4c65-8300-386ed5b07fca": {
-        "name": "Palmer",
-        "lang_hint": "Palmer speaks both English and Portuguese. Default to Portuguese unless he writes in English.",
-        "context": "Palmer is the developer and primary user. He manages household finances, works as a freelance software engineer (paid in USD via Wise), and is technical.",
-    },
-}
-RAFA_HINT = (
-    "Rafaella (Rafa) is Palmer's partner. She is not technical. "
+# Profile metadata for personalized responses. Real profile IDs and personal
+# context live in the CHAT_PROFILE_META env var as JSON, because this repo is
+# public. Shape: {"<profile-uuid>": {"name": ..., "lang_hint": ..., "context": ...}}
+# Profiles with no entry fall back to DEFAULT_HINT.
+def _load_profile_meta():
+    raw = os.environ.get("CHAT_PROFILE_META", "").strip()
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except ValueError as exc:
+        print(f"CHAT_PROFILE_META is not valid JSON ({exc}) — ignoring", flush=True)
+        return {}
+
+
+PROFILE_META = _load_profile_meta()
+# `or` not a get() default: compose injects CHAT_DEFAULT_HINT="" when unset, and
+# an empty value must fall through to the built-in hint rather than blank it.
+DEFAULT_HINT = os.environ.get("CHAT_DEFAULT_HINT", "").strip() or (
     "Be warm, friendly, and explain things simply. "
     "Always respond in Portuguese. Use informal language (voce, not o senhor)."
 )
@@ -174,7 +183,7 @@ def _build_system_prompt(profile_id: str, profile_name: str, context: str) -> st
         personality = meta["lang_hint"]
         who = meta["context"]
     else:
-        personality = RAFA_HINT
+        personality = DEFAULT_HINT
         who = f"{profile_name} is a Vault user."
 
     # Include conversation memory summary

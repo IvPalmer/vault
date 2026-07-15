@@ -3,6 +3,7 @@ REST views for Google Suite — OAuth, Gmail, Drive/Sheets/Docs.
 """
 
 import logging
+import os
 import re
 
 from django.http import HttpResponse, StreamingHttpResponse
@@ -283,11 +284,17 @@ _stream_meta_cache = {}   # file_id -> {'mimeType': str, 'size': int|None}
 
 
 def _stream_account():
-    """The Google account whose Drive holds the course archive (Palmer's)."""
-    return (
-        GoogleAccount.objects.filter(email__iexact='raphaelpalmer42@gmail.com').first()
-        or GoogleAccount.objects.first()
-    )
+    """The Google account whose Drive holds the course archive.
+
+    Set STREAM_ACCOUNT_EMAIL to pin it; the repo is public, so the address is
+    not hardcoded here. Falls back to the first linked account.
+    """
+    email = os.environ.get('STREAM_ACCOUNT_EMAIL', '').strip()
+    if email:
+        account = GoogleAccount.objects.filter(email__iexact=email).first()
+        if account:
+            return account
+    return GoogleAccount.objects.first()
 
 
 _drive_sessions = {}  # account.id -> AuthorizedSession (reused; auto-refreshes token)

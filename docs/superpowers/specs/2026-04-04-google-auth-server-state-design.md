@@ -32,7 +32,7 @@ google_name = models.CharField(max_length=200, null=True, blank=True)
 
 Data migration seeds:
 - Palmer: `raphaelpalmer42@gmail.com`
-- Rafa: `rafaellarezendegalvao@gmail.com`
+- Rafa: `profile-b@example.com`
 
 ### 2. DashboardState Model
 

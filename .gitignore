@@ -67,3 +67,6 @@ backups/
 .claude/
 test-screenshots/
 test-results/
+
+# Auto-written by api/signals.py; holds real budget/recurring data — keep out of this public repo.
+backend/backups/

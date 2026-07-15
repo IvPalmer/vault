@@ -31,6 +31,7 @@ services:
       - CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:5175,http://127.0.0.1:5175,http://192.168.15.2:5175,http://192.168.15.2:8001
       - PLUGGY_CLIENT_ID=${PLUGGY_CLIENT_ID:-}
       - PLUGGY_CLIENT_SECRET=${PLUGGY_CLIENT_SECRET:-}
+      - PLUGGY_PROFILES=${PLUGGY_PROFILES:-}
       - PLUGGY_ITEM_ID=${PLUGGY_ITEM_ID:-}
     ports:
       - "8001:8001"
@@ -70,6 +71,7 @@ services:
       - POSTGRES_PORT=5432
       - PLUGGY_CLIENT_ID=${PLUGGY_CLIENT_ID:-}
       - PLUGGY_CLIENT_SECRET=${PLUGGY_CLIENT_SECRET:-}
+      - PLUGGY_PROFILES=${PLUGGY_PROFILES:-}
       - PLUGGY_ITEM_ID=${PLUGGY_ITEM_ID:-}
       - SYNC_SCHEDULE=${SYNC_SCHEDULE:-0 8 * * *}
     volumes:
