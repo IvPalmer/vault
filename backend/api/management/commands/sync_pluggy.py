@@ -17,7 +17,7 @@ import unicodedata
 from datetime import date, timedelta
 from decimal import Decimal
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from api.models import (
     Account, BalanceAnchor, Category,
@@ -184,18 +184,18 @@ class Command(BaseCommand):
         client_id = os.environ.get('PLUGGY_CLIENT_ID', '')
         client_secret = os.environ.get('PLUGGY_CLIENT_SECRET', '')
 
+        # CommandError, not return: these run under cron, and a bare return
+        # exits 0 — which is how a broken sync looked healthy for weeks.
         if not all([client_id, client_secret]):
-            self.stderr.write(self.style.ERROR(
-                'Missing PLUGGY_CLIENT_ID or PLUGGY_CLIENT_SECRET in environment'))
-            return
+            raise CommandError(
+                'Missing PLUGGY_CLIENT_ID or PLUGGY_CLIENT_SECRET in environment')
 
         # Load profile
         profile_name = options['profile']
         try:
             profile = Profile.objects.get(name=profile_name)
         except Profile.DoesNotExist:
-            self.stderr.write(self.style.ERROR(f'Profile "{profile_name}" not found'))
-            return
+            raise CommandError(f'Profile "{profile_name}" not found')
 
         self.profile = profile
         self.dry_run = options['dry_run']
@@ -215,10 +215,9 @@ class Command(BaseCommand):
                     item_ids = [env_item]
 
         if not item_ids:
-            self.stderr.write(self.style.ERROR(
+            raise CommandError(
                 f'No Pluggy item IDs configured for profile "{profile_name}". '
-                f'Use --item, or add the profile to the PLUGGY_PROFILES env var.'))
-            return
+                f'Use --item, or add the profile to the PLUGGY_PROFILES env var.')
 
         # Date range
         to_date = options['to_date'] or date.today().isoformat()

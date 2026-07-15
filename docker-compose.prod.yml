@@ -98,15 +98,22 @@ services:
     command:
       - |
         apt-get update -qq && apt-get install -y -qq cron > /dev/null 2>&1
-        echo "$$SYNC_SCHEDULE cd /app && python manage.py sync_pluggy --profile Palmer --save-balance >> /proc/1/fd/1 2>&1" > /tmp/crontab
-        echo "$$SYNC_SCHEDULE cd /app && python manage.py sync_pluggy --profile Rafa --save-balance >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        # cron builds a minimal environment for jobs, so none of this service's
+        # vars (Pluggy creds, PLUGGY_PROFILES, Postgres, SECRET_KEY) reach them
+        # on their own — without this the jobs die on "Missing PLUGGY_CLIENT_ID".
+        # Dump what the commands need, shell-quoted (PLUGGY_PROFILES is JSON with
+        # spaces and quotes), and source it in every job.
+        python -c "import os,shlex;ks=[k for k in os.environ if k in ('PATH','DEBUG','SECRET_KEY','ALLOWED_HOSTS') or k.startswith(('PLUGGY_','POSTGRES_','CORS_','DJANGO_'))];open('/etc/cron_env','w').write(''.join('export %s=%s\n'%(k,shlex.quote(os.environ[k])) for k in sorted(ks)))"
+        chmod 600 /etc/cron_env
+        echo "$$SYNC_SCHEDULE . /etc/cron_env && cd /app && python manage.py sync_pluggy --profile Palmer --save-balance >> /proc/1/fd/1 2>&1" > /tmp/crontab
+        echo "$$SYNC_SCHEDULE . /etc/cron_env && cd /app && python manage.py sync_pluggy --profile Rafa --save-balance >> /proc/1/fd/1 2>&1" >> /tmp/crontab
         # Reconcile Pluggy installments after each sync: correct invoice_month
         # from the authoritative billId, then remove re-listed duplicates.
-        echo "15 8 * * * cd /app && python manage.py rebucket_invoice_month --apply >> /proc/1/fd/1 2>&1" >> /tmp/crontab
-        echo "20 8 * * * cd /app && python manage.py dedup_installments --apply >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        echo "15 8 * * * . /etc/cron_env && cd /app && python manage.py rebucket_invoice_month --apply >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        echo "20 8 * * * . /etc/cron_env && cd /app && python manage.py dedup_installments --apply >> /proc/1/fd/1 2>&1" >> /tmp/crontab
         # Phantom-duplicate sentinel: runs 30 minutes after each Pluggy sync.
         # Logs counts; exits 1 if rows > 5 OR value > R$500 so cron logs flag regressions.
-        echo "30 8 * * * cd /app && python manage.py check_phantom_duplicates --max-rows 5 --max-value 500 >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        echo "30 8 * * * . /etc/cron_env && cd /app && python manage.py check_phantom_duplicates --max-rows 5 --max-value 500 >> /proc/1/fd/1 2>&1" >> /tmp/crontab
         crontab /tmp/crontab
         echo "cron started: $$SYNC_SCHEDULE"
         cron -f
