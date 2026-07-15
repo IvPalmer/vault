@@ -81,8 +81,12 @@ services:
     command:
       - |
         apt-get update -qq && apt-get install -y -qq cron > /dev/null 2>&1
-        echo "$$SYNC_SCHEDULE cd /app && python manage.py sync_pluggy --profile Palmer --save-balance >> /proc/1/fd/1 2>&1" > /tmp/crontab
-        echo "$$SYNC_SCHEDULE cd /app && python manage.py sync_pluggy --profile Rafa --save-balance >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        # cron gives jobs a minimal environment; source the container's vars.
+        # See docker-compose.prod.yml for the full rationale.
+        python -c "import os,shlex;ks=[k for k in os.environ if k in ('PATH','DEBUG','SECRET_KEY','ALLOWED_HOSTS') or k.startswith(('PLUGGY_','POSTGRES_','CORS_','DJANGO_'))];open('/etc/cron_env','w').write(''.join('export %s=%s\n'%(k,shlex.quote(os.environ[k])) for k in sorted(ks)))"
+        chmod 600 /etc/cron_env
+        echo "$$SYNC_SCHEDULE . /etc/cron_env && cd /app && python manage.py sync_pluggy --profile Palmer --save-balance >> /proc/1/fd/1 2>&1" > /tmp/crontab
+        echo "$$SYNC_SCHEDULE . /etc/cron_env && cd /app && python manage.py sync_pluggy --profile Rafa --save-balance >> /proc/1/fd/1 2>&1" >> /tmp/crontab
         echo "" >> /tmp/crontab
         crontab /tmp/crontab
         echo "Cron started with schedule: $$SYNC_SCHEDULE"
