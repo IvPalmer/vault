@@ -2,7 +2,7 @@
 
 ## Summary
 
-Pluggy.ai is a BCB-authorized Open Finance aggregator that provides REST API access to Brazilian bank data. Successfully tested on 2026-03-05 with Palmer's Itaú accounts via Open Finance OAuth flow.
+Pluggy.ai is a BCB-authorized Open Finance aggregator that provides REST API access to Brazilian bank data. Verified 2026-03-05 against Itaú PF accounts via the Open Finance OAuth flow.
 
 ## Setup
 
@@ -22,10 +22,10 @@ Pluggy.ai is a BCB-authorized Open Finance aggregator that provides REST API acc
 
 | Account | Type | Pluggy ID |
 |---------|------|-----------|
-| Checking | BANK/CHECKING_ACCOUNT | `535be1c8-5191-4f1f-8591-8d607538a883` |
-| Savings | BANK/SAVINGS_ACCOUNT | `ef7635dc-1b6e-4843-b663-eee4e672e21a` |
-| Master CC | CREDIT/CREDIT_CARD | `feb08f5e-d151-40d4-b816-89647b9b7b19` |
-| Visa CC | CREDIT/CREDIT_CARD | `22935e0c-0484-46fb-b638-5be4c03d3331` |
+| Checking | BANK/CHECKING_ACCOUNT | `<account-uuid-1>` |
+| Savings | BANK/SAVINGS_ACCOUNT | `<account-uuid-2>` |
+| Credit Card 1 | CREDIT/CREDIT_CARD | `<account-uuid-3>` |
+| Credit Card 2 | CREDIT/CREDIT_CARD | `<account-uuid-4>` |
 | CDB Itaú | FIXED_INCOME | (via /investments endpoint) |
 
 ## API Reference
@@ -55,11 +55,11 @@ All requests use header: `X-API-KEY: {apiKey}`
 ```json
 {
   "id": "uuid",
-  "description": "PIX TRANSF ROSILDA04/03",
-  "descriptionRaw": "PIX TRANSF ROSILDA04/03",
+  "description": "PIX TRANSF FULANO01/01",
+  "descriptionRaw": "PIX TRANSF FULANO01/01",
   "currencyCode": "BRL",
-  "amount": -220.00,
-  "date": "2026-03-04T20:06:17.090Z",
+  "amount": -100.00,
+  "date": "2026-01-01T12:00:00.000Z",
   "category": "Transfer - PIX",
   "categoryId": "05070000",
   "status": "POSTED",
@@ -75,11 +75,9 @@ All requests use header: `X-API-KEY: {apiKey}`
 
 Key fields: `amount` (negative = debit), `category` (auto-assigned), `paymentData` (PIX counterparty info).
 
-### Data Volumes Observed
+### Data Volumes
 
-- Checking: 56 transactions (Feb-Mar 2026)
-- Master CC: 129 transactions
-- Visa CC: 37 transactions
+Expect tens-to-hundreds of transactions per account per month; page with `pageSize`.
 
 ## OAuth Flow
 
@@ -130,21 +128,21 @@ By linking the dev account to MeuPluggy, API reads go through a proxy that refre
 
 ### MeuPluggy Items (active)
 
-#### Palmer (Itaú) — Item: `efd32560-e14d-41ac-9ea8-f788f073ca57`
+#### Profile A (Itaú) — Item: `<account-uuid-5>`
 
 | Account | Type | Pluggy ID |
 |---------|------|-----------|
-| Checking | BANK | `ccffdde0-6624-4fa2-8e16-4826b38072b4` |
-| Savings | BANK | `e595441e-cb10-4a00-90d1-89a1e23daac9` |
-| Mastercard Black | CREDIT | `8a92ed78-9961-4a7c-88ed-e13c21d3ceea` |
-| Visa Infinite | CREDIT | `7e611459-0243-4f30-8c21-e788200114c4` |
+| Checking | BANK | `<account-uuid-6>` |
+| Savings | BANK | `<account-uuid-7>` |
+| Credit Card 1 | CREDIT | `<account-uuid-8>` |
+| Credit Card 2 | CREDIT | `<account-uuid-9>` |
 
-#### Rafa (Nubank) — Item: `a97e5072-fb66-4352-97e9-1d54620d4eeb`
+#### Profile B (Nubank) — Item: `<account-uuid-10>`
 
 | Account | Type | Pluggy ID |
 |---------|------|-----------|
-| NuBank Conta | BANK | `ef7d504f-c4ef-44b9-afe0-8086e5a4f846` |
-| NuBank Cartão | CREDIT | `eaa5556b-f38b-4b1e-9e68-fffdca6f1a9a` |
+| NuBank Conta | BANK | `<account-uuid-11>` |
+| NuBank Cartão | CREDIT | `<account-uuid-12>` |
 
 ### Paid Plans
 
