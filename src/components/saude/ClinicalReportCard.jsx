@@ -10,7 +10,7 @@
  *   4. Raciocínio clínico — collapsed accordion containing the original
  *      camada breakdown (Estrutural/Tecido mole/...) for who wants the depth
  *
- * Old PALMER_OBSERVATIONS / RAFA_OBSERVATIONS render as a small
+ * `observations` (slug: observations, from /saude/content/) renders as a small
  * "Pontos adicionais" tail when there are items not surfaced in acoes/mudancas.
  */
 import styles from './saude-widgets.module.css'

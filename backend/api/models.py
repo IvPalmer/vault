@@ -1032,3 +1032,40 @@ class InstallmentSeriesOverride(models.Model):
 
     def __str__(self):
         return f'{self.base_desc} {self.amount_group} {self.effective_total}/{self.total_inst}'
+
+
+class HealthContent(models.Model):
+    """Per-profile health content blobs (clinical report, glucose log, meal plan…).
+
+    These are real medical records. They used to be hardcoded as JS constants in
+    src/components/saude/, which compiled them into the public SPA bundle — the
+    bundle is served before any app-level auth runs, so they were readable by
+    anyone. They live here instead, served through the authenticated API.
+
+    Load with: manage.py load_health_content --profile <name> --slug <slug>
+               --file <path>   (real payloads live in gitignored private-data/)
+    """
+    SLUG_CHOICES = (
+        ('clinical_report', 'Clinical / pregnancy report'),
+        ('observations', 'Clinical observations'),
+        ('hip_imaging', 'Hip imaging'),
+        ('glucose_log', 'Capillary glucose log'),
+        ('meal_plan', 'Meal plan'),
+        ('shopping_list', 'Shopping list'),
+        ('baby_implications', 'Lab findings -> baby implications'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(
+        Profile, on_delete=models.CASCADE, related_name='health_content',
+    )
+    slug = models.CharField(max_length=50, choices=SLUG_CHOICES)
+    payload = models.JSONField(help_text='Shape is per-slug; consumed by the matching card.')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['profile', 'slug']
+        unique_together = ('profile', 'slug')
+
+    def __str__(self):
+        return f'{self.profile.name} | {self.slug}'

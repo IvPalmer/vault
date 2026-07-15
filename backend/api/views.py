@@ -65,6 +65,7 @@ from .models import (
     GoogleAccount, CalendarSelection,
     Project, PersonalTask, PersonalNote,
     HealthExam, VitalReading, Pregnancy, PrenatalConsultation, LabMarker,
+    HealthContent,
 )
 from .serializers import (
     AccountSerializer, CategorySerializer, SubcategorySerializer,
@@ -3215,3 +3216,27 @@ class PrenatalConsultationViewSet(viewsets.ModelViewSet):
         if preg:
             qs = qs.filter(pregnancy_id=preg)
         return qs
+
+
+# ── Saúde: per-profile content blobs ──────────────────────────
+
+class HealthContentView(APIView):
+    """GET /api/saude/content/?profile_id=<uuid> -> {slug: payload}
+
+    Serves the health content that used to be hardcoded into the frontend
+    bundle (and therefore readable without auth). Keyed by slug so a card can
+    do content.glucose_log without another round trip.
+    """
+
+    def get(self, request):
+        profile = request.profile
+        override = request.query_params.get('profile_id')
+        if override:
+            try:
+                profile = Profile.objects.get(id=override)
+            except (Profile.DoesNotExist, ValueError):
+                profile = request.profile
+        if profile is None:
+            return Response({})
+        rows = HealthContent.objects.filter(profile=profile)
+        return Response({row.slug: row.payload for row in rows})

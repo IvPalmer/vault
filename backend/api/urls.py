@@ -40,7 +40,7 @@ from .views import (
     PluggySyncView,
     ProjectViewSet, PersonalTaskViewSet, PersonalNoteViewSet,
     HealthExamViewSet, VitalReadingViewSet, LabMarkerViewSet,
-    PregnancyViewSet, PrenatalConsultationViewSet,
+    PregnancyViewSet, PrenatalConsultationViewSet, HealthContentView,
 )
 from .auth_views import GoogleLoginView, TokenRefreshView, AuthMeView, GoogleAuthStartView, GoogleAuthCallbackView
 from .dashboard_views import DashboardStateView
@@ -143,6 +143,7 @@ urlpatterns = [
     path('profiles/<uuid:pk>/setup-state/', ProfileSetupStateView.as_view(), name='profile-setup-state'),
     path('analytics/analyze-setup/', AnalyzeSetupView.as_view(), name='analyze-setup'),
     # Home / Family Hub
+    path('saude/content/', HealthContentView.as_view(), name='health-content'),
     path('home/reminders/', RemindersView.as_view(), name='home-reminders'),
     path('home/reminders/lists/', RemindersListsView.as_view(), name='home-reminders-lists'),
     path('home/reminders/add/', RemindersAddView.as_view(), name='home-reminders-add'),

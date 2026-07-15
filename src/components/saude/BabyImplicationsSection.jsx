@@ -11,7 +11,7 @@ import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../../api/client'
 import styles from './saude-widgets.module.css'
-import { BABY_IMPLICATIONS, PRIORIDADE_LABEL } from './babyImplications'
+import { PRIORIDADE_LABEL } from './babyImplications'
 
 function fmtValue(v) {
   if (v === null || v === undefined) return '—'
@@ -132,7 +132,10 @@ function ImplicationCard({ item, expanded, onToggle, markerMap }) {
   )
 }
 
-export default function BabyImplicationsSection() {
+// `items` comes from /saude/content/ (slug: baby_implications) — real lab
+// values, so it is not hardcoded in this repo.
+export default function BabyImplicationsSection({ items }) {
+  const implications = items || []
   // All items collapsed by default. User opens only what they need.
   // Previously expanded all `alta` items, producing 9 simultaneously-open
   // verbose cards that made the page impossible to scan.
@@ -198,7 +201,7 @@ export default function BabyImplicationsSection() {
     })
   }
 
-  const grouped = BABY_IMPLICATIONS.reduce((acc, item) => {
+  const grouped = implications.reduce((acc, item) => {
     if (!acc[item.prioridade]) acc[item.prioridade] = []
     acc[item.prioridade].push(item)
     return acc
@@ -207,7 +210,7 @@ export default function BabyImplicationsSection() {
   const order = ['alta', 'media', 'baixa']
 
   // Count of items with at least one live marker resolved
-  const linkedCount = BABY_IMPLICATIONS.filter(i =>
+  const linkedCount = implications.filter(i =>
     i.marker_refs && i.marker_refs.some(r => markerMap.get(`${r.profile}/${r.category}.${r.key}`))
   ).length
 

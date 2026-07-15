@@ -41,11 +41,10 @@ import MealPlanCard from './saude/MealPlanCard'
 import GlucoseLogCard from './saude/GlucoseLogCard'
 import ShoppingListCard from './saude/ShoppingListCard'
 import CursosView from './saude/CursosView'
-import { PALMER_LAB_PANEL, PALMER_CLINICAL_REPORT, PALMER_OBSERVATIONS } from './saude/palmerHealthData'
-import { RAFA_LAB_PANEL, RAFA_PREGNANCY_REPORT, RAFA_OBSERVATIONS } from './saude/rafaHealthData'
-import { RAFA_MEAL_PLAN } from './saude/rafaMealPlan'
-import { RAFA_GLUCOSE_LOG } from './saude/rafaGlucoseLog'
-import { RAFA_SHOPPING_LIST } from './saude/rafaShoppingList'
+// Health content (clinical report, glucose log, meal plan, shopping list, hip
+// imaging) is fetched from /saude/content/ — see HealthContent in models.py.
+// It used to be hardcoded here, which compiled real medical records into the
+// public SPA bundle, served before any auth ran.
 import { useLabPanel } from './saude/useLabPanel'
 
 const EXAM_TYPE_LABELS = {
@@ -195,6 +194,13 @@ function PersonalView({ profileId, profileName }) {
     queryFn: () => api.get(`/saude/vitals/${profileId ? `?profile_id=${profileId}` : ''}`),
     enabled: !!profileId,
   })
+  // {slug: payload} — clinical_report, observations, hip_imaging, glucose_log,
+  // meal_plan, shopping_list. Absent slugs just mean the card doesn't render.
+  const { data: healthContent = {} } = useQuery({
+    queryKey: ['health-content', profileId],
+    queryFn: () => api.get(`/saude/content/${profileId ? `?profile_id=${profileId}` : ''}`),
+    enabled: !!profileId,
+  })
 
   const examsByYear = useMemo(() => {
     const grouped = {}
@@ -206,12 +212,14 @@ function PersonalView({ profileId, profileName }) {
     return Object.entries(grouped).sort(([a], [b]) => b.localeCompare(a))
   }, [exams])
 
-  const isPalmer = profileName?.toLowerCase().includes('palmer')
+  // isPalmer is gone: the cards it gated (clinical report, hip imaging) now key
+  // off whether the profile actually has that content, not off their name.
   const isRafa = profileName?.toLowerCase().includes('rafa')
 
-  // DB-driven lab panel with fallback to hardcoded JS
-  const fallback = isPalmer ? PALMER_LAB_PANEL : (isRafa ? RAFA_LAB_PANEL : null)
-  const { panel: livePanel, source: panelSource } = useLabPanel(profileId, fallback)
+  // DB-driven lab panel. The old hardcoded fallbacks are gone: LabMarker rows
+  // are the source (Palmer 34, Rafa 105), so the fallback never fired — it just
+  // shipped the panels to anyone who downloaded the bundle.
+  const { panel: livePanel, source: panelSource } = useLabPanel(profileId, null)
 
   // Nutrição tab only exists for Rafa. If user switches profile while on it,
   // fall back to Resumo so the panel doesn't render empty.
@@ -276,12 +284,14 @@ function PersonalView({ profileId, profileName }) {
           role="tabpanel"
           aria-labelledby="saude-subtab-resumo"
         >
-          {/* Clinical synthesis dashboard — primary focus of the page. */}
-          {isPalmer && (
-            <ClinicalReportCard report={PALMER_CLINICAL_REPORT} observations={PALMER_OBSERVATIONS} />
-          )}
-          {isRafa && (
-            <ClinicalReportCard report={RAFA_PREGNANCY_REPORT} observations={RAFA_OBSERVATIONS} />
+          {/* Clinical synthesis dashboard — primary focus of the page.
+              Gated on the content existing rather than on the profile's name:
+              same result for Palmer/Rafa, and nothing to render for anyone else. */}
+          {healthContent.clinical_report && (
+            <ClinicalReportCard
+              report={healthContent.clinical_report}
+              observations={healthContent.observations}
+            />
           )}
 
           {/* Secondary row: recent exams + vitals (vitals only if present) */}
@@ -307,7 +317,7 @@ function PersonalView({ profileId, profileName }) {
             )}
           </div>
 
-          {isPalmer && <HipImagingCard />}
+          {healthContent.hip_imaging && <HipImagingCard data={healthContent.hip_imaging} />}
         </div>
       )}
 
@@ -318,9 +328,9 @@ function PersonalView({ profileId, profileName }) {
           aria-labelledby="saude-subtab-nutricao"
           className={styles.tabContent}
         >
-          <MealPlanCard plan={RAFA_MEAL_PLAN} />
-          <GlucoseLogCard log={RAFA_GLUCOSE_LOG} />
-          <ShoppingListCard list={RAFA_SHOPPING_LIST} />
+          <MealPlanCard plan={healthContent.meal_plan} />
+          <GlucoseLogCard log={healthContent.glucose_log} />
+          <ShoppingListCard list={healthContent.shopping_list} />
         </div>
       )}
 
@@ -385,6 +395,15 @@ function FamiliaView() {
   const ativa = pregnancies.find(p => p.status === 'ativa')
   const completedSet = useMemo(() => new Set(ativa?.completed_checkpoint_ids || []), [ativa])
 
+  // Baby implications are the gestante's lab findings — fetched, not hardcoded.
+  // Same queryKey as PersonalView, so react-query serves it from cache there.
+  const gestanteId = ativa?.gestante
+  const { data: famContent = {} } = useQuery({
+    queryKey: ['health-content', gestanteId],
+    queryFn: () => api.get(`/saude/content/?profile_id=${gestanteId}`),
+    enabled: !!gestanteId,
+  })
+
   return (
     <div className={styles.tabContent}>
       <div className={styles.subTabs} role="tablist" aria-label="Seções da família">
@@ -446,7 +465,7 @@ function FamiliaView() {
 
       <CarenciaExamConflictWidget pregnancy={ativa} />
 
-      <BabyImplicationsSection />
+      <BabyImplicationsSection items={famContent.baby_implications} />
 
       {/* Linha do tempo horizontal recolhida — duplica conteúdo dos
          checkpoints abaixo. Disponível sob demanda. */}
