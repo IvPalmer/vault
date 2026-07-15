@@ -1,3 +1,46 @@
+/* Jump nav for Settings sections — sticky horizontal scroll list.
+   `top` matches the app header height (52px desktop / 48px mobile via
+   Layout.module.css). z-index sits just below the header (100) so the
+   header always wins on overlap. */
+.sectionNav {
+  position: sticky;
+  top: 52px;
+  z-index: 80;
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  margin: 0 calc(-1 * var(--space-md)) var(--space-md);
+  background: color-mix(in srgb, var(--color-bg) 92%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+@media (max-width: 768px) {
+  .sectionNav { top: 48px; }
+}
+.sectionNav::-webkit-scrollbar { display: none; }
+
+.sectionNavLink {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  border-radius: 5px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.sectionNavLink:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+html { scroll-behavior: smooth; }
+[id] { scroll-margin-top: 80px; }
+
 .container {
   display: flex;
   flex-direction: column;
@@ -23,9 +66,19 @@
 }
 
 .sectionIcon {
-  font-size: 1.3rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: var(--color-accent-light);
+  color: var(--color-accent);
   flex-shrink: 0;
   margin-top: 2px;
+}
+.sectionIcon svg {
+  display: block;
 }
 
 .sectionHeader > div:nth-child(2) {
@@ -283,6 +336,54 @@
   color: var(--color-text-secondary);
 }
 
+/* Column header row — explains what each value means.
+   Mirrors .tplRow widths so labels align with the data cells below. */
+.tplHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px var(--space-sm);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  background: rgba(0, 0, 0, 0.015);
+}
+
+.tplDragCol {
+  width: 18px;
+  flex-shrink: 0;
+}
+
+.tplDateCol {
+  width: 70px;
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+}
+
+.tplDelCol {
+  width: 24px;
+  flex-shrink: 0;
+}
+
+.tplDragHandle {
+  width: 18px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  color: var(--color-text-secondary);
+  opacity: 0.4;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+.tplRow:hover .tplDragHandle { opacity: 0.85; }
+.tplDragHandle:active { cursor: grabbing; }
+
 .tplRow {
   display: flex;
   align-items: center;
@@ -290,6 +391,14 @@
   padding: 4px var(--space-sm);
   border-bottom: 1px solid rgba(226, 217, 208, 0.4);
   font-size: 0.8rem;
+}
+
+.tplRowDragging {
+  opacity: 0.4;
+}
+.tplRowDragOver {
+  background: var(--color-accent-light);
+  border-top: 2px solid var(--color-accent);
 }
 
 .tplRow:last-child {
@@ -408,6 +517,38 @@
 /* ============================================================ */
 /* SECTION 2: CATEGORIES & SUBCATEGORIES                        */
 /* ============================================================ */
+/* Category list as a responsive grid — 1 col mobile, 2 col tablet, 3+ col
+   desktop. When a row is expanded (sub-categories visible), span full width
+   so the children don't get cramped. `grid-auto-flow: dense` backfills any
+   cells skipped above the expanded full-width row. */
+.catGridList {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-auto-flow: dense;
+  gap: 0;
+}
+
+@media (min-width: 720px) {
+  .catGridList {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0 var(--space-md);
+  }
+}
+
+@media (min-width: 1200px) {
+  .catGridList {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.catGridItem {
+  min-width: 0;
+}
+.catGridItemExpanded {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
 .catRow {
   display: flex;
   align-items: center;
@@ -415,6 +556,7 @@
   padding: 5px var(--space-sm);
   border-bottom: 1px solid rgba(226, 217, 208, 0.4);
   font-size: 0.8rem;
+  min-width: 0;
 }
 
 .catRow:hover {
@@ -1111,6 +1253,111 @@
   width: 100px;
   flex-shrink: 0;
   text-align: right;
+}
+
+.budgetToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin: var(--space-md) 0 var(--space-sm);
+}
+
+.budgetMonthSelect {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.budgetMonthSelect:hover {
+  border-color: var(--color-accent);
+}
+
+.budgetTableHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 4px var(--space-sm);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+}
+
+.budgetLimitSmall {
+  width: 90px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 0.78rem;
+}
+
+.budgetLimitEffective {
+  width: 95px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.budgetClearBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+  padding: 2px 6px;
+  border-radius: 3px;
+  line-height: 1;
+}
+
+.budgetClearBtn:hover {
+  color: var(--color-red);
+  background: rgba(220, 53, 69, 0.08);
+}
+
+.budgetUsageCell {
+  width: 80px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 0.78rem;
+}
+
+.budgetUsageBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.budgetStatus_ok {
+  background: rgba(76, 175, 80, 0.15);
+  color: var(--color-green);
+}
+
+.budgetStatus_warning {
+  background: rgba(255, 152, 0, 0.18);
+  color: var(--color-orange);
+}
+
+.budgetStatus_over {
+  background: rgba(220, 53, 69, 0.18);
+  color: var(--color-red);
+}
+
+.budgetDistribSummary {
+  padding: 6px var(--space-sm) 6px 56px;
+  font-size: 0.74rem;
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid rgba(226, 217, 208, 0.4);
+  font-style: italic;
 }
 
 /* Rename rules section */

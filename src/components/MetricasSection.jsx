@@ -6,6 +6,7 @@ import api from '../api/client'
 import MetricCard from './MetricCard'
 import InlineEdit from './InlineEdit'
 import Skeleton from './Skeleton'
+import { IconAlert } from './SettingsIcons'
 import styles from './MetricasSection.module.css'
 
 function fmt(n) {
@@ -33,8 +34,16 @@ const FALLBACK_ORDER = [
   'parcelas', 'saldo_projetado', 'saude', 'meta_poupanca',
 ]
 
-// Group definitions — cards are visually grouped under these headings
+// Group definitions — cards are visually grouped under these headings.
+// First group ('resumo') renders as a hero band — the critical KPIs of the month.
 const CARD_GROUPS = [
+  {
+    key: 'resumo',
+    label: 'RESUMO',
+    color: 'var(--color-accent)',
+    cards: ['saldo_projetado', 'orcamento_variavel', 'saude'],
+    hero: true,
+  },
   {
     key: 'receitas',
     label: 'RECEITAS',
@@ -55,15 +64,9 @@ const CARD_GROUPS = [
     dynamic: true,
   },
   {
-    key: 'resumo',
-    label: 'RESUMO',
-    color: '#6366f1',
-    cards: ['saldo_projetado', 'orcamento_variavel', 'saude'],
-  },
-  {
     key: 'metas',
     label: 'METAS',
-    color: 'var(--color-green)',
+    color: 'var(--color-text-secondary)',
     cards: ['meta_poupanca', 'diario_max', 'dias_fechamento'],
   },
 ]
@@ -92,6 +95,14 @@ function buildCards(data) {
   const faturaTotal = data.fatura_total || 0
   const faturaRemaining = data.fatura_remaining || 0
   const ccForProjection = faturaTotal > 0 ? faturaTotal : (data.parcelas || 0)
+  // Fixo billed to the card (insurance, subscriptions) rides on the fatura, so
+  // projection uses fixo_for_budget (= expected − on-card), not the full fixo.
+  const fixoForBudget = data.fixo_for_budget != null ? data.fixo_for_budget : fixoExpected
+  const fixoOnCc = data.fixo_on_cc || 0
+  // Residual variável already inside gastos_projetados (current month only), so
+  // the subtitle components always add up to the shown value.
+  const projVariavel = Math.max(
+    0, (data.gastos_projetados || 0) - fixoForBudget - investExpected - ccForProjection)
 
   const cards = {
     entradas_atuais: {
@@ -124,19 +135,19 @@ function buildCards(data) {
     gastos_projetados: {
       label: 'GASTOS PROJETADOS',
       value: `R$ ${fmt(data.gastos_projetados)}`,
-      subtitle: `fixo R$ ${fmt(fixoExpected)} + invest R$ ${fmt(investExpected)} + cartao R$ ${fmt(ccForProjection)}`,
+      subtitle: `fixo R$ ${fmt(fixoForBudget)} + invest R$ ${fmt(investExpected)} + cartão R$ ${fmt(ccForProjection)}${projVariavel > 1 ? ` + variável R$ ${fmt(projVariavel)}` : ''}`,
       color: '#fca5a5',
-      tooltip: `Previsao total de saidas da conta: fixos (R$ ${fmt(fixoExpected)}) + investimentos (R$ ${fmt(investExpected)}) + fatura cartao (R$ ${fmt(ccForProjection)}).`,
+      tooltip: `Previsao total de saidas: fixos de conta (R$ ${fmt(fixoForBudget)}) + investimentos (R$ ${fmt(investExpected)}) + fatura cartao (R$ ${fmt(ccForProjection)})${projVariavel > 1 ? ` + variavel ja gasto (R$ ${fmt(projVariavel)})` : ''}. Fixos no cartao (R$ ${fmt(fixoOnCc)}) ja entram na fatura, por isso nao somam de novo.`,
     },
     gastos_fixos: {
       label: 'GASTOS FIXOS',
       value: `R$ ${fmt(fixoPaid)}`,
       subtitle: fixoExpected > 0
-        ? `pagos de R$ ${fmt(fixoExpected)} esperado`
+        ? `pagos de R$ ${fmt(fixoExpected)} esperado${fixoOnCc > 0 ? ` · R$ ${fmt(fixoOnCc)} no cartão` : ''}`
         : 'pagos ate agora',
       color: 'var(--color-red)',
       progress: fixoExpected > 0 ? (fixoPaid / fixoExpected) * 100 : null,
-      tooltip: `Fixos ja pagos: R$ ${fmt(fixoPaid)}. Falta pagar: R$ ${fmt(fixoPending)}. Total esperado: R$ ${fmt(fixoExpected)}.`,
+      tooltip: `Fixos ja pagos: R$ ${fmt(fixoPaid)}. Falta pagar da conta: R$ ${fmt(fixoPending)}. No cartao (na fatura): R$ ${fmt(fixoOnCc)}. Total esperado: R$ ${fmt(fixoExpected)}.`,
     },
     gastos_invest: {
       label: 'GASTOS INVEST.',
@@ -226,6 +237,9 @@ function buildCards(data) {
       label: 'SAUDE DO MES',
       value: data.saude,
       color: SAUDE_COLORS[data.saude_level] || 'var(--color-text)',
+      icon: (data.saude_level === 'danger' || data.saude_level === 'warning')
+        ? <IconAlert size={16} />
+        : null,
       tooltip: `${SAUDE_EXPLANATIONS[data.saude_level] || 'Sem dados suficientes.'} Baseado em gastos vs projetado e saldo.`,
     },
     meta_poupanca: (() => {
@@ -447,6 +461,20 @@ function MetricasSection() {
     }
   }, [selectedMonth, invalidateMetricas, invalidateProjection])
 
+  const handleClearBalanceOverride = useCallback(async () => {
+    try {
+      const list = await api.get(`/balance-overrides/?month_str=${selectedMonth}`)
+      const items = Array.isArray(list) ? list : (list.results || [])
+      for (const item of items) {
+        await api.delete(`/balance-overrides/${item.id}/`)
+      }
+      invalidateMetricas()
+      invalidateProjection()
+    } catch (err) {
+      console.error('Failed to clear balance override:', err)
+    }
+  }, [selectedMonth, invalidateMetricas, invalidateProjection])
+
   const cards = useMemo(() => (data ? buildCards(data) : null), [data])
 
   /* ── Drag handlers ── */
@@ -617,7 +645,7 @@ function MetricasSection() {
       const bi = cardOrder.indexOf(b)
       if (ai === -1 && bi === -1) return 0
       if (ai === -1) return 1
-      if (bi === -1) return 1
+      if (bi === -1) return -1
       return ai - bi
     })
     return { ...group, visibleCards: groupCardIds }
@@ -637,24 +665,14 @@ function MetricasSection() {
       <div className={styles.balanceRow}>
         <span className={styles.balanceLabel}>SALDO EM CONTA</span>
         {data.is_current_month ? (
-          data.balance_anchor_value != null ? (
-            <>
-              <span
-                className={styles.balanceAuto}
-                style={{ color: data.balance_anchor_value >= 0 ? 'var(--color-green)' : 'var(--color-red)' }}
-              >
-                R$ {fmt(data.balance_anchor_value)}
-              </span>
-              <span className={styles.balanceHint}>Pluggy {data.balance_anchor_date}</span>
-            </>
-          ) : (
+          <>
             <InlineEdit
-              value={data.balance_override}
+              value={data.balance_override != null ? data.balance_override : data.balance_anchor_value}
               onSave={handleSaveBalance}
               prefix="R$"
               color={
-                data.balance_override != null
-                  ? data.balance_override >= 0
+                (data.balance_override != null ? data.balance_override : data.balance_anchor_value) != null
+                  ? (data.balance_override != null ? data.balance_override : data.balance_anchor_value) >= 0
                     ? 'var(--color-green)'
                     : 'var(--color-red)'
                   : undefined
@@ -665,7 +683,23 @@ function MetricasSection() {
                   : 'clique para informar'
               }
             />
-          )
+            {data.balance_override != null && data.balance_anchor_value != null && (
+              <span className={styles.balanceHint} title="Saldo sincronizado pelo Pluggy. Clique no × pra remover o override.">
+                manual · sync: R$ {fmt(data.balance_anchor_value)}
+                <button
+                  type="button"
+                  onClick={handleClearBalanceOverride}
+                  title="Limpar override e voltar pro sync"
+                  style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', marginLeft: 6, padding: '0 4px', fontSize: '0.85em' }}
+                >
+                  ×
+                </button>
+              </span>
+            )}
+            {data.balance_override == null && data.balance_anchor_value != null && (
+              <span className={styles.balanceHint}>Pluggy {data.balance_anchor_date}</span>
+            )}
+          </>
         ) : data.is_future && data.projected_balance != null ? (
           <>
             <span
@@ -750,12 +784,12 @@ function MetricasSection() {
       {groupedCards.map((group) => {
         if (group.visibleCards.length === 0) return null
         return (
-          <div key={group.key} className={styles.cardGroup}>
+          <div key={group.key} className={`${styles.cardGroup} ${group.hero ? styles.cardGroupHero : ''}`}>
             <div className={styles.groupHeader}>
               <span className={styles.groupDot} style={{ background: group.color }} />
               <span className={styles.groupLabel}>{group.label}</span>
             </div>
-            <div className={styles.grid}>
+            <div className={`${styles.grid} ${group.hero ? styles.gridHero : ''}`}>
               {group.visibleCards.map((id) => {
                 const c = cards[id]
                 if (!c) return null
@@ -796,6 +830,8 @@ function MetricasSection() {
                       color={c.color}
                       tooltip={c.tooltip}
                       progress={c.progress}
+                      icon={c.icon}
+                      size={group.hero ? 'lg' : 'md'}
                     />
                   </div>
                 )

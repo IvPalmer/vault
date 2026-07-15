@@ -61,6 +61,13 @@ postgres_data/
 certs/
 chat-sidecar/memory/
 
+# Cleanup 2026-05-11
+backups/
+.claude/worktrees/
+.claude/
+test-screenshots/
+test-results/
+
 # Auto-written by api/signals.py; holds real budget/recurring data — keep out of this public repo.
 backend/backups/
 

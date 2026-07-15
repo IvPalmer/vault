@@ -11,6 +11,10 @@ REMINDERS_API = os.environ.get("REMINDERS_API_URL", "http://127.0.0.1:5177/api/h
 # ALLOWED_HOSTS accepts the request when the in-cluster service name (e.g.
 # "backend") is not in ALLOWED_HOSTS.
 VAULT_API_HOST = os.environ.get("VAULT_API_HOST")
+# Shared secret that authorizes this server-to-server caller to the backend.
+# The backend (ProfileMiddleware) only trusts X-Profile-ID when accompanied by a
+# matching X-Internal-Token. Must be set to the same value in both containers.
+VAULT_INTERNAL_TOKEN = os.environ.get("VAULT_INTERNAL_TOKEN", "")
 
 # Shared async client (reused across tool calls)
 _client: httpx.AsyncClient | None = None
@@ -18,6 +22,8 @@ _client: httpx.AsyncClient | None = None
 
 def _headers(profile_id: str, extra: dict | None = None) -> dict:
     h = {"X-Profile-ID": profile_id}
+    if VAULT_INTERNAL_TOKEN:
+        h["X-Internal-Token"] = VAULT_INTERNAL_TOKEN
     if VAULT_API_HOST:
         h["Host"] = VAULT_API_HOST
     if extra:

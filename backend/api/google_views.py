@@ -3,13 +3,17 @@ REST views for Google Suite — OAuth, Gmail, Drive/Sheets/Docs.
 """
 
 import logging
+import os
+import re
 
+from django.http import HttpResponse, StreamingHttpResponse
 from django.shortcuts import redirect as http_redirect
+from google.auth.transport.requests import AuthorizedSession
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import GoogleAccount
+from .models import GoogleAccount, HealthExam
 from .serializers import GoogleAccountSerializer
 from . import google_auth
 from . import google_gmail
@@ -272,6 +276,174 @@ class DriveFileContentView(APIView):
                 'content': base64.b64encode(content).decode('ascii'),
                 'encoding': 'base64',
             })
+
+
+_STREAM_CHUNK = 8 * 1024 * 1024  # bytes served per range response (8 MiB)
+_stream_scope_cache = {}  # file_id -> bool (is under the course folder)
+_stream_meta_cache = {}   # file_id -> {'mimeType': str, 'size': int|None}
+
+
+def _stream_account():
+    """The Google account whose Drive holds the course archive.
+
+    Set STREAM_ACCOUNT_EMAIL to pin it; the repo is public, so the address is
+    not hardcoded here. Falls back to the first linked account.
+    """
+    email = os.environ.get('STREAM_ACCOUNT_EMAIL', '').strip()
+    if email:
+        account = GoogleAccount.objects.filter(email__iexact=email).first()
+        if account:
+            return account
+    return GoogleAccount.objects.first()
+
+
+_drive_sessions = {}  # account.id -> AuthorizedSession (reused; auto-refreshes token)
+
+
+def _drive_session(account):
+    sess = _drive_sessions.get(account.id)
+    if sess is None:
+        creds = google_auth.get_credentials(account)
+        if not creds:
+            return None
+        sess = AuthorizedSession(creds)
+        _drive_sessions[account.id] = sess
+    return sess
+
+
+class CursoStreamView(APIView):
+    """GET /api/google/drive/stream/<file_id>/
+
+    Range-streams a Drive file's original bytes so a native <video>/<iframe>
+    can play it without depending on Drive's flaky preview transcoding.
+    Scoped: only serves files nested under the Curso Bebê root folder. Each
+    response is capped to a single chunk so range requests stay short-lived
+    (proxy/worker friendly).
+    """
+
+    def get(self, request, file_id):
+        account = _stream_account()
+        if not account:
+            return Response({'error': 'No Google account'},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        # Scope guard (cached) — never proxy arbitrary Drive files. Two narrow
+        # allowlists: (a) a Drive id explicitly registered as a HealthExam
+        # video (cheap DB check, no folder walk), or (b) a file nested under
+        # the course root. DB check first so exam videos skip the Drive walk.
+        allowed = _stream_scope_cache.get(file_id)
+        if allowed is None:
+            allowed = (
+                HealthExam.objects.filter(valores__video_drive_id=file_id).exists()
+                or google_drive.is_descendant_of(
+                    account, file_id, google_drive.CURSO_BEBE_ROOT_FOLDER)
+            )
+            _stream_scope_cache[file_id] = allowed
+        if not allowed:
+            return Response({'error': 'Not allowed'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        # Metadata (cached) for size + content type.
+        meta = _stream_meta_cache.get(file_id)
+        if meta is None:
+            m = google_drive.get_file_meta(account, file_id)
+            if not m:
+                return Response({'error': 'Not found'},
+                                status=status.HTTP_404_NOT_FOUND)
+            meta = {
+                'mimeType': m.get('mimeType') or 'application/octet-stream',
+                'size': int(m['size']) if m.get('size') else None,
+            }
+            _stream_meta_cache[file_id] = meta
+        total = meta['size']
+        ctype = meta['mimeType']
+
+        # Parse the inbound Range header.
+        start, end = 0, None
+        range_header = request.META.get('HTTP_RANGE')
+        if range_header:
+            mo = re.match(r'bytes=(\d+)-(\d*)', range_header)
+            if mo:
+                start = int(mo.group(1))
+                if mo.group(2):
+                    end = int(mo.group(2))
+
+        if total is not None:
+            if start >= total:
+                resp = HttpResponse(status=416)
+                resp['Content-Range'] = f'bytes */{total}'
+                return resp
+            cap_end = start + _STREAM_CHUNK - 1
+            if end is None or end > cap_end:
+                end = cap_end
+            if end > total - 1:
+                end = total - 1
+        elif end is None:
+            end = start + _STREAM_CHUNK - 1
+
+        session = _drive_session(account)
+        if session is None:
+            return Response({'error': 'No credentials'},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        drive_url = (
+            f'https://www.googleapis.com/drive/v3/files/{file_id}'
+            '?alt=media&supportsAllDrives=true'
+        )
+
+        # No Range header → the media element's initial probe. A 206 reply here
+        # is non-conformant and Chrome rejects it (video stalls at readyState
+        # 0). Return a real 200 streaming the whole file with the true
+        # Content-Length; the element then issues Range requests (served as
+        # bounded 206s below) for buffering and seeking.
+        if not range_header:
+            try:
+                up = session.get(drive_url, stream=True, timeout=60)
+            except Exception as e:
+                logger.error(f'curso-stream upstream(200) failed for {file_id}: {e}')
+                return Response({'error': 'Upstream error'},
+                                status=status.HTTP_502_BAD_GATEWAY)
+            if up.status_code not in (200, 206):
+                logger.error(f'curso-stream drive {up.status_code} (200-path) for {file_id}')
+                return Response({'error': 'Upstream error'},
+                                status=status.HTTP_502_BAD_GATEWAY)
+            resp = StreamingHttpResponse(
+                up.iter_content(chunk_size=256 * 1024),
+                status=200, content_type=ctype,
+            )
+            resp['Accept-Ranges'] = 'bytes'
+            if total is not None:
+                resp['Content-Length'] = str(total)
+            resp['Cache-Control'] = 'private, max-age=3600'
+            return resp
+
+        # Ranged request: fetch the bounded chunk and return a complete 206.
+        # (Range is capped to <= _STREAM_CHUNK; buffering the whole chunk and
+        # returning a bounded 206 is bulletproof vs proxied streaming bodies.)
+        try:
+            upstream = session.get(
+                drive_url,
+                headers={'Range': f'bytes={start}-{end}'},
+                timeout=60,
+            )
+        except Exception as e:
+            logger.error(f'curso-stream upstream failed for {file_id}: {e}')
+            return Response({'error': 'Upstream error'},
+                            status=status.HTTP_502_BAD_GATEWAY)
+        if upstream.status_code not in (200, 206):
+            logger.error(f'curso-stream drive {upstream.status_code} for {file_id}: {upstream.text[:200]}')
+            return Response({'error': 'Upstream error'},
+                            status=status.HTTP_502_BAD_GATEWAY)
+
+        data = upstream.content
+        real_end = start + len(data) - 1
+        resp = HttpResponse(data, status=206, content_type=ctype)
+        resp['Accept-Ranges'] = 'bytes'
+        resp['Content-Length'] = str(len(data))
+        if total is not None:
+            resp['Content-Range'] = f'bytes {start}-{real_end}/{total}'
+        resp['Cache-Control'] = 'private, max-age=3600'
+        return resp
 
 
 class SpreadsheetView(APIView):

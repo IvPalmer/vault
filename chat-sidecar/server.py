@@ -209,13 +209,12 @@ Seja concisa, direta e calorosa. Use markdown quando ajudar (negrito, listas).
 Responda SEMPRE em portugues brasileiro.
 
 VOCE E UMA ASSISTENTE PESSOAL COMPLETA — nao apenas um chatbot.
-Voce pode pesquisar na internet, ler paginas web, consultar e modificar dados do Vault,
+Voce pode pesquisar na internet, consultar e modificar dados do Vault,
 criar widgets personalizados, editar planilhas, enviar emails, e muito mais.
 USE AS FERRAMENTAS para buscar informacoes antes de responder — nunca invente dados.
 
 PESQUISA E WEB:
 - WebSearch: pesquisar qualquer coisa na internet (receitas, noticias, precos, tutoriais, etc.)
-- WebFetch: ler o conteudo de uma pagina web (artigos, documentacao, etc.)
 
 ORGANIZACAO PESSOAL:
 - Tarefas: list_tasks, create_task, update_task, delete_task
@@ -411,23 +410,24 @@ async def _stream_chat(req: ChatRequest):
         "mcp__vault-tools__delete_memory",
     ]
 
-    # Build tool lists based on sandbox mode
+    # Build tool lists based on sandbox mode.
+    # Filesystem/shell tools (Bash/Read/Grep/Glob) are NOT granted in normal chat:
+    # combined with bypassPermissions they let a prompt-injection read local secrets
+    # (.env, ~/.claude.json) and exfiltrate via WebFetch. They belong to sandbox mode.
     allowed = [
         *_ALLOWED_TOOLS,
         "WebSearch",
-        "WebFetch",
-        "Bash",
-        "Read",
-        "Grep",
-        "Glob",
     ]
     disallowed = [
         "NotebookEdit",
     ]
 
     if use_sandbox:
-        # In sandbox mode, allow Edit/Write/Agent for code changes
-        allowed.extend(["Edit", "Write", "Agent"])
+        # In sandbox mode (isolated worktree), allow code + filesystem tools, and
+        # WebFetch for pulling docs during operator-initiated code work.
+        allowed.extend(
+            ["Edit", "Write", "Agent", "Read", "Grep", "Glob", "Bash", "WebFetch"]
+        )
         system_prompt += """
 
 MODO SANDBOX ATIVO:
@@ -498,16 +498,19 @@ PADROES IMPORTANTES:
 - Componentes no PersonalOrganizer.jsx sao funcoes internas (nao exportadas)
 - Variaveis devem ser definidas no MESMO componente onde sao usadas"""
     else:
-        # Normal mode: block code-editing tools and sub-agents
-        disallowed.extend(["Edit", "Write", "Agent"])
+        # Normal mode: no code-editing, sub-agents, shell, filesystem, or WebFetch.
+        # WebFetch is dropped because it's an egress channel a prompt-injection
+        # could use to exfiltrate Vault data to an attacker URL; WebSearch stays.
+        disallowed.extend(
+            ["Edit", "Write", "Agent", "Bash", "Read", "Grep", "Glob", "WebFetch"]
+        )
         system_prompt += """
 
-RESTRICAO BASH ESTRITA:
-Bash e SOMENTE para leitura e processamento de dados. PROIBIDO:
-- cat > arquivo, echo > arquivo, tee, sed -i, awk (escrita)
-- Qualquer comando que CRIE ou MODIFIQUE arquivos no disco
-- mv, cp, rm de arquivos do projeto
-Se a tarefa requer editar codigo, diga ao usuario para pedir pelo Claude Code (terminal)."""
+SEM ACESSO A ARQUIVOS, TERMINAL OU WEBFETCH:
+Voce nao tem Bash, Read, Grep, Glob nem WebFetch neste modo. Trabalhe apenas com
+as ferramentas do Vault (tarefas, calendario, email, financas, widgets) e
+WebSearch. Se a tarefa requer editar codigo ou rodar comandos, diga ao usuario
+para pedir pelo Claude Code (terminal)."""
 
     options = ClaudeAgentOptions(
         max_turns=100 if use_sandbox else 50,

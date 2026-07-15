@@ -4,7 +4,7 @@ recurring budget tracking, and transaction management.
 """
 import re
 import unicodedata
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal
 from difflib import get_close_matches, SequenceMatcher
@@ -13,7 +13,8 @@ from dateutil.relativedelta import relativedelta
 from .models import (
     Transaction, Category, Subcategory, Account, BalanceOverride, BalanceAnchor,
     RecurringMapping, RecurringTemplate, BudgetConfig, CategorizationRule,
-    MetricasOrderConfig, CustomMetric, SalaryConfig,
+    MetricasOrderConfig, CustomMetric, SalaryConfig, RenameRule,
+    InstallmentSeriesOverride,
 )
 
 
@@ -34,47 +35,150 @@ def _extract_base_desc(description):
     return cleaned.lower()
 
 
+def _installment_overrides(profile):
+    """Operator-marked cancelled/shortened installment series, keyed the SAME way
+    the projection groups installments: (base_desc, account_name, amount_group,
+    total_inst) -> effective_total. account_name is resolved from the override's
+    account FK at read time (the FK is the stable key; renames are tracked since
+    the projection groups by the current name too). Returns {} when none."""
+    if profile is None:
+        return {}
+    out = {}
+    for ov in InstallmentSeriesOverride.objects.filter(
+        profile=profile).select_related('account'):
+        acct_name = ov.account.name if ov.account else ''
+        out[(ov.base_desc, acct_name, ov.amount_group, ov.total_inst)] = ov.effective_total
+    return out
+
+
+_PLUGGY_NOISE_PREFIXES = (
+    'pix transf ',
+    'pix trans ',
+    'pix qrs ',
+    'pix qr ',
+    'pix recebido ',
+    'pix enviado ',
+    'pix aut ',
+    'sispag pix ',
+    'sispag ',
+    'pag boleto ',
+    'pagto boleto ',
+    'fatura paga ',
+    'pagto cartao ',
+    'pagto da fatura ',
+    'saque atm ',
+    'transf ',
+    'ted ',
+    'doc ',
+    'compra ',
+)
+
+
 def _normalize_transaction_description(description):
-    """Normalize descriptions for duplicate detection."""
+    """
+    Normalize descriptions for duplicate detection.
+
+    Strips Pluggy-specific verbose prefixes ("PIX TRANSF", "PAG BOLETO", etc.)
+    so legacy CSV format ("Claudia28 01") and Pluggy verbose format
+    ("PIX TRANSF Claudia28/01") collapse to the same key.
+
+    Keeps unique content (names, IDs, dates) so legitimate distinct
+    transactions (e.g. consórcio cotas with unique numeric IDs) stay separate.
+    """
     nfkd = unicodedata.normalize('NFKD', description or '')
-    ascii_only = nfkd.encode('ASCII', 'ignore').decode()
-    return re.sub(r'[^a-z0-9]', '', ascii_only.lower())
+    ascii_only = nfkd.encode('ASCII', 'ignore').decode().lower().strip()
+    # Strip known Pluggy noise prefixes iteratively (handles compound prefixes)
+    changed = True
+    while changed:
+        changed = False
+        for prefix in _PLUGGY_NOISE_PREFIXES:
+            if ascii_only.startswith(prefix):
+                ascii_only = ascii_only[len(prefix):].lstrip()
+                changed = True
+    return re.sub(r'[^a-z0-9]', '', ascii_only)
 
 
 def _dedupe_description_key(description):
-    norm_desc = _normalize_transaction_description(description)
-    if 'sispagpixraphaelazevedo' in norm_desc or norm_desc == 'raphaelazevedop':
-        return 'salary_raphael_azevedo'
-    if 'juroslimitedaconta' in norm_desc:
-        return 'juros_limite_da_conta'
-    if 'easyplan' in norm_desc:
-        return 'easyplan'
-    if 'ramiro' in norm_desc:
-        return 'ramiro'
-    if 'gsoensino' in norm_desc:
-        return 'gso_ensino'
-    return norm_desc
+    """
+    Return a stable key for duplicate detection.
+
+    Uses the normalized description directly. Pluggy noise prefixes are
+    stripped in _normalize_transaction_description so legacy + Pluggy
+    versions of the same payment collapse to the same key.
+
+    Distinct legitimate transactions (consórcio cotas with unique numeric
+    IDs in description, different recipients in PIX) stay separate.
+    """
+    return _normalize_transaction_description(description)
+
+
+def _is_pluggy_source(source_file):
+    """A row originated from Pluggy if its source_file starts with 'pluggy:'."""
+    return bool(source_file and source_file.startswith('pluggy:'))
 
 
 def _deduped_transaction_sum(transactions):
     """
-    Sum a queryset/list of transactions once per normalized content key.
-    Key deliberately avoids category/source fields so duplicate imports do not
-    inflate dashboard actuals.
+    Sum a queryset/list of transactions, collapsing Pluggy↔legacy phantom
+    pairs only (the actual import duplication pattern).
+
+    Algorithm: bucket by (account, abs(amount), normalized_description) —
+    NO date in the bucket, because Pluggy and legacy can record the same
+    real charge on dates 1 day apart (e.g. consórcio cota: legacy 05, Pluggy
+    06). Within each bucket, greedy-match Pluggy↔legacy pairs within ±1 day.
+    Each matched pair counts as one transaction (uses the Pluggy amount,
+    falls back to the kept side).
+
+    Same-source rows (two Pluggy or two legacy) are NEVER merged — they're
+    legitimate distinct payments (e.g. user paid Claudia R$200 twice in
+    one day).
     """
-    seen = set()
-    total = Decimal('0.00')
+    buckets = defaultdict(list)
     for txn in transactions:
         key = (
-            txn.date,
             abs(txn.amount),
             txn.account_id,
             _dedupe_description_key(txn.description),
         )
-        if key in seen:
+        buckets[key].append(txn)
+
+    total = Decimal('0.00')
+    for rows in buckets.values():
+        pluggy_rows = sorted(
+            [r for r in rows if _is_pluggy_source(getattr(r, 'source_file', ''))],
+            key=lambda r: r.date,
+        )
+        legacy_rows = sorted(
+            [r for r in rows if not _is_pluggy_source(getattr(r, 'source_file', ''))],
+            key=lambda r: r.date,
+        )
+
+        if not pluggy_rows or not legacy_rows:
+            # Same-source bucket → all rows are legitimate.
+            for r in rows:
+                total += r.amount
             continue
-        seen.add(key)
-        total += txn.amount
+
+        # Greedy pair Pluggy↔legacy within ±1 day. Surviving (unmatched)
+        # rows from either side are real distinct payments.
+        unmatched_legacy = list(legacy_rows)
+        unmatched_pluggy = []
+        for p in pluggy_rows:
+            paired = None
+            for l in unmatched_legacy:
+                if abs((p.date - l.date).days) <= 1:
+                    paired = l
+                    break
+            if paired:
+                # Phantom pair: count once, prefer Pluggy amount (richer metadata).
+                total += p.amount
+                unmatched_legacy.remove(paired)
+            else:
+                unmatched_pluggy.append(p)
+
+        # Add remaining unmatched rows (legitimate, didn't pair)
+        for r in unmatched_legacy + unmatched_pluggy:
+            total += r.amount
     return total
 
 
@@ -152,6 +256,86 @@ def _get_expected_amount(template, month_str, profile=None):
     return total if total is not None else template.default_limit
 
 
+def _category_actual_for_month(category, month_str, profile=None):
+    """Gross expense (positive number) for a category in a month (CC + checking).
+    Uses transaction-month (month_str) and excludes internal transfers — matching
+    how category-matched mappings compute 'actual' in get_metricas."""
+    if not category:
+        return Decimal('0.00')
+    total = Transaction.objects.filter(
+        profile=profile, category=category, month_str=month_str,
+        amount__lt=0, is_internal_transfer=False,
+    ).aggregate(s=Sum('amount'))['s'] or Decimal('0.00')
+    return abs(total)
+
+
+def _category_cc_share(category, month_str, profile=None, cc_account_ids=None, lookback=3):
+    """Fraction of a category's expense that lands on credit-card accounts, over a
+    trailing window including the current month. Used to decide whether a
+    category-based recurring item is CC-billed (so it isn't double-counted with
+    the fatura). Returns Decimal in [0, 1]."""
+    if not category or not cc_account_ids:
+        return Decimal('0.00')
+    months = [_month_str_add(month_str, -i) for i in range(0, max(1, lookback) + 1)]
+    qs = Transaction.objects.filter(
+        profile=profile, category=category, month_str__in=months,
+        amount__lt=0, is_internal_transfer=False,
+    ).only('amount', 'account_id')
+    total = Decimal('0.00')
+    cc = Decimal('0.00')
+    for t in qs:
+        amt = abs(t.amount)
+        total += amt
+        if t.account_id in cc_account_ids:
+            cc += amt
+    return (cc / total) if total > 0 else Decimal('0.00')
+
+
+def derive_expected_amount(template, month_str, profile=None):
+    """Resolve the expected amount for a recurring template, honoring
+    template.expected_source. For 'manual' (or templates without a category) it
+    falls back to _get_expected_amount. Avg-based sources use the trailing
+    expected_lookback_months of CLOSED-month category actuals so the value stays
+    stable through the month (the projection cascade isn't whipsawed)."""
+    if template and not _template_active_in_month(template, month_str):
+        return Decimal('0.00')
+    source = getattr(template, 'expected_source', 'manual') or 'manual'
+    category = getattr(template, 'category', None)
+    if source == 'manual' or not category:
+        return _get_expected_amount(template, month_str, profile=profile)
+
+    lookback = template.expected_lookback_months or 3
+    prior_months = [_month_str_add(month_str, -i) for i in range(1, lookback + 1)]
+    vals = [_category_actual_for_month(category, m, profile=profile) for m in prior_months]
+
+    if source == 'prev_month':
+        derived = vals[0] if vals else Decimal('0.00')
+    else:  # 'avg_3m' or 'max_floor_avg' — average only non-zero closed months so
+        # sparse history (a missing month) doesn't drag the expected down.
+        nonzero = [v for v in vals if v > 0]
+        derived = (sum(nonzero) / len(nonzero)) if nonzero else Decimal('0.00')
+        if source == 'max_floor_avg' and template.expected_floor_amount is not None:
+            derived = max(template.expected_floor_amount, derived)
+
+    # Fallback: if the chosen source produced nothing — e.g. 'prev_month' on a
+    # FUTURE month whose prior month has no data yet, or a fully-empty window —
+    # walk further back to the most recent non-zero months so the expected is
+    # never blank in the table/projection.
+    if derived <= 0:
+        found = []
+        for _i in range(1, 13):
+            _v = _category_actual_for_month(category, _month_str_add(month_str, -_i), profile=profile)
+            if _v > 0:
+                found.append(_v)
+            if len(found) >= (lookback or 3):
+                break
+        if found:
+            derived = sum(found) / len(found)
+            if source == 'max_floor_avg' and template.expected_floor_amount is not None:
+                derived = max(template.expected_floor_amount, derived)
+    return Decimal(derived).quantize(Decimal('0.01'))
+
+
 # ---------------------------------------------------------------------------
 # A2-1: initialize_month
 # ---------------------------------------------------------------------------
@@ -166,22 +350,30 @@ def initialize_month(month_str, profile=None):
         is_active=True,
         profile=profile,
     ).filter(
-        Q(default_limit__gt=0) | Q(template_type='Cartao')
+        Q(default_limit__gt=0) | Q(template_type='Cartao') | Q(match_mode='category')
     )
     created = 0
     for tpl in templates:
         if not _template_active_in_month(tpl, month_str):
             continue
-        expected = _get_expected_amount(tpl, month_str, profile=profile)
+        is_category = tpl.match_mode == 'category' and tpl.category_id
+        expected = (
+            derive_expected_amount(tpl, month_str, profile=profile)
+            if is_category else _get_expected_amount(tpl, month_str, profile=profile)
+        )
+        defaults = {
+            'expected_amount': expected,
+            'status': 'missing',
+            'is_custom': False,
+        }
+        if is_category:
+            defaults['match_mode'] = 'category'
+            defaults['category'] = tpl.category
         _, was_created = RecurringMapping.objects.get_or_create(
             template=tpl,
             month_str=month_str,
             profile=profile,
-            defaults={
-                'expected_amount': expected,
-                'status': 'missing',
-                'is_custom': False,
-            },
+            defaults=defaults,
         )
         if was_created:
             created += 1
@@ -234,8 +426,9 @@ def get_recurring_data(month_str, profile=None):
     result = initialize_month(month_str, profile=profile)
     was_initialized = result['initialized']
 
-    # Fetch all mappings for this month
-    mappings = RecurringMapping.objects.filter(
+    # Fetch all mappings for this month, excluding those whose template's
+    # contract has ended (e.g. car financing past end_month).
+    mappings_qs = RecurringMapping.objects.filter(
         month_str=month_str,
         profile=profile,
     ).select_related('template', 'category', 'transaction', 'transaction__account').prefetch_related(
@@ -243,6 +436,10 @@ def get_recurring_data(month_str, profile=None):
     ).order_by(
         'display_order', 'template__display_order', 'custom_name'
     )
+    mappings = [
+        m for m in mappings_qs
+        if m.template is None or _template_active_in_month(m.template, m.month_str)
+    ]
 
     # Transaction pools for suggestion matching
     txns = Transaction.objects.filter(
@@ -450,6 +647,13 @@ def get_recurring_data(month_str, profile=None):
     investimento_items = []
     cartao_items = []
 
+    # Mark Fixo items billed to a credit card (same source the budget uses to
+    # keep them out of "a pagar"), so the UI can group them under a separate
+    # "no cartão · entra na fatura" sub-section instead of showing "Faltando".
+    _cc_billed_mapping_ids = {
+        str(i) for i in _cc_billed_fixo(month_str, profile)['mapping_ids']
+    }
+
     for mapping in mappings:
         cat_type = _get_type(mapping)
         name = _get_name(mapping)
@@ -486,6 +690,7 @@ def get_recurring_data(month_str, profile=None):
             'is_skipped': mapping.status == 'skipped',
             'has_cross_month': mapping.cross_month_transactions.exists(),
             'cross_month_count': mapping.cross_month_transactions.count(),
+            'cc_billed': str(mapping.id) in _cc_billed_mapping_ids,
         }
 
         if cat_type == 'Income':
@@ -539,6 +744,7 @@ def get_recurring_data(month_str, profile=None):
             Transaction.objects.filter(
                 month_str=month_str, profile=profile,
                 account__in=_checking_accounts, amount__gt=0,
+                is_internal_transfer=False,
             ).aggregate(total=Sum('amount'))['total'] or 0
         ))
         income_ref = _total_income if _total_income > 0 else income_expected
@@ -761,6 +967,31 @@ def save_balance_override(month_str, balance, profile=None):
 # Recurring template management (Settings)
 # ---------------------------------------------------------------------------
 
+EXPECTED_SOURCE_VALUES = ('manual', 'prev_month', 'avg_3m', 'max_floor_avg')
+
+
+def _serialize_template(tpl):
+    return {
+        'id': str(tpl.id),
+        'name': tpl.name,
+        'template_type': tpl.template_type,
+        'default_limit': float(tpl.default_limit),
+        'due_day': tpl.due_day,
+        'contract_start': tpl.contract_start,
+        'contract_term_months': tpl.contract_term_months,
+        'end_month': tpl.end_month,
+        'display_order': tpl.display_order,
+        'match_mode': tpl.match_mode,
+        'category_id': str(tpl.category_id) if tpl.category_id else None,
+        'category_name': tpl.category.name if tpl.category_id else None,
+        'expected_source': tpl.expected_source,
+        'expected_floor_amount': (
+            float(tpl.expected_floor_amount) if tpl.expected_floor_amount is not None else None
+        ),
+        'expected_lookback_months': tpl.expected_lookback_months,
+    }
+
+
 def get_recurring_templates(profile=None):
     """
     Return all RecurringTemplate items used for recurring budget tracking.
@@ -768,22 +999,9 @@ def get_recurring_templates(profile=None):
     templates = RecurringTemplate.objects.filter(
         is_active=True,
         profile=profile,
-    ).order_by('display_order', 'name')
+    ).select_related('category').order_by('display_order', 'name')
 
-    items = []
-    for tpl in templates:
-        items.append({
-            'id': str(tpl.id),
-            'name': tpl.name,
-            'template_type': tpl.template_type,
-            'default_limit': float(tpl.default_limit),
-            'due_day': tpl.due_day,
-            'contract_start': tpl.contract_start,
-            'contract_term_months': tpl.contract_term_months,
-            'end_month': tpl.end_month,
-            'display_order': tpl.display_order,
-        })
-
+    items = [_serialize_template(tpl) for tpl in templates]
     return {'templates': items, 'count': len(items)}
 
 
@@ -811,25 +1029,31 @@ def update_recurring_template(template_id, profile=None, **kwargs):
         tpl.end_month = (kwargs['end_month'] or '').strip()
     if 'display_order' in kwargs and kwargs['display_order'] is not None:
         tpl.display_order = int(kwargs['display_order'])
+    if 'match_mode' in kwargs and kwargs['match_mode'] in ('manual', 'category'):
+        tpl.match_mode = kwargs['match_mode']
+    if 'category_id' in kwargs:
+        cid = kwargs['category_id']
+        tpl.category = Category.objects.filter(id=cid, profile=profile).first() if cid else None
+    if 'expected_source' in kwargs and kwargs['expected_source'] is not None:
+        if kwargs['expected_source'] not in EXPECTED_SOURCE_VALUES:
+            raise ValueError('expected_source inválido')
+        tpl.expected_source = kwargs['expected_source']
+    if 'expected_floor_amount' in kwargs:
+        efa = kwargs['expected_floor_amount']
+        tpl.expected_floor_amount = Decimal(str(efa)) if efa not in (None, '') else None
+    if 'expected_lookback_months' in kwargs and kwargs['expected_lookback_months']:
+        tpl.expected_lookback_months = max(1, min(12, int(kwargs['expected_lookback_months'])))
 
     tpl.save()
 
-    return {
-        'id': str(tpl.id),
-        'name': tpl.name,
-        'template_type': tpl.template_type,
-        'default_limit': float(tpl.default_limit),
-        'due_day': tpl.due_day,
-        'contract_start': tpl.contract_start,
-        'contract_term_months': tpl.contract_term_months,
-        'end_month': tpl.end_month,
-        'display_order': tpl.display_order,
-    }
+    return _serialize_template(tpl)
 
 
 def create_recurring_template(
     name, template_type, default_limit, due_day=None, profile=None,
     contract_start='', contract_term_months=None, end_month='',
+    match_mode='manual', category_id=None, expected_source='manual',
+    expected_floor_amount=None, expected_lookback_months=3,
 ):
     """
     Create a new RecurringTemplate for recurring budget tracking.
@@ -839,6 +1063,27 @@ def create_recurring_template(
         template_type=template_type,
         profile=profile,
     ).aggregate(m=Max('display_order'))['m'] or 0
+
+    # Validate category-recurring inputs (raises -> view returns 400) so a
+    # malformed template can never silently distort the budget math.
+    match_mode = match_mode if match_mode in ('manual', 'category') else 'manual'
+    category = None
+    if match_mode == 'category':
+        if template_type != 'Fixo':
+            raise ValueError('Recorrente por categoria só é suportado para tipo Fixo')
+        category = (
+            Category.objects.filter(id=category_id, profile=profile).first()
+            if category_id else None
+        )
+        if not category:
+            raise ValueError('category_id válido é obrigatório para recorrente por categoria')
+        if (expected_source or 'manual') not in EXPECTED_SOURCE_VALUES:
+            raise ValueError('expected_source inválido')
+    try:
+        lookback = int(expected_lookback_months) if expected_lookback_months else 3
+    except (TypeError, ValueError):
+        lookback = 3
+    lookback = max(1, min(12, lookback))
 
     tpl = RecurringTemplate.objects.create(
         name=name.strip(),
@@ -851,19 +1096,16 @@ def create_recurring_template(
         is_active=True,
         display_order=max_order + 1,
         profile=profile,
+        match_mode=match_mode,
+        category=category,
+        expected_source=expected_source or 'manual',
+        expected_floor_amount=(
+            Decimal(str(expected_floor_amount)) if expected_floor_amount not in (None, '') else None
+        ),
+        expected_lookback_months=lookback,
     )
 
-    return {
-        'id': str(tpl.id),
-        'name': tpl.name,
-        'template_type': tpl.template_type,
-        'default_limit': float(tpl.default_limit),
-        'due_day': tpl.due_day,
-        'contract_start': tpl.contract_start,
-        'contract_term_months': tpl.contract_term_months,
-        'end_month': tpl.end_month,
-        'display_order': tpl.display_order,
-    }
+    return _serialize_template(tpl)
 
 
 def delete_recurring_template(template_id, profile=None):
@@ -953,6 +1195,306 @@ def _get_checking_balance_eom(month_str, profile=None):
     return None
 
 
+# Fixo-on-credit-card inference: how many prior linked months to inspect, and the
+# minimum that must carry evidence, before trusting that an unlinked current month
+# is also card-billed. See _template_history_is_cc_billed.
+FIXO_CC_HISTORY_LOOKBACK = 3
+FIXO_CC_HISTORY_MIN_EVIDENCE = 2
+
+
+def _mapping_linked_txns(mapping):
+    """Transactions linked to a RecurringMapping (M2M, else legacy FK)."""
+    linked = list(mapping.transactions.all())
+    if not linked and mapping.transaction_id:
+        linked = [mapping.transaction]
+    return linked
+
+
+def _linked_txns_cc_state(linked_txns, cc_account_ids):
+    """True if all linked txns are on credit-card accounts, False if any is not,
+    None when there are no linked txns (inconclusive)."""
+    if not linked_txns:
+        return None
+    return all(t.account_id in cc_account_ids for t in linked_txns)
+
+
+def _template_history_is_cc_billed(template_id, month_str, profile, cc_account_ids):
+    """Infer whether a fixo template is billed to a credit card from its recent
+    payment history, for months where the current mapping isn't linked yet.
+
+    Looks back at the template's prior mappings that HAVE linked transactions
+    (most recent first), takes up to LOOKBACK of them, and returns True only when
+    there are at least MIN_EVIDENCE of them and EVERY one was CC-only. Conservative
+    by design: a single checking-linked month blocks the inference, so a payment-
+    method switch is never silently treated as still-on-card."""
+    if not template_id:
+        return False
+    evidence = []
+    qs = (RecurringMapping.objects
+          .filter(profile=profile, template_id=template_id, month_str__lt=month_str)
+          .exclude(status='skipped')
+          .order_by('-month_str')
+          .select_related('transaction').prefetch_related('transactions'))
+    for hm in qs:
+        state = _linked_txns_cc_state(_mapping_linked_txns(hm), cc_account_ids)
+        if state is None:
+            continue
+        evidence.append(state)
+        if len(evidence) >= FIXO_CC_HISTORY_LOOKBACK:
+            break
+    return len(evidence) >= FIXO_CC_HISTORY_MIN_EVIDENCE and all(evidence)
+
+
+def _cc_billed_card_for_mapping(mapping, cc_accounts, month_str, profile):
+    """Which CC card a Fixo mapping is billed to.
+
+    Returns the account NAME when CC-billed and attributable to a single card,
+    '' when CC-billed but the card is ambiguous (multiple/unknown), or None when
+    not CC-billed (paid from checking). Mirrors the boolean detection used by
+    get_metricas (current link wins, else conservative template history)."""
+    cc_ids = set(cc_accounts)
+    linked = _mapping_linked_txns(mapping)
+    state = _linked_txns_cc_state(linked, cc_ids)
+    if state is True:
+        cards = {cc_accounts.get(t.account_id) for t in linked if t.account_id in cc_ids}
+        return next(iter(cards)) if len(cards) == 1 else ''
+    if state is False:
+        return None
+    # No current link → infer CC billing from history, and resolve the card from
+    # the most recent CC-linked history mapping.
+    if not mapping.template_id or not _template_history_is_cc_billed(
+        mapping.template_id, month_str, profile, cc_ids):
+        return None
+    qs = (RecurringMapping.objects
+          .filter(profile=profile, template_id=mapping.template_id, month_str__lt=month_str)
+          .exclude(status='skipped').order_by('-month_str')
+          .select_related('transaction').prefetch_related('transactions'))
+    for hm in qs:
+        hl = _mapping_linked_txns(hm)
+        if _linked_txns_cc_state(hl, cc_ids) is True:
+            cards = {cc_accounts.get(t.account_id) for t in hl if t.account_id in cc_ids}
+            return next(iter(cards)) if len(cards) == 1 else ''
+    return ''
+
+
+def _cc_billed_fixo(month_str, profile):
+    """Single source of truth for recurring Fixo billed to a credit card.
+
+    Shared by get_metricas (fixo_on_cc / a_pagar skip) and get_projection (the
+    CC-fixo CARTAO component + Fixo-column exclusion) so the two surfaces can
+    never diverge. Returns:
+      by_card: {account_name: Decimal}  attributable to a specific card
+      unassigned: Decimal               CC-billed but card unknown (category-share, ambiguous)
+      total: Decimal                    == sum(by_card) + unassigned (== old fixo_on_cc)
+      mapping_ids: set                  CC-billed RecurringMapping ids
+      template_ids: set                 CC-billed template ids
+    """
+    cc_accounts = {
+        a.id: a.name for a in
+        Account.objects.filter(profile=profile, account_type='credit_card')
+    }
+    cc_ids = set(cc_accounts)
+    by_card = {}
+    unassigned = Decimal('0.00')
+    mapping_ids = set()
+    template_ids = set()
+
+    fixo_mappings = RecurringMapping.objects.filter(
+        month_str=month_str, profile=profile,
+    ).filter(
+        Q(template__template_type='Fixo') | Q(is_custom=True, custom_type='Fixo')
+    ).exclude(status='skipped').select_related(
+        'template', 'category', 'transaction').prefetch_related('transactions')
+
+    for m in fixo_mappings:
+        amt = _mapping_expected_amount(m)
+        if amt <= 0:
+            continue
+        # Category-based recurring (e.g. Assinaturas): treat as CC-billed when the
+        # category spend is (near-)entirely on cards. Cannot attribute to one card.
+        if m.match_mode == 'category' and m.category_id:
+            share = _category_cc_share(
+                m.category, month_str, profile=profile, cc_account_ids=cc_ids)
+            if share >= Decimal('0.9'):
+                unassigned += amt
+                mapping_ids.add(m.id)
+                if m.template_id:
+                    template_ids.add(m.template_id)
+            continue
+        card = _cc_billed_card_for_mapping(m, cc_accounts, month_str, profile)
+        if card is None:
+            continue
+        mapping_ids.add(m.id)
+        if m.template_id:
+            template_ids.add(m.template_id)
+        if card:
+            by_card[card] = by_card.get(card, Decimal('0.00')) + amt
+        else:
+            unassigned += amt
+
+    total = sum(by_card.values(), Decimal('0.00')) + unassigned
+    return {
+        'by_card': by_card, 'unassigned': unassigned, 'total': total,
+        'mapping_ids': mapping_ids, 'template_ids': template_ids,
+    }
+
+
+def _fatura_total_for_month(month_str, profile):
+    """Pure, cascade-independent CC bill total for a month — the single source
+    consumed by both get_metricas (fatura_total) and get_projection (CARTAO), so
+    they always agree.
+
+    For a pure-projection future month (no Pluggy bill and no real CC purchases
+    yet) the CC-billed recurring fixos (insurance, etc.) are projected onto the
+    bill so they aren't lost — for the current/past month and for months with a
+    real bill the actual transactions already carry them, so behavior is byte-
+    identical. Returns {total, by_card, sub_cards}.
+    """
+    now = datetime.now()
+    current_ms = f'{now.year}-{now.month:02d}'
+    is_future = month_str > current_ms
+
+    cc_accounts = list(
+        Account.objects.filter(profile=profile, account_type='credit_card'))
+
+    cartao_bill_mappings = {
+        m.template.name: m.expected_amount
+        for m in RecurringMapping.objects.filter(
+            month_str=month_str, profile=profile,
+            template__template_type='Cartao', template__is_active=True,
+        ).select_related('template')
+        if m.expected_amount > 0
+    }
+    cartao_account_names = set(
+        RecurringTemplate.objects.filter(
+            profile=profile, template_type='Cartao', is_active=True,
+        ).values_list('name', flat=True))
+    has_pluggy_bills = bool(cartao_bill_mappings)
+
+    schedule = _compute_installment_schedule(month_str, num_future_months=0, profile=profile)
+    parcelas_by_card = schedule.get('_by_card', {}).get(month_str, {})
+
+    # Per-card real purchase sums (non-Pluggy cards only).
+    purchases_by_card = {}
+    for cc_acct in cc_accounts:
+        if cc_acct.name in cartao_bill_mappings:
+            continue
+        q = _build_cc_fatura_query_single(cc_acct.id, month_str, profile)
+        purchases_by_card[cc_acct.name] = abs(
+            Transaction.objects.filter(q).aggregate(total=Sum('amount'))['total']
+            or Decimal('0.00'))
+    total_real_purchases = sum(purchases_by_card.values(), Decimal('0.00'))
+
+    # Project CC-billed fixos onto the bill only for a pure-projection month:
+    # future + no Pluggy bill + no real purchases (else the real bill carries them).
+    do_cc = is_future and not has_pluggy_bills and total_real_purchases == 0
+    cc = _cc_billed_fixo(month_str, profile) if do_cc else None
+    cc_by_card = cc['by_card'] if cc else {}
+
+    fatura_by_card = {}
+    fatura_sub_cards = {}
+    counted = set()
+    for cc_acct in cc_accounts:
+        name = cc_acct.name
+        if name in cartao_bill_mappings:
+            fatura_by_card[name] = cartao_bill_mappings[name]
+            counted.add(name)
+            continue
+        purchases = purchases_by_card.get(name, Decimal('0.00'))
+        card_parcelas = Decimal(str(parcelas_by_card.get(name, 0)))
+        extra = Decimal(str(cc_by_card.get(name, 0)))
+        if cartao_account_names and name in cartao_account_names:
+            est = max(purchases, card_parcelas + extra)
+            if est > 0:
+                fatura_by_card[name] = est
+                counted.add(name)
+        else:
+            tot = max(purchases, card_parcelas + extra)
+            if tot > 0:
+                fatura_sub_cards[name] = tot
+                if extra > 0:
+                    counted.add(name)  # sub-card cc represented in its own line
+
+    sub_card_total = (Decimal('0.00') if has_pluggy_bills
+                      else sum(fatura_sub_cards.values(), Decimal('0.00')))
+    fatura_total = sum(fatura_by_card.values(), Decimal('0.00')) + sub_card_total
+
+    # Add committed CC-fixos not represented on any card line (unassigned, or a
+    # card with no bill line). Per-amount: only what isn't covered by a card line.
+    if cc:
+        leftover = cc['unassigned']
+        for nm, amt in cc_by_card.items():
+            if nm not in counted:
+                leftover += Decimal(str(amt))
+        fatura_total += leftover
+
+    return {
+        'total': fatura_total,
+        'by_card': fatura_by_card,
+        'sub_cards': fatura_sub_cards,
+    }
+
+
+def _month_actual_income_expense(month_str, profile):
+    """Deduped actual income & expense for a month, including cross-month-linked
+    transactions. Returns (entradas, gastos) as Decimals, gastos positive.
+
+    MIRRORS the entradas_atuais / gastos_atuais computation inside get_metricas
+    (the "ENTRADAS ATUAIS" / "GASTOS ATUAIS" blocks). It exists so
+    get_analytics_trends can reconcile EXACTLY with the Metricas page without
+    paying for a full get_metricas evaluation per month (which also runs the
+    installment schedule, fatura and projection — ~600ms each). KEEP IN SYNC:
+    if the metricas income/expense definition changes, change it here too.
+    """
+    # Transactions of THIS month claimed by ANOTHER month's mapping → exclude.
+    # Only mappings that actually carry cross-month links matter (rare), so filter
+    # to those — mappings without them contribute nothing and scanning all ~360
+    # per month is what made this slow.
+    cross_exclude_ids = set()
+    for om in RecurringMapping.objects.filter(profile=profile).exclude(
+        month_str=month_str
+    ).filter(cross_month_transactions__isnull=False).distinct().prefetch_related(
+        'cross_month_transactions'
+    ):
+        for t in om.cross_month_transactions.filter(month_str=month_str):
+            cross_exclude_ids.add(t.id)
+
+    txns = Transaction.objects.filter(
+        month_str=month_str, is_internal_transfer=False, profile=profile,
+    ).exclude(id__in=cross_exclude_ids)
+
+    # CC refunds/estornos are not income — net them against spending, mirroring
+    # get_metricas (KEEP IN SYNC). Genuine bill payments are is_internal_transfer.
+    _cc_acct_ids = set(
+        Account.objects.filter(profile=profile, account_type='credit_card')
+        .values_list('id', flat=True)
+    )
+
+    # Transactions from OTHER months linked TO this month's mappings → include.
+    # A positive credit-card cross-month txn is a refund, so it nets against
+    # spending (cross_exp), not income.
+    cross_inc = Decimal('0.00')
+    cross_exp = Decimal('0.00')
+    for m in RecurringMapping.objects.filter(
+        month_str=month_str, profile=profile,
+    ).filter(cross_month_transactions__isnull=False).distinct().prefetch_related(
+        'cross_month_transactions'
+    ):
+        for t in m.cross_month_transactions.all():
+            if t.amount > 0 and t.account_id not in _cc_acct_ids:
+                cross_inc += t.amount
+            else:
+                cross_exp += t.amount
+
+    entradas = _deduped_transaction_sum(
+        txns.filter(amount__gt=0).exclude(account_id__in=_cc_acct_ids)) + cross_inc
+    gastos = max(Decimal('0.00'), -(
+        _deduped_transaction_sum(txns.filter(amount__lt=0))
+        + _deduped_transaction_sum(txns.filter(amount__gt=0, account_id__in=_cc_acct_ids))
+        + cross_exp))
+    return entradas, gastos
+
+
 def get_metricas(month_str, profile=None):
     """
     MÉTRICAS — unified dashboard metrics replacing both get_summary_metrics
@@ -993,7 +1535,17 @@ def get_metricas(month_str, profile=None):
         id__in=cross_month_exclude_ids
     ).select_related('category', 'account')
 
-    income_txns = txns.filter(amount__gt=0)
+    # Positive credit-card transactions are refunds/estornos — genuine bill
+    # payments are is_internal_transfer=True and already excluded above. A refund
+    # nets against the card bill (the Pluggy bill total already reflects it), so it
+    # is NOT income: exclude it from income and net it into actual spending so it
+    # reduces gastos instead of inflating renda.
+    _cc_acct_ids = set(
+        Account.objects.filter(profile=profile, account_type='credit_card')
+        .values_list('id', flat=True)
+    )
+    income_txns = txns.filter(amount__gt=0).exclude(account_id__in=_cc_acct_ids)
+    cc_credit_txns = txns.filter(amount__gt=0, account_id__in=_cc_acct_ids)
     expense_txns = txns.filter(amount__lt=0)
 
     # Unfiltered pools for recurring matching (includes internal transfers,
@@ -1004,7 +1556,10 @@ def get_metricas(month_str, profile=None):
     ).exclude(
         id__in=cross_month_exclude_ids
     ).select_related('category', 'account')
-    all_income = all_txns.filter(amount__gt=0)
+    # Exclude positive credit-card txns (refunds) from the income matching pool so
+    # a recurring Income mapping can never count a refund as received salary
+    # (which would wrongly reduce a_entrar and inflate saldo).
+    all_income = all_txns.filter(amount__gt=0).exclude(account_id__in=_cc_acct_ids)
     all_expense = all_txns.filter(amount__lt=0)
 
     # --- Cross-month INCLUSIONS ---
@@ -1019,7 +1574,8 @@ def get_metricas(month_str, profile=None):
     ).prefetch_related('cross_month_transactions')
     for m in this_month_mappings_cm:
         for t in m.cross_month_transactions.all():
-            if t.amount > 0:
+            # Positive CC cross-month txn = refund → nets against spending.
+            if t.amount > 0 and t.account_id not in _cc_acct_ids:
                 cross_month_include_income += t.amount
             else:
                 cross_month_include_expense += t.amount
@@ -1048,7 +1604,13 @@ def get_metricas(month_str, profile=None):
     # 3. GASTOS ATUAIS — total actual expenses (CC + checking)
     #    Includes cross-month expense transactions linked TO this month
     # =====================================================================
-    gastos_atuais = abs(_deduped_transaction_sum(expense_txns) + cross_month_include_expense)
+    # CC refunds (cc_credit_txns) net against spending; clamp at 0 so a month whose
+    # refunds exceed purchases can't produce negative "spending".
+    gastos_atuais = max(Decimal('0.00'), -(
+        _deduped_transaction_sum(expense_txns)
+        + _deduped_transaction_sum(cc_credit_txns)
+        + cross_month_include_expense
+    ))
 
     # =====================================================================
     # 4. GASTOS PROJETADOS — expected total expenses for the month
@@ -1066,21 +1628,17 @@ def get_metricas(month_str, profile=None):
         fixo_expected_total += _mapping_expected_amount(m)
 
     # Identify fixo items billed to a CC account (e.g. insurance, gym).
-    # These amounts are already inside fatura_total, so subtract from fixo
-    # for budget calculations to avoid double-counting.
+    # These amounts are inside fatura_total (real txns this month, or projected
+    # onto the bill for future months via _fatura_total_for_month), so subtract
+    # from fixo for budget calculations to avoid double-counting. Single source
+    # of truth shared with the projection.
     cc_account_ids = set(
         Account.objects.filter(profile=profile, account_type='credit_card')
         .values_list('id', flat=True)
     )
-    fixo_on_cc = Decimal('0.00')
-    _fixo_on_cc_mapping_ids = set()
-    for m in fixo_mappings_all:
-        linked_txns = list(m.transactions.all())
-        if not linked_txns and m.transaction:
-            linked_txns = [m.transaction]
-        if linked_txns and all(t.account_id in cc_account_ids for t in linked_txns):
-            fixo_on_cc += _mapping_expected_amount(m)
-            _fixo_on_cc_mapping_ids.add(m.id)
+    _cc_fixo = _cc_billed_fixo(month_str, profile)
+    fixo_on_cc = _cc_fixo['total']
+    _fixo_on_cc_mapping_ids = _cc_fixo['mapping_ids']
     fixo_for_budget = fixo_expected_total - fixo_on_cc
 
     invest_mappings_all = RecurringMapping.objects.filter(
@@ -1225,66 +1783,16 @@ def get_metricas(month_str, profile=None):
     # =====================================================================
     cc_accounts = Account.objects.filter(profile=profile, account_type='credit_card')
 
-    # Use Pluggy bill totals from Cartao mappings (exact bank amounts).
-    # Falls back to summing CC purchases if no Cartao mapping exists.
-    cartao_bill_mappings = {
-        m.template.name: m.expected_amount
-        for m in RecurringMapping.objects.filter(
-            month_str=month_str, profile=profile,
-            template__template_type='Cartao', template__is_active=True,
-        ).select_related('template')
-        if m.expected_amount > 0
-    }
-
-    # Cards with active Cartao templates have their own bill (counted in total).
-    # Additional cards (e.g. Rafa on MC Black) shown for visibility only.
-    cartao_account_names = set(
-        RecurringTemplate.objects.filter(
-            profile=profile, template_type='Cartao', is_active=True,
-        ).values_list('name', flat=True)
-    )
-
-    fatura_by_card = {}       # Cards with own bill (counted in fatura_total)
-    fatura_sub_cards = {}     # Additional cards (visibility only, NOT counted)
-    for cc_acct in cc_accounts:
-        if cc_acct.name in cartao_bill_mappings:
-            # Authoritative Pluggy bill total
-            fatura_by_card[cc_acct.name] = cartao_bill_mappings[cc_acct.name]
-        elif cartao_account_names and cc_acct.name in cartao_account_names:
-            # Active Cartao template but no Pluggy bill — use purchase sum
-            # or projected installments for THIS card only.
-            q = _build_cc_fatura_query_single(cc_acct.id, month_str, profile)
-            purchases = abs(Transaction.objects.filter(q).aggregate(
-                total=Sum('amount'))['total'] or Decimal('0.00'))
-            card_parcelas = Decimal(str(parcelas_by_card.get(cc_acct.name, 0)))
-            # Real purchases already include installment txns — use whichever
-            # is larger (purchases for imported months, parcelas for future).
-            estimated_total = max(purchases, card_parcelas)
-            if estimated_total > 0:
-                fatura_by_card[cc_acct.name] = estimated_total
-        else:
-            # Additional card (no own bill) — visibility only
-            q = _build_cc_fatura_query_single(cc_acct.id, month_str, profile)
-            purchases = abs(Transaction.objects.filter(q).aggregate(
-                total=Sum('amount'))['total'] or Decimal('0.00'))
-            card_parcelas = Decimal(str(parcelas_by_card.get(cc_acct.name, 0)))
-            # Real purchases already include installment txns — use whichever
-            # is larger (purchases for imported months, parcelas for future).
-            total = max(purchases, card_parcelas)
-            if total > 0:
-                fatura_sub_cards[cc_acct.name] = total
-
     # =====================================================================
-    # 8. PARCELAS + GASTOS PROJETADOS
-    #    fatura_by_card = CC bills that are paid from checking (own bills).
-    #    fatura_sub_cards = additional cards whose charges are already
-    #    included in another card's bill (visibility only).
+    # 8. FATURA + GASTOS PROJETADOS — shared, pure bill total (also consumed by
+    #    get_projection, so projection CARTAO == metricas fatura by construction).
+    #    For pure-projection future months it projects CC-billed fixos (insurance)
+    #    onto the bill; current/past/Pluggy months are byte-identical.
     # =====================================================================
-    # Sub-card charges are included in the parent's Pluggy bill total, so only
-    # add sub_cards when NO main card used a Pluggy bill (i.e. purchase-sum mode).
-    has_pluggy_bills = bool(cartao_bill_mappings)
-    sub_card_total = Decimal('0.00') if has_pluggy_bills else sum(fatura_sub_cards.values(), Decimal('0.00'))
-    fatura_total = sum(fatura_by_card.values(), Decimal('0.00')) + sub_card_total
+    _fatura = _fatura_total_for_month(month_str, profile)
+    fatura_by_card = _fatura['by_card']       # cards with own bill (counted)
+    fatura_sub_cards = _fatura['sub_cards']   # additional cards (visibility only)
+    fatura_total = _fatura['total']
     # When the bill has an authoritative Pluggy total, use it.
     # Otherwise fatura_by_card already includes projected installments.
     projected_cc = parcelas_total if fatura_total == 0 else fatura_total
@@ -1393,9 +1901,18 @@ def get_metricas(month_str, profile=None):
             # - Paid from an earlier month (cross-month to past) → no carryover
             # - Paid from THIS month (cross-month to current) → carryover (late)
             # - Not paid at all → carryover (still pending)
-            _paid_in_own_month = any(
-                _t.month_str == _prev_m for _t in _cm.transactions.all()
-            )
+            if _cm.match_mode == 'category' and _cm.category_id:
+                # Category-matched recurring (e.g. Assinaturas): "paid in own month"
+                # when the category had expense txns that month — it auto-matches by
+                # category, so the manual M2M is empty and must not be read as unpaid.
+                _paid_in_own_month = Transaction.objects.filter(
+                    profile=profile, category_id=_cm.category_id, month_str=_prev_m,
+                    amount__lt=0, is_internal_transfer=False,
+                ).exists()
+            else:
+                _paid_in_own_month = any(
+                    _t.month_str == _prev_m for _t in _cm.transactions.all()
+                )
             if _paid_in_own_month:
                 continue
             _paid_from_other = any(
@@ -1594,6 +2111,19 @@ def get_metricas(month_str, profile=None):
                     'moved_to': target,
                 })
 
+    # Outras entradas: cash that hit the account but isn't salary — real non-salary
+    # income (reembolsos, extra) + financing inflows like the loan captação (which is
+    # flagged is_internal_transfer to stay out of income/budget, but IS real cash).
+    # Surfaced as a separate projection column so the cash flow reconciles.
+    _salario_recebido = sum(
+        (_get_actual_for_mapping(m, is_income=True) for m in income_mappings),
+        Decimal('0.00'),
+    )
+    _captacao = abs(Transaction.objects.filter(
+        profile=profile, month_str=month_str, amount__gt=0, category__name='Emprestimos',
+    ).aggregate(s=Sum('amount'))['s'] or Decimal('0.00'))
+    outras_entradas = max(Decimal('0.00'), entradas_atuais - _salario_recebido) + _captacao
+
     result_dict = {
         'month_str': month_str,
         'balance_override': balance_override,
@@ -1605,6 +2135,7 @@ def get_metricas(month_str, profile=None):
         'checking_balance_eom': float(checking_balance_eom) if checking_balance_eom is not None else None,
         'entradas_atuais': float(entradas_atuais),
         'entradas_projetadas': float(entradas_projetadas),
+        'outras_entradas': float(outras_entradas),
         'gastos_atuais': float(gastos_atuais),
         'gastos_projetados': float(gastos_projetados),
         'gastos_fixos': float(gastos_fixos),
@@ -1760,20 +2291,25 @@ def _compute_custom_metrics(month_str, metricas_data, profile=None):
         cats_by_id = {str(c.id): c for c in Category.objects.filter(id__in=cat_ids_needed, profile=profile)}
 
     # Batch: BudgetConfig overrides for referenced categories (1 query)
+    # Sum across pay_num so category overrides remain stable even if a
+    # category accidentally gets split rows (currently only salary uses
+    # pay_num > 0, but defensive aggregation is cheap).
     budget_overrides = {}
     if cat_ids_needed:
-        budget_overrides = {
-            str(bc.category_id): float(bc.limit_override)
-            for bc in BudgetConfig.objects.filter(
-                category_id__in=cat_ids_needed, month_str=month_str, profile=profile,
-            )
-        }
+        agg = (
+            BudgetConfig.objects
+            .filter(category_id__in=cat_ids_needed, month_str=month_str, profile=profile)
+            .values('category_id')
+            .annotate(total=Sum('limit_override'))
+        )
+        budget_overrides = {str(row['category_id']): float(row['total']) for row in agg}
 
     # Batch: category spending for referenced categories (1 query)
     cat_spending = {}
     if cat_ids_needed:
-        cat_spending = dict(
-            Transaction.objects.filter(
+        cat_spending = {
+            str(cat_id): total
+            for cat_id, total in Transaction.objects.filter(
                 month_str=month_str,
                 category_id__in=cat_ids_needed,
                 amount__lt=0,
@@ -1782,7 +2318,7 @@ def _compute_custom_metrics(month_str, metricas_data, profile=None):
             ).values('category_id').annotate(
                 total=Sum('amount')
             ).values_list('category_id', 'total')
-        )
+        }
 
     # Pre-compute mapping totals by template type (batch queries)
     def _compute_mapping_totals(mappings_qs, is_income=False):
@@ -1874,7 +2410,7 @@ def _compute_custom_metrics(month_str, metricas_data, profile=None):
         if cm.metric_type == 'category_total':
             cat_id = cm.config.get('category_id')
             if cat_id:
-                spent_agg = cat_spending.get(cat_id, Decimal('0.00'))
+                spent_agg = cat_spending.get(str(cat_id), Decimal('0.00'))
                 spent = abs(spent_agg)
                 value = f'R$ {int(spent):,}'.replace(',', '.')
                 subtitle = 'gasto na categoria'
@@ -1888,7 +2424,7 @@ def _compute_custom_metrics(month_str, metricas_data, profile=None):
                 # Get budget (override or default)
                 limit = budget_overrides.get(str(cat_id), float(cat.default_limit))
 
-                spent_agg = cat_spending.get(cat_id, Decimal('0.00'))
+                spent_agg = cat_spending.get(str(cat_id), Decimal('0.00'))
                 spent = float(abs(spent_agg))
                 remaining = max(0, limit - spent)
                 pct = (spent / limit * 100) if limit > 0 else 0
@@ -1940,9 +2476,12 @@ def _compute_custom_metrics(month_str, metricas_data, profile=None):
                                 profile=profile,
                             ).aggregate(t=Sum('amount'))['t'] or Decimal('0.00')
                         else:
-                            agg = cat_spending.get(cat_key, Decimal('0.00'))
+                            agg = cat_spending.get(str(cat_key), Decimal('0.00'))
                         actual = abs(agg)
-                    expected = float(mapping.expected_amount)
+                    # Respect template contract bounds (e.g. car financing
+                    # ended) — _mapping_expected_amount returns 0 if the
+                    # template is no longer active in this month.
+                    expected = float(_mapping_expected_amount(mapping))
                     value = f'R$ {int(actual):,}'.replace(',', '.')
                     if expected > 0:
                         subtitle = f'de R$ {int(expected):,} esperado'.replace(',', '.')
@@ -2314,6 +2853,14 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
         invoice_by_account[row['account__name']] = abs(float(row['total'] or 0))
     invoice_total = sum(invoice_by_account.values())
 
+    # The bill this panel feeds into (cash-flow truth, shown in the projection):
+    # transaction mode → next month's bill (M's purchases are paid in M+1);
+    # invoice mode → this month's bill. Lets the panel show a reconciliation
+    # caption ("Fatura paga em <mês>: R$X") without forcing panel total == fatura.
+    _cc_field = _cc_month_field(profile)
+    bill_month = _month_str_add(month_str, 1) if _cc_field == 'month_str' else month_str
+    bill_total = float(_fatura_total_for_month(bill_month, profile)['total'])
+
     return {
         'month_str': month_str,
         'transactions': results,
@@ -2321,30 +2868,201 @@ def get_card_transactions(month_str, account_filter=None, profile=None):
         'total': float(sum(r['amount'] for r in results)),
         'invoice_total': invoice_total,
         'invoice_by_account': invoice_by_account,
+        # Lets the panel decide where first installments (1/N) belong: in
+        # transaction mode they count as current-month purchases (COMPRAS); in
+        # invoice mode they stay in the bill's PARCELAS table.
+        'cc_display_mode': 'transaction' if _cc_field == 'month_str' else 'invoice',
+        'bill_month': bill_month,
+        'bill_total': bill_total,
     }
+
+
+def _project_installment_complement(month_str, profile=None, exclude_purchase_ids=None):
+    """
+    Project missing installments for `month_str` from older bills.
+
+    Mirrors `_compute_installment_schedule`'s Step 2 logic so that
+    `get_installment_details` can include the same projected positions that
+    metricas['parcelas'] counts. Each returned item carries `projected=True`.
+
+    Args:
+        month_str: target month.
+        exclude_purchase_ids: set of (base_desc, account, amt_group, total_inst)
+            tuples already present in real data for this month — skipped.
+
+    Returns: list of item dicts (same shape as get_installment_details items,
+    with `projected: True`).
+    """
+    import calendar as _cal
+    from dateutil.relativedelta import relativedelta as _rdelta
+
+    exclude = exclude_purchase_ids or set()
+    projected = []
+    seen = set()
+
+    lookback_months_list = [_month_str_add(month_str, -i) for i in range(1, 13)]
+    _lb_invoice_txns = list(Transaction.objects.filter(
+        invoice_month__in=lookback_months_list,
+        is_installment=True,
+        amount__lt=0,
+        profile=profile,
+    ).select_related('account', 'category', 'subcategory'))
+    _lb_by_invoice = {}
+    for txn in _lb_invoice_txns:
+        _lb_by_invoice.setdefault(txn.invoice_month, []).append(txn)
+
+    _lb_months_with_invoice = set(_lb_by_invoice.keys())
+    _lb_months_needing_fallback = set(lookback_months_list) - _lb_months_with_invoice
+    _lb_by_fallback = {}
+    if _lb_months_needing_fallback:
+        _lb_fallback_txns = list(Transaction.objects.filter(
+            month_str__in=_lb_months_needing_fallback,
+            invoice_month='',
+            is_installment=True,
+            amount__lt=0,
+            profile=profile,
+        ).select_related('account', 'category', 'subcategory'))
+        for txn in _lb_fallback_txns:
+            _lb_by_fallback.setdefault(txn.month_str, []).append(txn)
+
+    target_dt = _parse_month(month_str)
+
+    # Cancelled/shortened series cap (effective_total, never below highest real
+    # position). Empty overrides → no-op.
+    overrides = _installment_overrides(profile)
+    max_real_pos = {}
+    if overrides:
+        _all_real = list(_lb_invoice_txns)
+        for _ts in _lb_by_fallback.values():
+            _all_real.extend(_ts)
+        for _t in _all_real:
+            _m = re.match(r'(\d+)/(\d+)', _t.installment_info or '') or \
+                re.search(r'(\d{1,2})/(\d{1,2})', _t.description)
+            if not _m:
+                continue
+            _k = (_extract_base_desc(_t.description),
+                  _t.account.name if _t.account else '',
+                  round(float(abs(_t.amount)), 0), int(_m.group(2)))
+            max_real_pos[_k] = max(max_real_pos.get(_k, 0), int(_m.group(1)))
+
+    def _eff_total(group_key, total_inst):
+        if not overrides:
+            return total_inst
+        return max(overrides.get(group_key, total_inst), max_real_pos.get(group_key, 0))
+
+    for lookback in range(1, 13):
+        source_month = lookback_months_list[lookback - 1]
+        inst_txns = _lb_by_invoice.get(source_month) or _lb_by_fallback.get(source_month) or []
+        if not inst_txns:
+            continue
+
+        purchase_groups = {}  # key -> (current_pos, total_inst, txn, amt)
+        purchase_max_pos = {}
+        for txn in inst_txns:
+            info = txn.installment_info or ''
+            m_match = re.match(r'(\d+)/(\d+)', info)
+            if not m_match:
+                dm = re.search(r'(\d{1,2})/(\d{1,2})', txn.description)
+                if dm:
+                    m_match = dm
+            if not m_match:
+                continue
+            current = int(m_match.group(1))
+            total_inst = int(m_match.group(2))
+            base_desc = _extract_base_desc(txn.description)
+            acct = txn.account.name if txn.account else ''
+            amt = round(float(abs(txn.amount)), 2)
+            amt_group = round(float(abs(txn.amount)), 0)
+            group_key = (base_desc, acct, amt_group, total_inst)
+            if group_key not in purchase_groups or current < purchase_groups[group_key][0]:
+                purchase_groups[group_key] = (current, total_inst, txn, amt)
+            purchase_max_pos[group_key] = max(purchase_max_pos.get(group_key, 0), current)
+
+        for group_key, (current, total_inst, txn, amt) in purchase_groups.items():
+            base_desc, acct, amt_group, _ = group_key
+            eff_total = _eff_total(group_key, total_inst)
+            # Source-side Itaú-style: if all positions appeared on the source
+            # bill, the purchase was fully charged there. No projection needed.
+            if purchase_max_pos.get(group_key, current) >= eff_total:
+                continue
+            position = current + lookback
+            if position > eff_total:
+                continue
+            if group_key in exclude:
+                continue
+            if group_key in seen:
+                continue
+            seen.add(group_key)
+
+            try:
+                projected_date = txn.date.replace(year=target_dt.year, month=target_dt.month)
+            except ValueError:
+                last_day = _cal.monthrange(target_dt.year, target_dt.month)[1]
+                projected_date = txn.date.replace(
+                    year=target_dt.year, month=target_dt.month, day=last_day
+                )
+
+            parcela_str = f'{position}/{total_inst}'
+            display_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', txn.description).strip()
+            projected.append({
+                'id': str(txn.id),
+                'date': projected_date.strftime('%Y-%m-%d'),
+                'description': f'{display_desc} {parcela_str}',
+                'amount': amt,
+                'account': acct,
+                'category': txn.category.name if txn.category else 'Não categorizado',
+                'category_id': str(txn.category.id) if txn.category else None,
+                'subcategory': txn.subcategory.name if txn.subcategory else '',
+                'subcategory_id': str(txn.subcategory.id) if txn.subcategory else None,
+                'parcela': parcela_str,
+                'source_month': source_month,
+                'projected': True,
+            })
+
+    return projected
 
 
 def get_installment_details(month_str, profile=None):
     """
-    INSTALLMENT BREAKDOWN — installments being charged on this month's bill.
+    INSTALLMENT BREAKDOWN for the CONTROLE CARTÕES panel.
 
-    Uses invoice_month to get the actual CC statement for this month.
+    Transaction mode (Palmer): the panel for month M shows the bill that CLOSES
+    with month M's purchases (paid in M+1) — M's purchases' first installments
+    (1/N) plus prior purchases' later installments on that same bill, all
+    positions. e.g. the May panel = May purchases' 1/2, 1/3 + April purchases'
+    2/4, 2/5 (the bill paid in June). This deliberately does NOT equal the
+    METRICAS parcelas card, which is the bill PAID this month (the previous
+    month's purchases) — a different month.
+
+    Invoice mode (Rafa): the bill paid this month, all positions.
+    """
+    if _cc_month_field(profile) != 'month_str':
+        return _get_installment_details_invoice(month_str, profile=profile)
+
+    # Transaction mode: the bill containing THIS month's purchases (paid M+1),
+    # all positions (first installments of M's purchases + prior carry-overs).
+    bill_month = _month_str_add(month_str, 1)
+    detail = _get_installment_details_invoice(bill_month, profile=profile)
+    for it in detail['items']:
+        it['source_month'] = month_str
+    detail['month_str'] = month_str
+    return detail
+
+
+def _get_installment_details_invoice(month_str, profile=None):
+    """
+    Installments on the bill (invoice_month) for `month_str`.
 
     CC statements may list ALL future positions for a purchase (01/03, 02/03,
-    03/03 all on the same bill).  Only the LOWEST position per purchase is the
+    03/03 all on the same bill). Only the LOWEST position per purchase is the
     actual charge for this bill — higher positions are previews of future bills.
     We deduplicate by (base_desc, account, amount, total) and keep only the
-    lowest position per purchase.
-
-    For months without a CC statement, projects installments from older
+    lowest position per purchase. Months without a statement project from older
     statements.
 
-    Returns: dict with 'source' ('real' or 'projected'), deduped installment
-    items, count, and total.
+    Returns: dict with 'source' ('real'/'mixed'/'projected'), deduped items,
+    count, and total.
     """
-    # Check if this month has real installment data.
-    # Always use invoice_month — installments belong to the bill they appear
-    # on, regardless of cc_display_mode (matches _compute_installment_schedule).
     real_installments = Transaction.objects.filter(
         invoice_month=month_str,
         is_installment=True,
@@ -2401,10 +3119,13 @@ def get_installment_details(month_str, profile=None):
 
         # Build items from deduplicated purchase groups (lowest position only)
         items = []
+        real_purchase_ids = set()
+        _ov = _installment_overrides(profile)
         for (base_desc, acct, amt_group, total_inst), (current, _, txn, amt) in purchase_groups.items():
             parcela_str = f'{current}/{total_inst}'
             # Use original description for display (base_desc is lowered for dedup)
             display_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', txn.description).strip()
+            _series = (base_desc, acct, amt_group, total_inst)
             items.append({
                 'id': str(txn.id),
                 'date': txn.date.strftime('%Y-%m-%d'),
@@ -2417,164 +3138,35 @@ def get_installment_details(month_str, profile=None):
                 'subcategory_id': str(txn.subcategory.id) if txn.subcategory else None,
                 'parcela': parcela_str,
                 'source_month': month_str,
+                'projected': False,
+                'capped': _series in _ov,
+                'effective_total': _ov.get(_series),
             })
+            real_purchase_ids.add((base_desc, acct, amt_group, total_inst))
 
         items.extend(non_parseable_items)
+
+        # Complement with projected installments from older bills.
+        # Matches _compute_installment_schedule Step 2 so the total agrees with
+        # metricas['parcelas']. Items get projected=True so the UI can flag them.
+        projected_items = _project_installment_complement(
+            month_str, profile=profile, exclude_purchase_ids=real_purchase_ids,
+        )
+        items.extend(projected_items)
+
         items.sort(key=lambda x: (x['account'], x['date']))
 
         total = sum(i['amount'] for i in items)
         return {
             'month_str': month_str,
-            'source': 'real',
+            'source': 'mixed' if projected_items else 'real',
             'items': items,
             'count': len(items),
             'total': round(total, 2),
         }
 
-    # No real data — project from previous CC statements.
-    #
-    # CC statements list ALL installment positions for a purchase on every
-    # bill (01/06, 02/06, 03/06 etc. all on the same statement).  Only the
-    # LOWEST position per purchase per source month represents the "current"
-    # installment actually charged that month.  Higher positions are
-    # informational and represent future months.
-    #
-    # Strategy:
-    #   1. For each source month, group installments by (base_desc, account,
-    #      amount, total) and keep only the lowest-position entry per group.
-    #      That entry represents the real charge for that source month.
-    #   2. Project the lowest position forward by lookback to get the
-    #      target-month position.
-    #   3. Deduplicate across source months: the same purchase projected from
-    #      different source months yields the same target position; keep only
-    #      the most recent source (lowest lookback).
-    import calendar as _cal
-    from dateutil.relativedelta import relativedelta as _rdelta
-
-    items = []
-    seen = set()  # (base_desc, account, amount, total_inst) — one entry per purchase
-
-    # Pre-load CC account billing cycle info for invoice_month calculation.
-    _cc_accounts = {
-        a.name: a for a in Account.objects.filter(
-            profile=profile, account_type='credit_card'
-        )
-    }
-
-    def _projected_invoice_month(projected_date, acct_name):
-        """Compute invoice_month for a projected installment date."""
-        acct = _cc_accounts.get(acct_name)
-        closing_day = (acct.closing_day if acct and acct.closing_day else 30)
-        due_day = acct.due_day if acct else None
-        due_offset = 0 if (due_day and closing_day and due_day > closing_day) else 1
-
-        if projected_date.day <= closing_day:
-            cycle = date(projected_date.year, projected_date.month, 1)
-        else:
-            cycle = date(projected_date.year, projected_date.month, 1) + _rdelta(months=1)
-        payment = cycle + _rdelta(months=due_offset)
-        return payment.strftime('%Y-%m')
-
-    # Batch fetch all lookback months' installment transactions.
-    # Always use invoice_month (matches _compute_installment_schedule).
-    lookback_months_list = [_month_str_add(month_str, -i) for i in range(1, 13)]
-    _lb_invoice_txns = list(Transaction.objects.filter(
-        invoice_month__in=lookback_months_list,
-        is_installment=True,
-        amount__lt=0,
-        profile=profile,
-    ).select_related('account', 'category', 'subcategory'))
-    _lb_by_invoice = {}
-    for txn in _lb_invoice_txns:
-        _lb_by_invoice.setdefault(txn.invoice_month, []).append(txn)
-
-    _lb_months_with_invoice = set(_lb_by_invoice.keys())
-    _lb_months_needing_fallback = set(lookback_months_list) - _lb_months_with_invoice
-    _lb_by_fallback = {}
-    if _lb_months_needing_fallback:
-        _lb_fallback_txns = list(Transaction.objects.filter(
-            month_str__in=_lb_months_needing_fallback,
-            invoice_month='',
-            is_installment=True,
-            amount__lt=0,
-            profile=profile,
-        ).select_related('account', 'category', 'subcategory'))
-        for txn in _lb_fallback_txns:
-            _lb_by_fallback.setdefault(txn.month_str, []).append(txn)
-
-    for lookback in range(1, 13):
-        source_month = lookback_months_list[lookback - 1]
-        inst_txns = _lb_by_invoice.get(source_month) or _lb_by_fallback.get(source_month) or []
-        if not inst_txns:
-            continue
-
-        # Step 1: Group by purchase, keep only the lowest position per group
-        purchase_groups = {}  # key -> (current_pos, total, txn)
-        for txn in inst_txns:
-            info = txn.installment_info or ''
-            m_match = re.match(r'(\d+)/(\d+)', info)
-            if not m_match:
-                dm = re.search(r'(\d{1,2})/(\d{1,2})', txn.description)
-                if dm:
-                    m_match = dm
-            if not m_match:
-                continue
-
-            current = int(m_match.group(1))
-            total_inst = int(m_match.group(2))
-            base_desc = _extract_base_desc(txn.description)
-            acct = txn.account.name if txn.account else ''
-            amt = round(float(abs(txn.amount)), 2)
-            amt_group = round(float(abs(txn.amount)), 0)
-
-            group_key = (base_desc, acct, amt_group, total_inst)
-
-            if group_key not in purchase_groups or current < purchase_groups[group_key][0]:
-                purchase_groups[group_key] = (current, total_inst, txn, amt)
-
-        # Step 2: Project each purchase's lowest position to the target month
-        for group_key, (current, total_inst, txn, amt) in purchase_groups.items():
-            base_desc, acct, amt_group, _ = group_key
-            position = current + lookback
-
-            if position > total_inst:
-                continue  # This purchase is fully paid off by target month
-
-            # Step 3: Deduplicate across source months
-            purchase_id = (base_desc, acct, amt_group, total_inst)
-            if purchase_id in seen:
-                continue  # Already projected from a more recent source month
-            seen.add(purchase_id)
-
-            parcela_str = f'{position}/{total_inst}'
-
-            # Project the date into the target month
-            target_dt = _parse_month(month_str)
-            try:
-                projected_date = txn.date.replace(year=target_dt.year, month=target_dt.month)
-            except ValueError:
-                last_day = _cal.monthrange(target_dt.year, target_dt.month)[1]
-                projected_date = txn.date.replace(year=target_dt.year, month=target_dt.month, day=last_day)
-
-            # Use original description for display (base_desc is lowered for dedup)
-            display_desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', txn.description).strip()
-            projected_desc = f'{display_desc} {parcela_str}'
-
-            items.append({
-                'id': str(txn.id),
-                'date': projected_date.strftime('%Y-%m-%d'),
-                'description': projected_desc,
-                'amount': amt,
-                'account': acct,
-                'category': txn.category.name if txn.category else 'Não categorizado',
-                'category_id': str(txn.category.id) if txn.category else None,
-                'subcategory': txn.subcategory.name if txn.subcategory else '',
-                'subcategory_id': str(txn.subcategory.id) if txn.subcategory else None,
-                'parcela': parcela_str,
-                'source_month': source_month,
-            })
-
-    # Sort by account then date
+    # No real data — project from older CC statements via the shared helper.
+    items = _project_installment_complement(month_str, profile=profile)
     items.sort(key=lambda x: (x['account'], x['date']))
     total = sum(i['amount'] for i in items)
     return {
@@ -2620,7 +3212,7 @@ def categorize_installment_siblings(transaction_id, category_id, subcategory_id=
     total_installments = int(m_match.group(2))
     base_desc = _extract_base_desc(txn.description)
     acct_id = txn.account_id
-    amt_group = round(float(abs(txn.amount)), 0)
+    amt_group = round(float(abs(txn.amount)), 1)
 
     # Find all siblings: same base description, same account, similar |amount|,
     # is_installment=True, and installment count matches total
@@ -2661,6 +3253,262 @@ def categorize_installment_siblings(transaction_id, category_id, subcategory_id=
         'updated': updated,
         'sibling_ids': [str(sid) for sid in sibling_ids],
     }
+
+
+def reconcile_installment_series_categories(profile, dry_run=False, account_ids=None):
+    """
+    Propagate categorization across installment siblings of the same purchase so
+    later/forward positions inherit the category+subcategory of their earlier
+    siblings.
+
+    Pluggy categorizes each installment position independently from that row's own
+    (unstable) categoryId, and forward-listed positions (Itaú lists 01/12..12/12 on
+    one bill) often arrive parent-only — losing the subcategory — or in a generic
+    bucket. Neither sync nor smart_categorize repairs them (smart_categorize only
+    touches category IS NULL rows; sync skips already-synced rows by external_id),
+    so this reconciliation closes that gap.
+
+    Series key (same grouping as categorize_installment_siblings and
+    _compute_installment_schedule): (base_desc, account_id, amount_group, total_inst).
+
+    Canonical (category, subcategory) per series, in priority:
+      1. Manual siblings (is_manually_categorized=True). If they agree on a category
+         that wins; subcategory = most common manual sub for it. If manual siblings
+         disagree on category the series is left untouched (ambiguous intent).
+      2. Otherwise a STRICT majority (>50%, one vote per distinct position) among
+         non-manual categorized positions.
+
+    Applied to NON-manual rows only (never overwrites is_manually_categorized=True):
+      - category None                    -> set canonical category+subcategory
+      - category == canonical, no sub     -> fill canonical subcategory
+      - category == canonical, wrong sub  -> overwrite only when canonical is
+                                             manual-backed (manual = ground truth)
+      - category != canonical             -> overwrite category+sub (canonical only
+                                             exists when manual-backed or strict
+                                             majority, so this is safe)
+
+    Rows propagated FROM a manual sibling are marked is_manually_categorized=True so
+    future Pluggy syncs won't re-diverge them; consensus-only fills stay non-manual
+    so they remain improvable. Restricted to real purchases (amount__lt=0) to avoid
+    sweeping refunds/estornos. InstallmentSeriesOverride is intentionally ignored —
+    it caps projection/display, not categorization.
+    """
+    # System/junk buckets must never WIN propagation: Pluggy frequently mislabels
+    # forward installment positions into Transferencias / Triagem / uncategorized,
+    # and an installment can never legitimately be income/investment. These rows
+    # are left in place (and manual ones are still never overwritten) but they
+    # never dictate a sibling's category.
+    _JUNK_NAMES = {'triagem', 'transferencias', 'nao categorizado', 'sem categoria',
+                   'renda', 'rendas', 'investimento', 'investimentos'}
+
+    def _norm_cat_name(name):
+        return unicodedata.normalize('NFKD', name or '').encode(
+            'ASCII', 'ignore').decode().lower().strip()
+
+    junk_ids = {
+        cid for cid, name in Category.objects.filter(
+            profile=profile).values_list('id', 'name')
+        if _norm_cat_name(name) in _JUNK_NAMES
+    }
+
+    # Subcategory -> owning category, to never apply a sub that belongs to a
+    # different category than the canonical one.
+    sub_to_cat = dict(
+        Subcategory.objects.values_list('id', 'category_id'))
+
+    qs = Transaction.objects.filter(
+        profile=profile, is_installment=True, amount__lt=0,
+    ).select_related('category', 'subcategory', 'account')
+    if account_ids:
+        qs = qs.filter(account_id__in=account_ids)
+
+    series = defaultdict(list)  # key -> [(position, txn), ...]
+    for t in qs:
+        m = re.match(r'(\d+)/(\d+)', t.installment_info or '') or \
+            re.search(r'(\d{1,2})/(\d{1,2})', t.description)
+        if not m:
+            continue
+        pos, total = int(m.group(1)), int(m.group(2))
+        # amount_group rounded to whole reais — matches _compute_installment_schedule
+        # (the installment-series grouping authority) and tolerates the bank's
+        # first-installment cent remainder (e.g. 326.76 vs 326.72 across positions),
+        # which a 1-decimal key would split. (categorize_installment_siblings uses
+        # 1-decimal; for whole installment series the whole-real key is correct.)
+        key = (_extract_base_desc(t.description), t.account_id,
+               round(float(abs(t.amount)), 0), total)
+        series[key].append((pos, t))
+
+    updates = []  # (txn, new_category_id, new_subcategory_id, from_manual)
+    for rows in series.values():
+        # Manual authority, ignoring junk buckets (a manual "Triagem" is not intent).
+        manual = [(p, t) for p, t in rows
+                  if t.is_manually_categorized and t.category_id
+                  and t.category_id not in junk_ids]
+        canonical_cat = None
+        canonical_sub = None
+        from_manual = False
+
+        if manual:
+            if len({t.category_id for _, t in manual}) > 1:
+                continue  # ambiguous manual intent — leave the series alone
+            canonical_cat = manual[0][1].category_id
+            sub_votes = Counter()
+            seen = set()
+            for p, t in manual:
+                if p in seen:
+                    continue
+                seen.add(p)
+                if t.subcategory_id:
+                    sub_votes[t.subcategory_id] += 1
+            canonical_sub = sub_votes.most_common(1)[0][0] if sub_votes else None
+            from_manual = True
+        else:
+            cat_votes = Counter()
+            seen = set()
+            for p, t in rows:
+                if not t.category_id or t.category_id in junk_ids or p in seen:
+                    continue
+                seen.add(p)
+                cat_votes[t.category_id] += 1
+            if not cat_votes:
+                continue
+            best_cat, best_n = cat_votes.most_common(1)[0]
+            if best_n <= sum(cat_votes.values()) * 0.5:
+                continue  # no strict majority — don't guess
+            canonical_cat = best_cat
+            sub_votes = Counter()
+            seen = set()
+            for p, t in rows:
+                if t.category_id == best_cat and p not in seen:
+                    seen.add(p)
+                    if t.subcategory_id:
+                        sub_votes[t.subcategory_id] += 1
+            canonical_sub = sub_votes.most_common(1)[0][0] if sub_votes else None
+
+        # Guard: never carry a subcategory that doesn't belong to canonical_cat.
+        if canonical_sub is not None and sub_to_cat.get(canonical_sub) != canonical_cat:
+            canonical_sub = None
+
+        for p, t in rows:
+            if t.is_manually_categorized:
+                continue
+            new_cat = t.category_id
+            new_sub = t.subcategory_id
+            changed = False
+            if t.category_id is None:
+                new_cat, new_sub = canonical_cat, canonical_sub
+                changed = True
+            elif t.category_id == canonical_cat:
+                if canonical_sub is not None and t.subcategory_id != canonical_sub \
+                        and (t.subcategory_id is None or from_manual):
+                    new_sub = canonical_sub
+                    changed = True
+            else:
+                new_cat, new_sub = canonical_cat, canonical_sub
+                changed = True
+            if changed:
+                updates.append((t, new_cat, new_sub, from_manual))
+
+    details = []
+    for t, new_cat, new_sub, from_manual in updates:
+        details.append({
+            'transaction_id': str(t.id),
+            'description': t.description,
+            'old_category_id': str(t.category_id) if t.category_id else None,
+            'new_category_id': str(new_cat) if new_cat else None,
+            'old_subcategory_id': str(t.subcategory_id) if t.subcategory_id else None,
+            'new_subcategory_id': str(new_sub) if new_sub else None,
+            'from_manual': from_manual,
+        })
+        if not dry_run:
+            t.category_id = new_cat
+            t.subcategory_id = new_sub
+            fields = ['category', 'subcategory', 'updated_at']
+            if from_manual:
+                t.is_manually_categorized = True
+                fields.append('is_manually_categorized')
+            t.save(update_fields=fields)
+
+    return {'updated': len(updates), 'dry_run': dry_run, 'details': details[:200]}
+
+
+# ---------------------------------------------------------------------------
+# Installment series overrides (cancel / shorten)
+# ---------------------------------------------------------------------------
+
+def _series_fields_from_txn(txn):
+    """Canonical series fields from a real installment txn:
+    {base_desc, account, amount_group, total_inst, position} or None."""
+    m = re.match(r'(\d+)/(\d+)', txn.installment_info or '') or \
+        re.search(r'(\d{1,2})/(\d{1,2})', txn.description)
+    if not m:
+        return None
+    return {
+        'base_desc': _extract_base_desc(txn.description),
+        'account': txn.account,
+        'amount_group': int(round(float(abs(txn.amount)), 0)),
+        'total_inst': int(m.group(2)),
+        'position': int(m.group(1)),
+    }
+
+
+def list_installment_overrides(profile):
+    return [
+        {
+            'id': str(ov.id), 'account': ov.account.name if ov.account else '',
+            'base_desc': ov.base_desc, 'amount_group': ov.amount_group,
+            'total_inst': ov.total_inst, 'effective_total': ov.effective_total,
+            'note': ov.note,
+        }
+        for ov in InstallmentSeriesOverride.objects.filter(
+            profile=profile).select_related('account')
+    ]
+
+
+def set_installment_override(transaction_id, effective_total, profile, note=''):
+    """Mark the installment series of a representative REAL txn as ending at
+    effective_total. Validates max_real_position <= effective_total < total_inst."""
+    txn = Transaction.objects.select_related('account').get(
+        id=transaction_id, profile=profile, is_installment=True, amount__lt=0)
+    key = _series_fields_from_txn(txn)
+    if not key:
+        raise ValueError('Transação não é uma parcela com N/M reconhecível.')
+    total_inst = key['total_inst']
+    effective_total = int(effective_total)
+    # Highest real billed position for this series (same base/account/amount/total).
+    max_real = 0
+    for t in Transaction.objects.filter(
+            profile=profile, account=key['account'], is_installment=True, amount__lt=0):
+        mk = _series_fields_from_txn(t)
+        if (mk and mk['base_desc'] == key['base_desc']
+                and mk['amount_group'] == key['amount_group']
+                and mk['total_inst'] == total_inst):
+            max_real = max(max_real, mk['position'])
+    if effective_total < max_real:
+        raise ValueError(
+            f'Corte ({effective_total}) abaixo da maior parcela já faturada ({max_real}).')
+    if effective_total >= total_inst:
+        raise ValueError(
+            f'Corte ({effective_total}) deve ser menor que o total original ({total_inst}).')
+    ov, _created = InstallmentSeriesOverride.objects.update_or_create(
+        profile=profile, account=key['account'], base_desc=key['base_desc'],
+        amount_group=key['amount_group'], total_inst=total_inst,
+        defaults={'effective_total': effective_total, 'note': note or ''},
+    )
+    return {'id': str(ov.id), 'effective_total': ov.effective_total, 'total_inst': total_inst}
+
+
+def delete_installment_override(transaction_id, profile):
+    """Remove the override for the series of a representative txn (reactivate)."""
+    txn = Transaction.objects.select_related('account').get(
+        id=transaction_id, profile=profile, is_installment=True)
+    key = _series_fields_from_txn(txn)
+    if not key:
+        raise ValueError('Transação inválida.')
+    n, _ = InstallmentSeriesOverride.objects.filter(
+        profile=profile, account=key['account'], base_desc=key['base_desc'],
+        amount_group=key['amount_group'], total_inst=key['total_inst']).delete()
+    return {'deleted': n}
 
 
 # ---------------------------------------------------------------------------
@@ -3233,6 +4081,28 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
     # (e.g., current month installments should project into future months).
     seen_per_month = {}
 
+    # Cancelled/shortened series: cap projection at effective_total (never below
+    # the highest real position seen — real rows win). Empty overrides → no-op.
+    overrides = _installment_overrides(profile)
+    max_real_pos = {}
+    if overrides:
+        _all_real = list(invoice_txns)
+        for _ts in txns_by_fallback_month.values():
+            _all_real.extend(_ts)
+        for _t in _all_real:
+            _m = _parse_installment(_t)
+            if not _m:
+                continue
+            _k = (_extract_base_desc(_t.description),
+                  _t.account.name if _t.account else '',
+                  round(float(abs(_t.amount)), 0), int(_m.group(2)))
+            max_real_pos[_k] = max(max_real_pos.get(_k, 0), int(_m.group(1)))
+
+    def _eff_total(group_key, total_inst):
+        if not overrides:
+            return total_inst
+        return max(overrides.get(group_key, total_inst), max_real_pos.get(group_key, 0))
+
     # Build source list: (source_month, source_type, source_param)
     # - lookback months: source_param = lookback distance (1..12)
     # - target months with real data: source_param = target index
@@ -3270,16 +4140,15 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
             )
 
         for (base_desc, acct, amt_group, total_inst), (current, amt) in purchase_groups.items():
+            purchase_id = (base_desc, acct, amt_group, total_inst)
+            eff_total = _eff_total(purchase_id, total_inst)
             # If all positions appear on the same bill (e.g., Itau shows 01/03,
             # 02/03, 03/03 together), the full purchase was charged on that bill.
-            # Don't project future installments -- there are none.
-            max_pos = purchase_max_pos.get(
-                (base_desc, acct, amt_group, total_inst), current
-            )
-            if max_pos >= total_inst:
+            # Don't project future installments -- there are none. (effective_total
+            # caps a cancelled/shortened series.)
+            max_pos = purchase_max_pos.get(purchase_id, current)
+            if max_pos >= eff_total:
                 continue
-
-            purchase_id = (base_desc, acct, amt_group, total_inst)
 
             for target_offset in range(num_future_months + 1):
                 check_month = target_months[target_offset]
@@ -3296,7 +4165,7 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
                 else:
                     delta = target_offset - source_param
                 position = current + delta
-                if position <= total_inst:
+                if position <= eff_total:
                     if check_month not in seen_per_month:
                         seen_per_month[check_month] = set()
                     if purchase_id in seen_per_month[check_month]:
@@ -3336,7 +4205,9 @@ def get_last_installment_month(profile=None):
     # Group by (source_month, base_desc, acct, amt, total) → lowest position
     # Use configured CC display mode to pick month field
     _last_cc_field = _cc_month_field(profile)
+    overrides = _installment_overrides(profile)
     purchase_groups = {}  # (source_month, base_desc, acct, amt, total) -> lowest_current
+    max_real_pos = {}     # (base_desc, acct, amt, total) -> highest real position
     for inv_month, txn_month, inst_info, desc, amount, acct_name in inst_txns:
         if _last_cc_field == 'month_str':
             month_str = txn_month
@@ -3362,10 +4233,18 @@ def get_last_installment_month(profile=None):
         key = (month_str, base_desc, acct, amt_group, total)
         if key not in purchase_groups or current < purchase_groups[key]:
             purchase_groups[key] = current
+        _ok = (base_desc, acct, amt_group, total)
+        max_real_pos[_ok] = max(max_real_pos.get(_ok, 0), current)
 
     furthest = None
     for (month_str, base_desc, acct, amt_group, total), current in purchase_groups.items():
-        remaining = total - current
+        # Cancelled/shortened series: cap at effective_total (never below the
+        # highest real position). Override key strips source_month.
+        eff = total
+        if overrides:
+            _ok = (base_desc, acct, amt_group, total)
+            eff = max(overrides.get(_ok, total), max_real_pos.get(_ok, 0))
+        remaining = eff - current
         if remaining > 0:
             end_month = _month_str_add(month_str, remaining)
             if furthest is None or end_month > furthest:
@@ -3453,47 +4332,6 @@ def get_projection(start_month_str, num_months=0, profile=None):
             profile=profile, template_type='Cartao', is_active=True,
         ).values_list('name', flat=True)
     )
-    # Cache per-month installment lookups to avoid redundant DB queries
-    _fatura_cache = {}
-
-    def _estimate_fatura_for_month(m):
-        """Estimate total CC fatura for month m (purchases + per-card parcelas).
-        Includes sub-cards (inactive templates) whose charges aren't in a Pluggy bill.
-        """
-        if m in _fatura_cache:
-            return _fatura_cache[m]
-        # Check if any card has a Pluggy bill for this month
-        pluggy_bills = {
-            mp.template.name: float(mp.expected_amount)
-            for mp in RecurringMapping.objects.filter(
-                month_str=m, profile=profile,
-                template__template_type='Cartao', template__is_active=True,
-            ).select_related('template')
-            if mp.expected_amount > 0
-        }
-        if pluggy_bills:
-            # Pluggy bills are authoritative and include sub-card charges
-            _fatura_cache[m] = sum(pluggy_bills.values())
-            return _fatura_cache[m]
-        # No Pluggy bills — estimate from purchases + fresh per-month parcelas
-        month_sched = _compute_installment_schedule(m, num_future_months=0, profile=profile)
-        month_by_card = month_sched.get('_by_card', {}).get(m, {})
-        total = Decimal('0')
-        for cc_acct in cc_accounts:
-            q = _build_cc_fatura_query_single(cc_acct.id, m, profile)
-            purchases = abs(Transaction.objects.filter(q).aggregate(
-                total=Sum('amount'))['total'] or Decimal('0'))
-            card_parcelas = Decimal(str(month_by_card.get(cc_acct.name, 0)))
-            # Real purchases already include installment txns — use whichever
-            # is larger (purchases for imported months, parcelas for future).
-            card_total = max(purchases, card_parcelas)
-            if cc_acct.name in cartao_template_names:
-                total += card_total
-            elif card_total > 0:
-                # Sub-card not in a Pluggy bill — add its portion
-                total += card_total
-        _fatura_cache[m] = float(total)
-        return _fatura_cache[m]
 
     # Prefetch BudgetConfig overrides for all future months in one query
     future_months = [_month_str_add(start_month_str, i) for i in range(1, num_months)]
@@ -3510,6 +4348,11 @@ def get_projection(start_month_str, num_months=0, profile=None):
     def _tpl_amount(tpl, month):
         if not _template_active_in_month(tpl, month):
             return 0.0
+        # Category-based recurring (e.g. Assinaturas) has no default_limit — its
+        # expected is derived from category history. Future-month fatura estimates
+        # don't include recurring subscriptions, so count them here (once).
+        if getattr(tpl, 'match_mode', 'manual') == 'category' and tpl.category_id:
+            return float(derive_expected_amount(tpl, month, profile=profile))
         val = bc_lookup.get((str(tpl.id), month))
         return val if val is not None else float(tpl.default_limit)
 
@@ -3521,25 +4364,32 @@ def get_projection(start_month_str, num_months=0, profile=None):
     # Savings target percentage for dynamic investment goal
     savings_target_pct = float(profile.savings_target_pct) if profile else 20.0
 
-    # Compute fixo_on_cc for projection: CC-billed fixo templates whose amounts
-    # are already inside fatura, to avoid double-counting in every month.
-    # For the current month we use metricas; for future months we use template defaults.
-    _cc_acct_ids_proj = set(
-        Account.objects.filter(profile=profile, account_type='credit_card')
-        .values_list('id', flat=True)
-    )
-    _fixo_on_cc_tpl_ids = set()
-    for ft in fixo_tpls:
-        # Check if this fixo template's current-month mapping links to CC transactions
-        cur_mapping = RecurringMapping.objects.filter(
-            month_str=start_month_str, profile=profile, template=ft,
-        ).exclude(status='skipped').prefetch_related('transactions').first()
-        if cur_mapping:
-            linked = list(cur_mapping.transactions.all())
-            if not linked and cur_mapping.transaction:
-                linked = [cur_mapping.transaction]
-            if linked and all(t.account_id in _cc_acct_ids_proj for t in linked):
-                _fixo_on_cc_tpl_ids.add(ft.id)
+    # CC-billed fixos (insurance etc.) are excluded from the projection's Fixo
+    # column and instead ride on the CARTAO column (fatura), computed per-month
+    # below via the shared _cc_billed_fixo / _fatura_total_for_month — so the
+    # Fixo and CARTAO columns use the SAME CC-fixo set every month and reconcile
+    # with get_metricas.
+
+    # Realistic variable estimate for future months (dynamic): trailing avg of
+    # ACTUAL variable spend over the last 3 closed months, minus the parcela
+    # portion (parcelas are already counted in the `installments` line, so
+    # subtracting avoids double-counting). This makes saldo_projetado reflect
+    # what Palmer actually spends — and it shifts as recent months close.
+    _rv_gv, _rv_parc = [], []
+    for _k in range(1, 4):
+        _cm = _month_str_add(start_month_str, -_k)
+        try:
+            _mm = get_metricas(_cm, profile=profile)
+            _gv = float(_mm.get('gastos_variaveis', 0) or 0)
+            if _gv > 0:
+                _rv_gv.append(_gv)
+                _rv_parc.append(float(_mm.get('parcelas', 0) or 0))
+        except Exception:
+            pass
+    if _rv_gv:
+        realistic_variable = max(0.0, (sum(_rv_gv) / len(_rv_gv)) - (sum(_rv_parc) / len(_rv_parc)))
+    else:
+        realistic_variable = 0.0
 
     # Build projection rows
     rows = []
@@ -3580,22 +4430,25 @@ def get_projection(start_month_str, num_months=0, profile=None):
         else:
             # Future months: use defaults, applying BudgetConfig overrides per template
             income = sum(_tpl_amount(t, month) for t in income_tpls)
-            # Exclude CC-billed fixo templates (their cost is in fatura)
-            fixo = sum(_tpl_amount(t, month) for t in fixo_tpls if t.id not in _fixo_on_cc_tpl_ids)
+            # Exclude CC-billed fixo templates (their cost rides on the CARTAO
+            # column / fatura). Same per-month CC-fixo set as _fatura_total_for_month,
+            # so the Fixo and CARTAO columns never double-count or diverge.
+            _cc_tpl_ids_m = _cc_billed_fixo(month, profile)['template_ids']
+            fixo = sum(_tpl_amount(t, month) for t in fixo_tpls if t.id not in _cc_tpl_ids_m)
             invest = sum(_tpl_amount(t, month) for t in invest_tpls)
-            # Use full fatura estimate (purchases + parcelas) when available,
-            # fall back to installments-only for far-future months.
-            fatura_est = _estimate_fatura_for_month(month)
-            installments = fatura_est if fatura_est > 0 else installment_schedule.get(month, 0)
+            # Card outflow = the shared bill total (parcelas + projected CC-billed
+            # fixos), identical to metricas.fatura_total for this month.
+            installments = float(_fatura_total_for_month(month, profile)['total'])
             variable = 0.0
 
-        # Dynamic savings target: use max(template invest, target % of income)
+        # Savings target kept for the display tooltip only. The actual invest is
+        # the committed Investimento items (consórcio + amortização + reserva),
+        # so the Invest column reconciles with the Investimentos table.
         savings_target_amount = income * savings_target_pct / 100 if income > 0 else 0.0
-        invest_goal = max(invest, savings_target_amount)
 
         if i == 0:
             # Current month: use metricas clamped invest and saldo.
-            invest = float(metricas.get('invest_expected_total', invest_goal))
+            invest = float(metricas.get('invest_expected_total', invest))
             # Metricas saldo already reflects actual spending via bank balance.
             cumulative = current_month_saldo
             # Budget = theoretical variable budget (total envelope).
@@ -3605,30 +4458,24 @@ def get_projection(start_month_str, num_months=0, profile=None):
             variable = float(metricas.get('gastos_variaveis', 0))
             net = cumulative - starting_balance
         else:
-            # Future months: always try 20% target first, fall back to
-            # template amount only when the month can't afford it.
-            test_surplus = income - fixo - invest_goal - installments
-            test_budget = cumulative + test_surplus
-            if test_budget >= 0:
-                invest = invest_goal  # max(template, 20% income)
-            # else: keep invest at template amount (already set above)
+            # Future months: invest stays = sum of committed Investimento items
+            # (set above). No synthetic 20% floor — the Reserva line is explicit.
 
-            # Budget = starting balance + monthly surplus. This is what you can
-            # ACTUALLY spend — accounts for any hole you're starting in.
+            # Budget = envelope (max you COULD spend to break even). Kept as the
+            # chart's "ORC" column — NOT what we assume you actually spend.
             monthly_surplus = income - fixo - invest - installments
             budget = cumulative + monthly_surplus  # cumulative = prev month's ending saldo
-            # In deficit (budget < 0): no spending, all surplus pays debt.
-            # In healthy (budget >= 0): spend budget, saldo → 0.
-            if budget < 0:
-                variable = 0.0  # Belt-tightening: surplus pays down debt
-            else:
-                variable = budget
+            # Realistic + dynamic: assume the trailing-average variable spend, so
+            # the carry-over (cumulative = saldo projetado) reflects reality and
+            # shifts as recent months close. May go negative → real deficit signal.
+            variable = realistic_variable
             net = monthly_surplus - variable
             cumulative += net
 
         rows.append({
             'month': month,
             'income': round(income, 2),
+            'outras_entradas': round(float(metricas.get('outras_entradas', 0)) if i == 0 else 0.0, 2),
             'fixo': round(fixo, 2),
             'investimento': round(invest, 2),
             'savings_target_amount': round(savings_target_amount, 2),
@@ -3658,6 +4505,7 @@ def get_projection(start_month_str, num_months=0, profile=None):
             history.append({
                 'month': hist_month,
                 'income': round(h_income, 2),
+                'outras_entradas': round(float(hm.get('outras_entradas', 0)), 2),
                 'fixo': round(h_fixo_fb, 2),
                 'investimento': round(h_invest, 2),
                 'savings_target_amount': round(h_income * savings_target_pct / 100, 2) if h_income else 0,
@@ -3681,108 +4529,211 @@ def get_projection(start_month_str, num_months=0, profile=None):
     }
 
 
+def get_cashflow_diario(start_month_str, num_months=0, profile=None):
+    """
+    FLUXO DIÁRIO — intra-month cash-flow simulation.
+
+    get_projection only shows end-of-month balances; this drills inside each month
+    to find the "vale" — the lowest the checking balance gets, which happens after
+    the early-month bills (CC fatura, rent, consórcio) but BEFORE the day-15 salary.
+    That dip is the real overdraft risk, invisible in an EOM view.
+
+    Anchored to get_projection so month boundaries match the validated EOM cascade
+    exactly; only the within-month trajectory is added. Each month's events:
+      - income split 50% on day 2 (sal 1) + 50% on day 15 (sal 2)
+      - CC fatura paid on day 5; recurring Fixo/Investimento on their due_day
+      - the residual (everything untracked: variable spend + hidden recurrers) is
+        spread evenly across days 6–27 so it straddles the day-15 salary, which
+        keeps the pre-salary vale realistic without any hardcoded figure. The
+        residual is exactly month_net − dated_events, so the simulated month-end
+        equals the projection's cumulative (reconciles to the penny).
+
+    Validated against real BalanceAnchors (Jun/26 vale ≈ R$2.5k on day 14, matching
+    the real ~R$3.0k dip). Returns daily series + per-month vale + overdraft flag.
+    """
+    import calendar
+
+    proj = get_projection(start_month_str, num_months, profile=profile)
+    rows = {r['month']: r for r in proj['months']}
+    months_sorted = [r['month'] for r in proj['months']]
+
+    def _prev_eom(ms):
+        p = _month_str_add(ms, -1)
+        return float(rows[p]['cumulative']) if p in rows else float(proj['starting_balance'])
+
+    fixo_invest = list(RecurringTemplate.objects.filter(
+        profile=profile, is_active=True,
+        template_type__in=['Fixo', 'Investimento'],
+    ))
+    # CC bill is paid on the cards' due_day (uniform for these cards; fallback 5).
+    _cc_due = [a.due_day for a in Account.objects.filter(
+        profile=profile, account_type='credit_card') if a.due_day]
+    fatura_day = min(_cc_due) if _cc_due else 5
+
+    series = []
+    vales = {}
+    for ms in months_sorted:
+        r = rows[ms]
+        year, month = int(ms[:4]), int(ms[5:7])
+        dim = calendar.monthrange(year, month)[1]
+        income = float(r['income']) + float(r['outras_entradas'])
+        fatura = float(r['installments'])
+        # CC-billed fixos (seguros, subs) already ride inside the fatura — exclude
+        # them as standalone events so they aren't double-counted (mirrors the
+        # projection's Fixo column, which also excludes them).
+        cc_fixo_ids = set(_cc_billed_fixo(ms, profile)['template_ids'])
+
+        def _day(d):
+            try:
+                d = int(d)
+            except (TypeError, ValueError):
+                d = 10
+            return max(1, min(d, dim))
+
+        dated = {}  # day-of-month -> list of signed amounts
+
+        def _add(day, amount):
+            dated.setdefault(_day(day), []).append(amount)
+
+        _add(2, income / 2.0)        # sal 1 (lands early in the month)
+        _add(15, income / 2.0)       # sal 2
+        _add(fatura_day, -fatura)    # CC bill payment
+        fixed_sum = 0.0
+        for t in fixo_invest:
+            if t.id in cc_fixo_ids or not _template_active_in_month(t, ms):
+                continue
+            amt = float(t.default_limit)
+            if amt <= 0:
+                continue
+            _add(t.due_day or 10, -amt)
+            fixed_sum += amt
+
+        net_target = float(r['cumulative']) - _prev_eom(ms)
+        residual = max(0.0, income - fatura - fixed_sum - net_target)
+        spread_days = list(range(6, 28))
+        for d in spread_days:
+            _add(d, -residual / len(spread_days))
+
+        # Daily walk. Within a day apply debits before credits and re-check the
+        # vale after each event, so a same-day debit isn't masked by the salary.
+        bal = _prev_eom(ms)
+        vmin = {'day': 1, 'balance': round(bal, 2)}
+        for day in range(1, dim + 1):
+            for amount in sorted(dated.get(day, [])):
+                bal += amount
+                if bal < vmin['balance']:
+                    vmin = {'day': day, 'balance': round(bal, 2)}
+            series.append({'date': f'{ms}-{day:02d}', 'balance': round(bal, 2)})
+        # True-up the month-end to the projection cumulative exactly, absorbing
+        # float drift and any residual-clamp drift in surplus months.
+        if series:
+            series[-1]['balance'] = round(float(r['cumulative']), 2)
+        vales[ms] = vmin
+
+    overdraft = any(p['balance'] < 0 for p in series)
+    min_vale = min(vales.values(), key=lambda v: v['balance']) if vales else None
+    return {
+        'start_month': start_month_str,
+        'series': series,
+        'vales': vales,
+        'overdraft': overdraft,
+        'min_vale': min_vale,
+    }
+
+
 # ---------------------------------------------------------------------------
 # B2: Variable budget (Orçamento) service
 # ---------------------------------------------------------------------------
 
 def get_orcamento(month_str, profile=None):
     """
-    ORÇAMENTO — Dynamic variable spending budget.
+    Per-category consumption tracker for the month.
 
-    Available budget = income − all committed expenses (fixo + invest + cartão).
-    This is how much you can freely spend and still cover all obligations.
-    Distributed across categories proportionally based on 6-month spending profile.
-    Shows all categories with current or historical variable spending.
+    Returns total real consumption per Category (variable + fixo + cc purchases).
+    Excludes Income, Investimento, and Cartao bill payments — those are tracked
+    in dedicated sections. Fixo (rent, energy, etc) IS consumption and IS included.
+
+    The smart-budget allocation (distributing remaining envelope across categories)
+    is NOT implemented here yet — kept as future work. For now, each card shows:
+    Gasto (total this month) / Média 6m / Δ vs média. Reference for status is
+    avg_6m. Manual BudgetConfig overrides expose `reference_amount=limite`.
     """
     from django.db.models import Count
 
-    # ── 1. Available budget from metricas ────────────────────────────
+    # ── 1. Envelope context (informational) ──────────────────────────
+    # total_available = "envelope variável" = how much is left after committed
+    # outflows. We expose it for the section header banner, but it does NOT gate
+    # which categories show up — every category with consumption renders.
     metricas = get_metricas(month_str, profile=profile)
-    entradas = metricas['entradas_projetadas']
-    fixo = metricas.get('fixo_for_budget', metricas['fixo_expected_total'])
-    invest = metricas['invest_expected_total']
-    cartao = metricas['fatura_total']
-
-    # Starting balance: carry-over from previous month
-    # Current month: prev month's real EOM balance (fixed at month start)
-    # Future months: projected balance from cascade
-    # Closed months: prev month's EOM balance
     starting_balance = 0.0
     if metricas.get('is_future') and metricas.get('projected_balance') is not None:
         starting_balance = metricas['projected_balance']
     elif metricas.get('prev_month_saldo') is not None:
         starting_balance = metricas['prev_month_saldo']
-
-    # Deduct carryover debt: if previous month's CC bill was paid late (from
-    # this month's checking), that cost is hidden in prev_month_saldo but the
-    # payment already hit this month's bank balance.
     carryover_debt = metricas.get('carryover_debt', 0.0)
     starting_balance -= carryover_debt
+    _orc_metric = metricas.get('orcamento_variavel')
+    if _orc_metric is None:
+        entradas = metricas['entradas_projetadas']
+        fixo = metricas['fixo_for_budget'] if metricas.get('fixo_for_budget') is not None else metricas['fixo_expected_total']
+        invest = metricas['invest_expected_total']
+        cartao = metricas['fatura_total']
+        total_available = round(starting_balance + entradas - fixo - invest - cartao, 2)
+    else:
+        total_available = float(_orc_metric)
+    has_envelope = total_available > 0
 
-    total_available = round(starting_balance + entradas - fixo - invest - cartao, 2)
-
-    # ── 2. Identify committed (fixo/invest/income) transaction IDs ───
+    # ── 2. Active categories (exclude system buckets only) ───────────
+    # Category is the source of truth for "is this consumption?". We don't look
+    # at recurring mapping types — those are a separate axis (expected/recorrente)
+    # and shouldn't influence what's displayed here. If the user categorized
+    # a tx to a non-system cat, it counts.
+    #
+    # System buckets:
+    #   Transferencias — account movements (CC bill payments land here)
+    #   Renda — income inflows (also filtered by amount__lt=0 anyway)
+    #   Investimentos — pure investments tracked in InvestmentSection
+    #   Não categorizado — uncategorized triage
     all_months = [month_str] + [_month_str_add(month_str, -i) for i in range(1, 7)]
     lookback_months = all_months[1:]
 
-    committed_txn_ids = set()
-    committed_cat_ids = set()
-    for mapping in RecurringMapping.objects.filter(
-        month_str__in=all_months, profile=profile,
-    ).exclude(status='skipped').select_related('template').prefetch_related(
-        'transactions', 'cross_month_transactions'
-    ):
-        ttype = mapping.template.template_type if mapping.template else (mapping.custom_type or '')
-        if ttype not in ('Fixo', 'Income', 'Investimento'):
-            continue
-        if mapping.match_mode == 'category' and mapping.category_id:
-            committed_cat_ids.add(mapping.category_id)
-        for t in mapping.transactions.all():
-            committed_txn_ids.add(t.id)
-        for t in mapping.cross_month_transactions.all():
-            committed_txn_ids.add(t.id)
-        if mapping.transaction_id:
-            committed_txn_ids.add(mapping.transaction_id)
-
-    # ── 3. Active categories (exclude system + committed-only) ───────
     EXCLUDE_NAMES = {'Transferencias', 'Renda', 'Investimentos', 'Não categorizado'}
     all_cats = list(Category.objects.filter(
         is_active=True, profile=profile,
-    ).exclude(name__in=EXCLUDE_NAMES).exclude(
-        id__in=committed_cat_ids,
-    ).order_by('name'))
+    ).exclude(name__in=EXCLUDE_NAMES).order_by('name'))
     cat_ids = [c.id for c in all_cats]
 
-    # ── 4. Variable expense query builder ────────────────────────────
-    def _var_qs(**extra):
-        qs = Transaction.objects.filter(
-            amount__lt=0, is_internal_transfer=False,
+    # ── 3. Consumption query: ALL txns in an active category (signed) ─
+    # We sum signed amounts so positive refunds/estornos net against negative
+    # purchases within the same (category, subcategory). Display clamps the
+    # result to max(0, -net) — categories that net positive (more refunds than
+    # spend) collapse to 0 and drop out, which is the desired behavior.
+    def _consumption_qs(**extra):
+        return Transaction.objects.filter(
+            is_internal_transfer=False,
             category_id__in=cat_ids, profile=profile, **extra,
         )
-        if committed_txn_ids:
-            qs = qs.exclude(id__in=committed_txn_ids)
-        return qs
 
-    # ── 5. Current month spending ────────────────────────────────────
+    # ── 4. Current month spending ────────────────────────────────────
     current_spending = dict(
-        _var_qs(month_str=month_str)
+        _consumption_qs(month_str=month_str)
         .values('category_id').annotate(total=Sum('amount'))
         .values_list('category_id', 'total')
     )
     sub_spending = {}
-    for row in _var_qs(month_str=month_str).values(
+    for row in _consumption_qs(month_str=month_str).values(
         'category_id', 'subcategory_id'
     ).annotate(total=Sum('amount')):
         sub_spending.setdefault(row['category_id'], {})[row['subcategory_id']] = row['total']
 
-    # ── 6. 6-month lookback spending profile ─────────────────────────
+    # ── 5. 6-month lookback (same total-consumption basis) ───────────
     lookback_spending = dict(
-        _var_qs(month_str__in=lookback_months)
+        _consumption_qs(month_str__in=lookback_months)
         .values('category_id').annotate(total=Sum('amount'))
         .values_list('category_id', 'total')
     )
     lookback_month_counts = dict(
-        _var_qs(month_str__in=lookback_months)
+        _consumption_qs(month_str__in=lookback_months)
         .values('category_id').annotate(mc=Count('month_str', distinct=True))
         .values_list('category_id', 'mc')
     )
@@ -3791,58 +4742,77 @@ def get_orcamento(month_str, profile=None):
     for sub in Subcategory.objects.filter(category_id__in=cat_ids).order_by('name'):
         all_subcategories.setdefault(sub.category_id, []).append(sub)
 
-    # ── 7. Compute spending profile (6-month avg per category) ───────
+    # ── 7. 6-month avg per category (months-with-spend basis) ────────
+    # lookback_spending is signed; clamp to positive net spend (refunds collapse).
     avg_by_cat = {}
     total_avg = 0.0
     for cat in all_cats:
-        raw = float(abs(lookback_spending.get(cat.id, Decimal('0.00'))))
+        net = float(lookback_spending.get(cat.id, Decimal('0.00')))
+        raw = max(0.0, -net)
         mc = lookback_month_counts.get(cat.id, 0)
         avg = raw / max(mc, 1)
         avg_by_cat[cat.id] = avg
         total_avg += avg
 
-    # ── 8. Manual overrides (BudgetConfig) ───────────────────────────
+    # ── 8. Manual overrides (BudgetConfig) — exposed as reference ────
     budget_overrides = {
-        bc.category_id: float(bc.limit_override)
-        for bc in BudgetConfig.objects.filter(
-            category_id__in=cat_ids, month_str=month_str, profile=profile,
-        )
+        row['category_id']: float(row['total'])
+        for row in BudgetConfig.objects
+        .filter(category_id__in=cat_ids, month_str=month_str, profile=profile)
+        .values('category_id')
+        .annotate(total=Sum('limit_override'))
     }
 
-    # ── 9. Build per-category budget ─────────────────────────────────
+    # ── 9. Build per-category cards ──────────────────────────────────
     categories = []
-    total_limit = 0.0
     total_spent = 0.0
+    total_current_consumption = 0.0
 
     for cat in all_cats:
-        has_current = cat.id in current_spending
+        # Net per category: sum(sub nets) + cat-only net, naturally produced by SQL.
+        # Clamp to positive spend; a category whose refunds exceed purchases drops out.
+        cat_net = float(current_spending.get(cat.id, Decimal('0.00')))
+        spent = max(0.0, -cat_net)
+        has_current = spent > 0
         has_history = avg_by_cat.get(cat.id, 0) > 0
         if not has_current and not has_history:
             continue
 
         avg_6m = avg_by_cat.get(cat.id, 0.0)
 
-        # Limit: manual override > proportional allocation from available budget
-        if cat.id in budget_overrides:
-            limit = budget_overrides[cat.id]
-        elif total_avg > 0 and total_available > 0:
-            limit = total_available * (avg_6m / total_avg)
+        # Reference: manual override > 6m average. Used for status + delta.
+        if cat.id in budget_overrides and budget_overrides[cat.id] > 0:
+            reference_amount = budget_overrides[cat.id]
+            reference_source = 'manual'
+        elif avg_6m > 0:
+            reference_amount = avg_6m
+            reference_source = 'average_6m'
         else:
-            limit = 0.0
+            reference_amount = 0.0
+            reference_source = 'none'
 
-        spent = float(abs(current_spending.get(cat.id, Decimal('0.00'))))
-        remaining = max(0, limit - spent)
-        pct = (spent / limit * 100) if limit > 0 else (100.0 if spent > 0 else 0.0)
-        status = 'over' if pct > 100 else ('warning' if pct > 80 else 'ok')
+        pct_of_reference = (spent / reference_amount * 100) if reference_amount > 0 else 0.0
+        delta_vs_reference = spent - reference_amount if reference_amount > 0 else 0.0
 
-        total_limit += limit
+        if reference_source == 'manual':
+            status = 'over' if pct_of_reference > 100 else ('warning' if pct_of_reference > 80 else 'ok')
+        elif reference_source == 'average_6m':
+            status = 'over' if pct_of_reference > 120 else ('warning' if pct_of_reference > 100 else 'ok')
+        else:
+            status = 'ok'
+
         total_spent += spent
+        if has_current:
+            total_current_consumption += spent
 
-        # Subcategory breakdown (only subs with spending)
+        # Subcategory breakdown: net per sub (signed), clamped for display.
+        # Refunds inside a sub cancel its purchases; subs that net to zero or
+        # positive (more refunds than spend) drop out of the breakdown.
         cat_sub_spending = sub_spending.get(cat.id, {})
         subcategories_data = []
         for sub in all_subcategories.get(cat.id, []):
-            sub_spent = float(abs(cat_sub_spending.get(sub.id, Decimal('0.00'))))
+            sub_net = float(cat_sub_spending.get(sub.id, Decimal('0.00')))
+            sub_spent = max(0.0, -sub_net)
             if sub_spent > 0:
                 subcategories_data.append({
                     'id': str(sub.id),
@@ -3850,34 +4820,50 @@ def get_orcamento(month_str, profile=None):
                     'spent': round(sub_spent, 2),
                 })
         subcategories_data.sort(key=lambda s: -s['spent'])
-        uncategorized_spent = float(abs(cat_sub_spending.get(None, Decimal('0.00'))))
+        # Cat-only net (no subcategory). When this is positive (pure refund on
+        # the category), it already deducted from `spent` above — hide the row.
+        uncat_net = float(cat_sub_spending.get(None, Decimal('0.00')))
+        uncategorized_spent = max(0.0, -uncat_net)
 
         categories.append({
             'id': str(cat.id),
             'name': cat.name,
-            'limit': round(limit, 2),
             'spent': round(spent, 2),
-            'remaining': round(remaining, 2),
-            'pct': round(pct, 1),
             'avg_6m': round(avg_6m, 2),
-            'share_pct': round((avg_6m / total_avg * 100) if total_avg > 0 else 0, 1),
+            'reference_amount': round(reference_amount, 2),
+            'reference_source': reference_source,
+            'pct_of_reference': round(pct_of_reference, 1),
+            'delta_vs_reference': round(delta_vs_reference, 2),
             'status': status,
+            'has_current_spend': has_current,
             'subcategories': subcategories_data,
             'uncategorized_spent': round(uncategorized_spent, 2),
+            # Future smart-budget hooks (nullable until implemented).
+            'projected_amount': None,
+            'pace_pct': None,
         })
 
-    categories.sort(key=lambda c: -c['limit'])
-    total_pct = (total_spent / total_limit * 100) if total_limit > 0 else 0
+    # current_share_pct = % of this month's total consumption.
+    for c in categories:
+        c['current_share_pct'] = round(
+            (c['spent'] / total_current_consumption * 100) if total_current_consumption > 0 else 0.0, 1
+        )
+
+    # Sort: cards with current spend first (by spent desc), history-only at end.
+    categories.sort(key=lambda c: (
+        not c['has_current_spend'],
+        -c['spent'] if c['has_current_spend'] else -c['avg_6m'],
+    ))
 
     return {
         'month_str': month_str,
         'categories': categories,
+        'total_spent': round(total_spent, 2),
+        # Envelope context: shown as a banner, doesn't gate cards.
         'starting_balance': round(starting_balance, 2),
         'total_available': round(total_available, 2),
-        'total_limit': round(total_limit, 2),
-        'total_spent': round(total_spent, 2),
-        'total_remaining': round(max(0, total_limit - total_spent), 2),
-        'total_pct': round(total_pct, 1),
+        'has_envelope': has_envelope,
+        'deficit': round(-total_available, 2) if total_available < 0 else 0.0,
     }
 
 # ---------------------------------------------------------------------------
@@ -4053,6 +5039,92 @@ def _apply_categorization_rules(description, profile):
     return None, None
 
 
+# ---------------------------------------------------------------------------
+# Apple subscription resolution by amount
+# ---------------------------------------------------------------------------
+# The bank/Pluggy never name the actual Apple service — every Apple
+# subscription arrives as "APPLECOMBILL" / "APPLE.COM/BILL" (renamed to the
+# generic "Apple Services"). The ONLY signal distinguishing Disney+ from iCloud
+# from Apple Developer is the amount. The user reconciles each charge to its
+# real service (description "Disney+ Premium (via Apple)" + subcategory), and
+# the helpers below turn that reconciliation into a reusable classifier so
+# future charges (and mis-categorized past ones) resolve by amount.
+
+_GENERIC_APPLE = ('apple services', 'applecombill', 'apple.com')
+
+
+def _is_generic_apple(description):
+    """True when the description is a brandless Apple billing descriptor."""
+    d = (description or '').strip().lower()
+    if not d:
+        return False
+    if d == 'apple':
+        return True
+    return any(g in d for g in _GENERIC_APPLE)
+
+
+def _apple_amount_key(amount):
+    """Exact 2-decimal magnitude key. BRL subscription prices are exact, so the
+    cent value IS the signal — never round it away (29.90 ≠ 29.99)."""
+    return abs(Decimal(str(amount))).quantize(Decimal('0.01'))
+
+
+def build_apple_amount_map(profile):
+    """Learn ``{amount(2dp): {description, category_id, subcategory_id}}`` from
+    the profile's RECONCILED Apple subscriptions.
+
+    Ground truth = "Assinaturas" charges mentioning Apple that carry a SPECIFIC
+    brand (not a generic Apple descriptor) and a subcategory. Iterated oldest →
+    newest (with a stable ``created_at``/``id`` tiebreaker) so the MOST RECENT
+    brand wins per amount: a price change (Apple TV+ 14.90 → 21.90) naturally
+    re-points the stale amount to whatever currently bills at it, which is why
+    apparent same-price collisions resolve cleanly.
+    """
+    qs = (
+        Transaction.objects.filter(
+            profile=profile,
+            category__name='Assinaturas',
+            subcategory__isnull=False,
+            description__icontains='apple',
+        )
+        .order_by('date', 'created_at', 'id')
+        .values_list('amount', 'description', 'category_id', 'subcategory_id')
+    )
+    amount_map = {}
+    for amount, desc, cat_id, sub_id in qs:
+        if _is_generic_apple(desc):
+            continue
+        amount_map[_apple_amount_key(amount)] = {
+            'description': desc,
+            'category_id': cat_id,
+            'subcategory_id': sub_id,
+        }
+    return amount_map
+
+
+def resolve_apple_subscription(profile, amount, amount_map=None):
+    """Resolve a generic Apple charge to its learned service by amount.
+
+    Returns ``{description, category, subcategory}`` or None when the amount has
+    no reconciled history (novel/ambiguous) — caller then keeps the generic
+    fallback. Caller is responsible for checking the description is a generic
+    Apple descriptor first (see :func:`_is_generic_apple`).
+    """
+    if amount_map is None:
+        amount_map = build_apple_amount_map(profile)
+    hit = amount_map.get(_apple_amount_key(amount))
+    if not hit:
+        return None
+    try:
+        cat = Category.objects.get(id=hit['category_id']) if hit['category_id'] else None
+        sub = Subcategory.objects.get(id=hit['subcategory_id']) if hit['subcategory_id'] else None
+    except (Category.DoesNotExist, Subcategory.DoesNotExist):
+        return None
+    if not cat:
+        return None
+    return {'description': hit['description'], 'category': cat, 'subcategory': sub}
+
+
 def _normalize_description(desc):
     """
     Normalize a description for matching purposes.
@@ -4133,9 +5205,14 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
 
     uncategorized = list(qs)
     if not uncategorized:
+        # Still reconcile installment series — most repairs target already-
+        # categorized rows (parent-only subs, bogus Transferencias), so this
+        # path must not skip it.
+        inst_rec = reconcile_installment_series_categories(profile, dry_run=dry_run)
         return {
             'categorized': 0, 'total_uncategorized': 0,
             'by_strategy': {}, 'inconsistencies': [],
+            'installment_reconciled': inst_rec['updated'],
             'details': [], 'dry_run': dry_run,
             'message': 'No uncategorized transactions',
         }
@@ -4232,6 +5309,10 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
     # Valid subcategory IDs per category: sub must belong to the same category
     sub_to_cat = {s.id: s.category_id for s in sub_lookup.values()}
 
+    # Apple subscription amount → service classifier (learned from reconciled
+    # brand-named history). Resolves brandless "Apple Services" charges by value.
+    apple_amount_map = build_apple_amount_map(profile)
+
     # ── Process each uncategorized transaction ──
     results = []
     by_strategy = Counter()
@@ -4265,9 +5346,21 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
         # Check if this is a PIX/personal transfer (skip learning strategies)
         is_pix = _is_pix_transfer(txn)
 
+        # ── Strategy 0: Apple subscription by amount (confidence: 0.97) ──
+        # Brandless Apple charge ("Apple Services") → resolve the specific
+        # service by amount from reconciled history, before Pluggy's generic
+        # mapping would bucket it as Apple One.
+        if apple_amount_map and _is_generic_apple(txn.description):
+            apple_hit = resolve_apple_subscription(profile, txn.amount, apple_amount_map)
+            if apple_hit and apple_hit['category']:
+                matched_category = apple_hit['category']
+                matched_subcategory = apple_hit['subcategory']
+                match_method = 'apple_amount'
+                confidence = 0.97
+
         # ── Strategy 1: Pluggy Category Mapping (confidence: 1.0) ──
         # Uses Pluggy's ML classification stored on the transaction
-        if txn.pluggy_category_id:
+        if not matched_category and txn.pluggy_category_id:
             p_cat, p_sub = _resolve_pluggy(txn.pluggy_category_id)
             if p_cat:
                 matched_category = p_cat
@@ -4413,6 +5506,12 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
                     txn.subcategory = matched_subcategory
                 txn.save(update_fields=['category', 'subcategory', 'updated_at'])
 
+    # ── Installment-series inheritance ──
+    # Forward/later installment positions inherit the category+subcategory of
+    # their earlier siblings. Runs globally (a series spans months) regardless of
+    # the month_str scope so a manual/consensus sibling in any month propagates.
+    inst_rec = reconcile_installment_series_categories(profile, dry_run=dry_run)
+
     # ── Inconsistency Detection ──
     inconsistencies = _detect_inconsistencies(profile=profile)
 
@@ -4420,6 +5519,7 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
         'categorized': len(results),
         'total_uncategorized': len(uncategorized),
         'by_strategy': dict(by_strategy),
+        'installment_reconciled': inst_rec['updated'],
         'inconsistencies': inconsistencies,
         'details': results[:100],
         'dry_run': dry_run,
@@ -4969,8 +6069,10 @@ def get_checking_transactions(month_str, profile=None):
 
 def get_analytics_trends(start_month=None, end_month=None, category_ids=None, account_filter=None, profile=None):
     """
-    Aggregate data for the Analytics page charts.
-    All queries are batched (no N+1).
+    Aggregate data for the Analytics page charts. Chart queries are batched; the
+    unfiltered headline (spending_trends/savings_rate/summary_kpis) is sourced
+    from the _month_actual_income_expense helper (the same deduped + cross-month
+    logic as get_metricas) so it matches the Metricas page exactly.
 
     Params:
         start_month: 'YYYY-MM' or None (earliest available)
@@ -5014,39 +6116,99 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
 
     month_list = [m for m in all_months if eff_start <= m <= eff_end]
 
+    # Reconcile the headline income/expenses with the Metricas page (single source
+    # of truth) so Analytics can't diverge. Uses the shared
+    # _month_actual_income_expense helper — the SAME deduped + cross-month logic
+    # as get_metricas, but lightweight (no installment schedule / fatura /
+    # projection), so ~7 months is fast. Only for the UNFILTERED view — a
+    # category/account filter has no metricas equivalent, so that path keeps the
+    # raw filtered sums.
+    income_expense_by_month = (
+        {} if (category_ids or account_filter)
+        else {m: _month_actual_income_expense(m, profile) for m in month_list}
+    )
+
     # -- 2. Base querysets ---------------------------------------------------
+    # Defense in depth: exclude Transferencias (account movements like CC bill
+    # payments). is_internal_transfer should catch these, but legacy ingest
+    # occasionally missed the flag — the category filter is a safety net so
+    # leaked rows don't skew the expense trend. Renda / Investimentos are kept
+    # because income and investment trends rely on them.
+    _transfer_cat_ids = list(
+        Category.objects.filter(profile=profile, name='Transferencias')
+        .values_list('id', flat=True)
+    )
     base_qs = Transaction.objects.filter(
         month_str__in=month_list,
         is_internal_transfer=False,
         profile=profile,
-    )
+    ).exclude(category_id__in=_transfer_cat_ids)
     if category_ids:
         base_qs = base_qs.filter(category_id__in=category_ids)
+    # Account pill (mastercard|visa|checking) — applied to every transaction-level
+    # chart fed by base_qs, so the pill actually filters them (same mapping the
+    # card_analysis section uses). When set, the headline above also takes the raw
+    # branch (income_expense_by_month is {}), so trends/savings/KPIs filter too.
+    if account_filter == 'mastercard':
+        base_qs = base_qs.filter(
+            account__account_type='credit_card', account__name__icontains='Mastercard')
+    elif account_filter == 'visa':
+        base_qs = base_qs.filter(
+            account__account_type='credit_card', account__name__icontains='Visa')
+    elif account_filter == 'checking':
+        base_qs = base_qs.filter(account__account_type='checking')
 
     # -- 3. Spending trends (income vs expenses per month) ------------------
-    income_by_month = dict(
-        base_qs.filter(amount__gt=0)
-        .values('month_str')
-        .annotate(total=Sum('amount'))
-        .values_list('month_str', 'total')
-    )
-    expenses_by_month = dict(
-        base_qs.filter(amount__lt=0)
-        .values('month_str')
-        .annotate(total=Sum('amount'))
-        .values_list('month_str', 'total')
-    )
-
+    #    Unfiltered: sourced from get_metricas so income/expenses match the
+    #    Metricas page EXACTLY (deduped sums + cross-month adjustments, not raw
+    #    aggregates — raw month_str sums diverged by the fatura/cross-month
+    #    amount). Filtered (category/account): fall back to raw sums of the
+    #    filtered base_qs, since metricas has no per-filter equivalent.
     spending_trends = []
-    for m in month_list:
-        inc = float(income_by_month.get(m, 0) or 0)
-        exp = float(expenses_by_month.get(m, 0) or 0)
-        spending_trends.append({
-            'month': m,
-            'income': round(inc, 2),
-            'expenses': round(abs(exp), 2),
-            'net': round(inc + exp, 2),
-        })
+    if category_ids or account_filter:
+        # Positive CC txns are refunds, not income — exclude from income and net
+        # them into expenses (mirrors get_metricas / _month_actual_income_expense).
+        _cc_acct_ids = set(
+            Account.objects.filter(profile=profile, account_type='credit_card')
+            .values_list('id', flat=True)
+        )
+        income_by_month = dict(
+            base_qs.filter(amount__gt=0).exclude(account_id__in=_cc_acct_ids)
+            .values('month_str').annotate(total=Sum('amount'))
+            .values_list('month_str', 'total')
+        )
+        cc_credit_by_month = dict(
+            base_qs.filter(amount__gt=0, account_id__in=_cc_acct_ids)
+            .values('month_str').annotate(total=Sum('amount'))
+            .values_list('month_str', 'total')
+        )
+        expenses_by_month = dict(
+            base_qs.filter(amount__lt=0)
+            .values('month_str').annotate(total=Sum('amount'))
+            .values_list('month_str', 'total')
+        )
+        for m in month_list:
+            inc = float(income_by_month.get(m, 0) or 0)
+            # CC refunds reduce expenses; clamp so refunds > spend can't flip sign.
+            exp = min(0.0, float(expenses_by_month.get(m, 0) or 0)
+                      + float(cc_credit_by_month.get(m, 0) or 0))
+            spending_trends.append({
+                'month': m,
+                'income': round(inc, 2),
+                'expenses': round(abs(exp), 2),
+                'net': round(inc + exp, 2),
+            })
+    else:
+        for m in month_list:
+            inc_d, exp_d = income_expense_by_month[m]
+            inc = float(inc_d)
+            exp = float(exp_d)
+            spending_trends.append({
+                'month': m,
+                'income': round(inc, 2),
+                'expenses': round(exp, 2),
+                'net': round(inc - exp, 2),
+            })
 
     # -- 4. Category breakdown (total expenses per category, full range) ----
     cat_totals = (
@@ -5069,14 +6231,16 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     budget_month = eff_end
 
     # Get all budget configs for the target month (category-based)
-    budget_configs = list(
+    # Aggregate by category — handles any split rows safely.
+    budget_agg = (
         BudgetConfig.objects
         .filter(month_str=budget_month, category__isnull=False, profile=profile)
-        .select_related('category')
+        .values('category_id')
+        .annotate(total=Sum('limit_override'))
     )
 
     # Also check Category.default_limit for categories without BudgetConfig
-    budget_cat_ids = {bc.category_id for bc in budget_configs}
+    budget_cat_ids = {row['category_id'] for row in budget_agg}
     cats_with_defaults = list(
         Category.objects
         .filter(is_active=True, default_limit__gt=0, profile=profile)
@@ -5085,10 +6249,17 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
 
     # Build budget map: category_id -> budget amount
     budget_map = {}
-    for bc in budget_configs:
-        budget_map[bc.category_id] = float(bc.limit_override)
+    for row in budget_agg:
+        budget_map[row['category_id']] = float(row['total'])
     for cat in cats_with_defaults:
         budget_map[cat.id] = float(cat.default_limit)
+
+    # Name lookup for categories in budget_map (for fallback when actuals empty)
+    budget_cat_names = {
+        c.id: c.name for c in Category.objects.filter(
+            id__in=budget_map.keys(), profile=profile,
+        )
+    }
 
     if budget_map:
         # Actual spending for the budget month by category
@@ -5116,10 +6287,7 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     budget_adherence = []
     for cat_id, budgeted in budget_map.items():
         info = actual_map.get(cat_id)
-        cat_name = info['name'] if info else (
-            next((bc.category.name for bc in budget_configs if bc.category_id == cat_id), None)
-            or next((c.name for c in cats_with_defaults if c.id == cat_id), '?')
-        )
+        cat_name = info['name'] if info else budget_cat_names.get(cat_id, '?')
         actual = info['actual'] if info else 0.0
         budget_adherence.append({
             'category_id': str(cat_id),
@@ -5256,6 +6424,10 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     }
 
     # -- 10. Expense composition (fixo/variavel/parcelas/investimento) -----
+    #    Transaction-level by category_type (purchase month), de-overlapped so the
+    #    bars don't double-count installments. NOT sourced from get_metricas: the
+    #    metricas buckets mix invoice-month (parcelas/fatura) with purchase-month
+    #    (variável), so they overlap and would over-sum the monthly total.
     type_month_qs = (
         base_qs.filter(amount__lt=0, category__isnull=False)
         .values('month_str', 'category__category_type')
@@ -5470,8 +6642,22 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
     # Include savings target from profile for chart reference line
     savings_target = float(profile.savings_target_pct) if profile else 20.0
 
+    # Intra-month daily cash-flow ("vale") — forward projection from the current
+    # calendar month. Only computed for the unfiltered headline view; the
+    # category/account pills don't change a forward cash-flow simulation, and it
+    # reuses get_projection (~expensive) so we skip it on filtered requests.
+    cashflow = None
+    if not (category_ids or account_filter):
+        try:
+            _now = datetime.now()
+            cashflow = get_cashflow_diario(
+                f'{_now.year}-{_now.month:02d}', profile=profile)
+        except Exception:
+            cashflow = None
+
     return {
         'months': month_list,
+        'cashflow': cashflow,
         'available_months': {'min': data_min, 'max': data_max},
         'default_start': default_start,
         'available_categories': available_cats,
@@ -5492,6 +6678,322 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
 
 # ---------------------------------------------------------------------------
 # Spending Insights (BUDG-03)
+# ---------------------------------------------------------------------------
+# Subscriptions Control — auto-detect recurring charges from transactions
+# ---------------------------------------------------------------------------
+
+def get_subscriptions_control(profile=None):
+    """
+    Detect active subscriptions from the last 9 months of transactions.
+
+    Strict mode (respect the user's own curation):
+    - Source: Assinaturas category ONLY. The user created that category
+      deliberately for subscriptions — anything tagged elsewhere (Musica,
+      Compras Gerais, etc.) is intentionally not a subscription.
+    - Require >= 3 charges in the 9-month window to qualify as recurring.
+      A single charge is never enough — annuals show on the second cycle.
+    - Normalize merchant key against a curated map of known services to
+      collapse variants (Netflix*, Amazon Prime*, Adobe variants, etc.).
+    - Detect cadence from median gap between charges:
+        weekly (<14d), monthly (14-45d), quarterly (45-120d), annual (120-400d).
+    - Status (tight — a missed billing cycle flags immediately):
+        active   — last charge within 1.0 × cadence_days + 5d grace
+        expiring — within 2.0 × cadence (likely cancelled)
+        cancelled — older than that
+
+    Returns dict with subscriptions[], totals, breakdown.
+    """
+    from datetime import date, timedelta
+    from statistics import median
+
+    today = date.today()
+    cutoff = today - timedelta(days=270)
+
+    txns = list(Transaction.objects.filter(
+        profile=profile, amount__lt=0,
+        is_internal_transfer=False,
+        date__gte=cutoff,
+        category__name='Assinaturas',
+    ).select_related('category', 'subcategory'))
+
+    # Canonical merchant patterns. Each (regex, label) collapses variants.
+    # Order matters — more specific first.
+    import re as _re
+    # Brand-name substring patterns. Word boundaries dropped — Pluggy
+    # sometimes returns concatenated suffixes like LINKEDINSAOPAULOBR
+    # which would not match a \b-bounded pattern. Each pattern is a
+    # unique brand string, so plain substring is safe.
+    CANONICAL = [
+        (r'claude\.?ai',                 'Claude.ai'),
+        (r'chatgpt|openai',              'ChatGPT'),
+        (r'synthetic',                   'Synthetic.new'),
+        (r'openrouter',                  'OpenRouter'),
+        (r'apple one premier',           'Apple One Premier'),
+        (r'apple developer',             'Apple Developer'),
+        (r'apple music',                 'Apple Music'),
+        (r'apple tv',                    'Apple TV+'),
+        (r'apple arcade',                'Apple Arcade'),
+        (r'icloud',                      'iCloud+'),
+        (r'itunes match',                'iTunes Match'),
+        (r'terabox',                     'TeraBox'),
+        (r'myfitness',                   'MyFitnessPal'),
+        (r'headspace',                   'Headspace'),
+        (r'waterllama',                  'Waterllama'),
+        (r'pushscroll',                  'Pushscroll'),
+        (r'dr\.? kegel|kegel',           'Dr. Kegel'),
+        (r'disney',                      'Disney+'),
+        (r'netflix',                     'Netflix'),
+        (r'hbo ?max',                    'HBO Max'),
+        (r'youtube premium',             'YouTube Premium'),
+        (r'amazon ?prime',               'Amazon Prime'),
+        (r'spotify',                     'Spotify'),
+        (r'soundcloud',                  'SoundCloud'),
+        (r'^adobe|\*adobe',              'Adobe'),
+        (r'setapp',                      'Setapp'),
+        (r'splice',                      'Splice'),
+        (r'figma',                       'Figma'),
+        (r'github',                      'GitHub'),
+        (r'enhancv',                     'Enhancv'),
+        (r'linkedin',                    'LinkedIn'),
+        (r'remarkable',                  'reMarkable'),
+        (r'locaweb',                     'Locaweb'),
+        (r'hostinger',                   'Hostinger'),
+        (r'name-?cheap',                 'Namecheap'),
+        (r'1 ?password',                 '1Password'),
+        (r'applecombill',                'Apple Services'),
+        (r'lc music',                    'TraxDB'),
+        (r'patreon',                     'Patreon'),
+        (r'rocinante',                   'Rocinante'),
+        (r'bloopradioshow',              'Bloop Radio Show'),
+    ]
+
+    def _merchant_label(desc):
+        d = (desc or '').lower()
+        for pat, label in CANONICAL:
+            if _re.search(pat, d):
+                return label
+        # Fall back: first 2 meaningful words, capitalized.
+        cleaned = _re.sub(r'^[^A-Za-z]+', '', desc or '')
+        words = [w for w in cleaned.split() if w]
+        if not words:
+            return desc or '?'
+        return ' '.join(words[:2])
+
+    # Group by canonical label, then split when a merchant bills on
+    # clearly distinct days of the month (Amazon Prime day 10 / 20 / 24
+    # = 3 separate subs). Amount band intentionally NOT used — exchange
+    # rate jitter would split a single ChatGPT sub into multiple bands.
+    def _dom_bucket(day):
+        if day <= 10: return 'e'
+        if day <= 20: return 'm'
+        return 'l'
+
+    # Skip merchants where we can't tell what they actually are — these
+    # produce noisy entries (mixed amounts, irregular cadence) that
+    # confuse the report more than they inform. User decodes them
+    # manually via Apple Pay / billing history.
+    UNIDENTIFIED_PREFIXES = ('Apple Services',)
+
+    primary = {}
+    for t in txns:
+        label = _merchant_label(t.description)
+        if label.startswith(UNIDENTIFIED_PREFIXES):
+            continue
+        primary.setdefault(label, []).append(t)
+
+    groups = {}
+    for label, items in primary.items():
+        if len(items) < 3:
+            groups[label] = items
+            continue
+        # Split by (day-of-month bucket, account). Account splits e.g.
+        # Patreon Visa R$329 from Patreon MC R$18 even when both bill day 1.
+        sub = {}
+        for t in items:
+            sub.setdefault((_dom_bucket(t.date.day), t.account_id), []).append(t)
+        viable = {k: v for k, v in sub.items() if len(v) >= 3}
+        if len(viable) <= 1:
+            groups[label] = items
+        else:
+            for key, sub_items in viable.items():
+                med_day = int(median([t.date.day for t in sub_items]))
+                med_amt = median([abs(float(t.amount)) for t in sub_items])
+                acct_name = sub_items[0].account.name if sub_items[0].account else ''
+                acct_short = (acct_name.split()[0] if acct_name else '').lower()
+                suffix = f' (dia {med_day:02d}'
+                if acct_short:
+                    suffix += f' {acct_short}'
+                suffix += f', ~R${med_amt:.0f})'
+                groups[f'{label}{suffix}'] = sub_items
+
+    results = []
+    total_monthly = 0.0
+    MIN_CHARGES = 3
+    # Whitelist of canonical labels that are billed annually. Only these
+    # merchants get the "single-charge → annual" promotion; anything else
+    # with <3 charges is treated as either a trial that ended or a
+    # recently cancelled sub and is dropped.
+    KNOWN_ANNUALS = {
+        'iTunes Match', 'Dr. Kegel', 'Pushscroll', 'Waterllama',
+        '1Password', 'Apple Developer', 'Hostinger', 'Namecheap',
+        'OpenRouter',
+    }
+
+    for key, items in groups.items():
+        sorted_items = sorted(items, key=lambda x: x.date)
+
+        if len(items) < MIN_CHARGES:
+            if len(items) == 0:
+                continue
+            last = sorted_items[-1]
+            amt = float(abs(last.amount))
+            if len(items) == 2:
+                gap = (sorted_items[1].date - sorted_items[0].date).days
+                # Two charges only count as a sub if the gap is roughly
+                # annual; anything else is two unrelated buys.
+                if not (200 <= gap <= 400):
+                    continue
+            else:
+                # Single charge — only promote to annual when we recognize
+                # the merchant as a known annual brand.
+                if key not in KNOWN_ANNUALS:
+                    continue
+                gap = 365
+            cadence_days = 365
+            cadence = 'annual'
+            expected_next = last.date + timedelta(days=cadence_days)
+            overdue = (today - expected_next).days
+            if overdue <= 1:
+                status = 'active'
+            elif overdue <= cadence_days:
+                status = 'expiring'
+            else:
+                status = 'cancelled'
+            monthly_eq = amt / 12.0
+            results.append({
+                'merchant': key,
+                'merchant_key': key,
+                'raw_description': last.description,
+                'category': last.category.name if last.category else 'Não categorizado',
+                'subcategory': last.subcategory.name if last.subcategory else '',
+                'cadence': cadence,
+                'cadence_days': cadence_days,
+                'avg_amount': round(amt, 2),
+                'min_amount': round(amt, 2),
+                'max_amount': round(amt, 2),
+                'monthly_equivalent': round(monthly_eq, 2),
+                'last_charge': last.date.strftime('%Y-%m-%d'),
+                'next_predicted': expected_next.strftime('%Y-%m-%d'),
+                'charge_count_9mo': len(items),
+                'status': status,
+                'flags': ['annual_inferred'] if len(items) == 1 else [],
+            })
+            if status == 'active':
+                total_monthly += monthly_eq
+            continue
+
+        # Original sorted_items already set
+        dates = [t.date for t in sorted_items]
+        gaps = [(dates[i+1] - dates[i]).days for i in range(len(dates) - 1)]
+        # Filter out same-week bursts (likely duplicates or billing retries
+        # that survived dedup) before taking the median. A real weekly sub
+        # has consistent gaps; a monthly sub poisoned by a burst of 6
+        # same-week charges would otherwise look weekly.
+        meaningful_gaps = [g for g in gaps if g >= 5]
+        if len(meaningful_gaps) >= 2:
+            med_gap = median(meaningful_gaps)
+        else:
+            med_gap = median(gaps) if gaps else 30
+
+        if med_gap < 14:
+            cadence, cadence_days = 'weekly', 7
+        elif med_gap < 45:
+            cadence, cadence_days = 'monthly', 30
+        elif med_gap < 120:
+            cadence, cadence_days = 'quarterly', 90
+        else:
+            cadence, cadence_days = 'annual', 365
+
+        amounts = [float(abs(t.amount)) for t in sorted_items]
+        avg = sum(amounts) / len(amounts)
+        last_charge = sorted_items[-1].date
+        days_since = (today - last_charge).days
+
+        # Status by expected-next-charge date (matches what the user sees).
+        # If the predicted next charge already passed by more than 1 day
+        # without a charge landing, treat as expiring. Cancelled past 1
+        # full additional cycle.
+        expected_next = last_charge + timedelta(days=cadence_days)
+        overdue_days = (today - expected_next).days
+
+        if overdue_days <= 1:
+            status = 'active'
+        elif overdue_days <= cadence_days:
+            status = 'expiring'
+        else:
+            status = 'cancelled'
+
+        flags = []
+        if max(amounts) - min(amounts) > avg * 0.3:
+            flags.append('amount_varies')
+        if status == 'active' and len(set(amounts)) > 1 and amounts[-1] < amounts[0] * 0.7:
+            flags.append('price_dropped')
+
+        # Cadence months for monthly_equivalent
+        months_per_charge = cadence_days / 30.0
+        monthly_eq = avg / months_per_charge
+
+        latest = sorted_items[-1]
+        results.append({
+            'merchant': key,
+            'merchant_key': key,
+            'raw_description': latest.description,
+            'category': latest.category.name if latest.category else 'Não categorizado',
+            'subcategory': latest.subcategory.name if latest.subcategory else '',
+            'cadence': cadence,
+            'cadence_days': cadence_days,
+            'avg_amount': round(avg, 2),
+            'min_amount': round(min(amounts), 2),
+            'max_amount': round(max(amounts), 2),
+            'monthly_equivalent': round(monthly_eq, 2),
+            'last_charge': last_charge.strftime('%Y-%m-%d'),
+            'next_predicted': (last_charge + timedelta(days=cadence_days)).strftime('%Y-%m-%d'),
+            'charge_count_9mo': len(sorted_items),
+            'status': status,
+            'flags': flags,
+        })
+        if status == 'active':
+            total_monthly += monthly_eq
+
+    # Sort: active first by cost desc, then expiring, then cancelled
+    status_order = {'active': 0, 'expiring': 1, 'cancelled': 2}
+    results.sort(key=lambda r: (status_order.get(r['status'], 3), -r['monthly_equivalent']))
+
+    # Aggregate by subcategory for stacked view
+    by_sub = {}
+    for r in results:
+        if r['status'] != 'active':
+            continue
+        key = r['subcategory'] or r['category']
+        by_sub.setdefault(key, {'name': key, 'monthly': 0.0, 'count': 0})
+        by_sub[key]['monthly'] += r['monthly_equivalent']
+        by_sub[key]['count'] += 1
+    sub_breakdown = sorted(
+        ({'name': v['name'], 'monthly': round(v['monthly'], 2), 'count': v['count']} for v in by_sub.values()),
+        key=lambda x: -x['monthly'],
+    )
+
+    return {
+        'subscriptions': results,
+        'total_monthly': round(total_monthly, 2),
+        'total_annual': round(total_monthly * 12, 2),
+        'by_subcategory': sub_breakdown,
+        'active_count': sum(1 for r in results if r['status'] == 'active'),
+        'expiring_count': sum(1 for r in results if r['status'] == 'expiring'),
+        'cancelled_count': sum(1 for r in results if r['status'] == 'cancelled'),
+    }
+
+
 # ---------------------------------------------------------------------------
 
 def get_spending_insights(profile=None):
@@ -5617,11 +7119,11 @@ def get_spending_insights(profile=None):
         profile=profile, category_type='Variavel', is_active=True, default_limit__gt=0
     )
     for cat in variavel_cats:
-        # Check for month override
-        override = BudgetConfig.objects.filter(
+        # Sum override across pay_num rows (defensive — categories use 0 today).
+        override_total = BudgetConfig.objects.filter(
             profile=profile, category=cat, month_str=latest
-        ).first()
-        limit = float(override.limit_override) if override else float(cat.default_limit)
+        ).aggregate(t=Sum('limit_override'))['t']
+        limit = float(override_total) if override_total is not None else float(cat.default_limit)
         if limit <= 0:
             continue
         spent = abs(float(

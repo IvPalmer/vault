@@ -6,8 +6,14 @@ from unittest.mock import patch
 from django.core.management import call_command
 from django.test import TestCase
 
-from api.models import Account, BudgetConfig, Profile, RecurringTemplate, SalaryConfig, Transaction
-from api.services import _deduped_transaction_sum, sync_salary_to_budget
+from api.models import (
+    Account, BudgetConfig, Category, Profile, RecurringTemplate,
+    SalaryConfig, Subcategory, Transaction,
+)
+from api.services import (
+    _deduped_transaction_sum, sync_salary_to_budget,
+    build_apple_amount_map, resolve_apple_subscription, _is_generic_apple,
+)
 
 
 class RecurringTemplateContractTests(TestCase):
@@ -29,43 +35,193 @@ class RecurringTemplateContractTests(TestCase):
 
 
 class TransactionDedupTests(TestCase):
-    def test_metric_sum_dedupes_case_variants_only_once(self):
+    def test_metric_sum_dedupes_pluggy_legacy_pair_only_once(self):
+        """Pluggy + legacy versions of the same payment count as one."""
         profile = Profile.objects.create(name='Tester')
         account = Account.objects.create(profile=profile, name='Checking', account_type='checking')
         txns = [
             Transaction.objects.create(
-                profile=profile,
-                account=account,
-                date=date(2026, 4, 10),
-                description='JUROS LIMITE DA CONTA',
-                amount=Decimal('-100.00'),
+                profile=profile, account=account, date=date(2026, 4, 10),
+                description='PIX TRANSF Claudia10/04', amount=Decimal('-100.00'),
+                source_file='pluggy:abc',
             ),
             Transaction.objects.create(
-                profile=profile,
-                account=account,
-                date=date(2026, 4, 10),
-                description='Juros Limite Da Conta',
-                amount=Decimal('-100.00'),
+                profile=profile, account=account, date=date(2026, 4, 10),
+                description='Claudia10 04', amount=Decimal('-100.00'),
+                source_file='Checking',
             ),
         ]
-
         self.assertEqual(_deduped_transaction_sum(txns), Decimal('-100.00'))
 
-    def test_dedup_command_preserves_consorcio_same_day_same_amount(self):
+    def test_metric_sum_keeps_legitimate_same_day_same_amount(self):
+        """
+        Two real same-source PIX to the same person same day same amount
+        (e.g. user paid Claudia R$200 in morning AND afternoon) MUST count
+        twice. Source-aware dedup prevents undercounting.
+        """
         profile = Profile.objects.create(name='Tester')
         account = Account.objects.create(profile=profile, name='Checking', account_type='checking')
-        for _ in range(2):
+        txns = [
+            Transaction.objects.create(
+                profile=profile, account=account, date=date(2026, 4, 10),
+                description='PIX TRANSF Claudia10/04', amount=Decimal('-200.00'),
+                source_file='pluggy:abc1',
+            ),
+            Transaction.objects.create(
+                profile=profile, account=account, date=date(2026, 4, 10),
+                description='PIX TRANSF Claudia10/04', amount=Decimal('-200.00'),
+                source_file='pluggy:abc2',
+            ),
+        ]
+        self.assertEqual(_deduped_transaction_sum(txns), Decimal('-400.00'))
+
+    def test_metric_sum_handles_max_count_pair(self):
+        """
+        If user has 2 real Pluggy payments and only 1 legacy entry (some
+        legacy CSVs missed one), real count is max(pluggy=2, legacy=1)=2.
+        """
+        profile = Profile.objects.create(name='Tester')
+        account = Account.objects.create(profile=profile, name='Checking', account_type='checking')
+        txns = [
+            Transaction.objects.create(
+                profile=profile, account=account, date=date(2026, 4, 10),
+                description='PIX TRANSF Claudia10/04', amount=Decimal('-100.00'),
+                source_file='pluggy:a',
+            ),
+            Transaction.objects.create(
+                profile=profile, account=account, date=date(2026, 4, 10),
+                description='PIX TRANSF Claudia10/04', amount=Decimal('-100.00'),
+                source_file='pluggy:b',
+            ),
+            Transaction.objects.create(
+                profile=profile, account=account, date=date(2026, 4, 10),
+                description='Claudia10 04', amount=Decimal('-100.00'),
+                source_file='Checking',
+            ),
+        ]
+        self.assertEqual(_deduped_transaction_sum(txns), Decimal('-200.00'))
+
+    def test_dedup_command_preserves_consorcio_same_day_same_amount(self):
+        """
+        Real consórcio rows have unique numeric IDs in description
+        (CONS PARCELA785892834991). Different IDs → different normalized
+        keys → preserved separately even with same date+amount.
+        """
+        profile = Profile.objects.create(name='Tester')
+        account = Account.objects.create(profile=profile, name='Checking', account_type='checking')
+        for cota_id in ('785892834991', '785892834926'):
             Transaction.objects.create(
                 profile=profile,
                 account=account,
                 date=date(2026, 1, 10),
-                description='CONS PARCELA',
+                description=f'CONS PARCELA{cota_id}',
                 amount=Decimal('-500.00'),
             )
 
         call_command('dedup_phantom_transactions', apply=True, stdout=StringIO())
 
         self.assertEqual(Transaction.objects.filter(profile=profile).count(), 2)
+
+    def test_dedup_command_merges_pluggy_legacy_pix_pair(self):
+        """
+        The Pluggy "PIX TRANSF Claudia28/01" and legacy "Claudia28 01"
+        formats normalize to the same key after stripping prefixes.
+        Should be merged.
+        """
+        profile = Profile.objects.create(name='Tester')
+        account = Account.objects.create(profile=profile, name='Checking', account_type='checking')
+        Transaction.objects.create(
+            profile=profile, account=account, date=date(2026, 1, 28),
+            description='PIX TRANSF Claudia28/01', amount=Decimal('-2050.00'),
+            external_id='pluggy-1', source_file='pluggy:abc',
+        )
+        Transaction.objects.create(
+            profile=profile, account=account, date=date(2026, 1, 28),
+            description='Claudia28 01', amount=Decimal('-2050.00'),
+            external_id='legacy-1', source_file='Checking',
+        )
+
+        call_command('dedup_phantom_transactions', apply=True, stdout=StringIO())
+
+        # Should keep one (the Pluggy version - higher keep_score)
+        remaining = list(Transaction.objects.filter(profile=profile))
+        self.assertEqual(len(remaining), 1)
+        self.assertTrue(remaining[0].source_file.startswith('pluggy:'))
+
+    def test_dedup_command_skips_same_source_pairs(self):
+        """
+        Two pluggy rows with same date+amount+description (legitimate distinct
+        same-day payments to same person) MUST NOT be deleted by the command.
+        """
+        profile = Profile.objects.create(name='Tester')
+        account = Account.objects.create(profile=profile, name='Checking', account_type='checking')
+        Transaction.objects.create(
+            profile=profile, account=account, date=date(2026, 1, 28),
+            description='PIX TRANSF Claudia28/01', amount=Decimal('-200.00'),
+            external_id='pluggy-a', source_file='pluggy:abc',
+        )
+        Transaction.objects.create(
+            profile=profile, account=account, date=date(2026, 1, 28),
+            description='PIX TRANSF Claudia28/01', amount=Decimal('-200.00'),
+            external_id='pluggy-b', source_file='pluggy:def',
+        )
+
+        call_command('dedup_phantom_transactions', apply=True, stdout=StringIO())
+
+        self.assertEqual(Transaction.objects.filter(profile=profile).count(), 2)
+
+    def test_dedup_command_skips_short_descriptions(self):
+        """
+        Generic descriptions like 'IOF' (3 chars normalized) MUST NOT be
+        deduped. Length threshold is >= 4.
+        """
+        profile = Profile.objects.create(name='Tester')
+        account = Account.objects.create(profile=profile, name='Checking', account_type='checking')
+        Transaction.objects.create(
+            profile=profile, account=account, date=date(2026, 1, 28),
+            description='IOF', amount=Decimal('-2.50'),
+            source_file='pluggy:a',
+        )
+        Transaction.objects.create(
+            profile=profile, account=account, date=date(2026, 1, 28),
+            description='Iof', amount=Decimal('-2.50'),
+            source_file='Checking',
+        )
+
+        call_command('dedup_phantom_transactions', apply=True, stdout=StringIO())
+
+        self.assertEqual(Transaction.objects.filter(profile=profile).count(), 2)
+
+
+class GetRecurringDataExpiredTests(TestCase):
+    def test_expired_template_excluded_from_recurring_data(self):
+        """Templates past their end_month should not appear in recurring UI."""
+        from api.services import get_recurring_data
+        from api.models import RecurringMapping
+
+        profile = Profile.objects.create(name='Tester')
+        active_tpl = RecurringTemplate.objects.create(
+            profile=profile, name='Aluguel', template_type='Fixo',
+            default_limit=Decimal('1000.00'),
+        )
+        expired_tpl = RecurringTemplate.objects.create(
+            profile=profile, name='Carro Velho', template_type='Fixo',
+            default_limit=Decimal('500.00'), end_month='2025-12',
+        )
+        # Mappings for both in May/26 (expired ended Dec/25)
+        RecurringMapping.objects.create(
+            profile=profile, template=active_tpl, month_str='2026-05',
+            expected_amount=Decimal('1000.00'),
+        )
+        RecurringMapping.objects.create(
+            profile=profile, template=expired_tpl, month_str='2026-05',
+            expected_amount=Decimal('500.00'),
+        )
+
+        result = get_recurring_data('2026-05', profile=profile)
+        names = [item['name'] for item in result.get('all', [])]
+        self.assertIn('Aluguel', names)
+        self.assertNotIn('Carro Velho', names)
 
 
 class SalaryBudgetSyncTests(TestCase):
@@ -99,3 +255,206 @@ class SalaryBudgetSyncTests(TestCase):
         ).order_by('pay_num')
         self.assertEqual(list(configs.values_list('pay_num', flat=True)), [1, 2])
         self.assertEqual(sum((cfg.limit_override for cfg in configs), Decimal('0.00')), Decimal('44000.00'))
+
+
+class AppleAmountCategorizationTests(TestCase):
+    """Apple subscriptions arrive brandless ("APPLECOMBILL"); only the amount
+    distinguishes the service. These cover the learn-from-history resolver and
+    the retroactive fix command."""
+
+    def setUp(self):
+        self.profile = Profile.objects.create(name='Tester')
+        self.acct = Account.objects.create(
+            profile=self.profile, name='Visa', account_type='credit_card')
+        self.cat = Category.objects.create(profile=self.profile, name='Assinaturas')
+        self.subs = {
+            n: Subcategory.objects.create(profile=self.profile, category=self.cat, name=n)
+            for n in ['Apple One', 'Streaming Video', 'Software', 'Gaming']
+        }
+
+    def _txn(self, desc, iso_date, amount, sub=None, manual=False):
+        return Transaction.objects.create(
+            profile=self.profile, account=self.acct, date=date.fromisoformat(iso_date),
+            description=desc, amount=Decimal(str(amount)), category=self.cat,
+            subcategory=self.subs[sub] if sub else None,
+            is_manually_categorized=manual,
+        )
+
+    def _seed_history(self):
+        # Reconciled, brand-named ground truth.
+        self._txn('Disney+ Premium (via Apple)', '2026-03-29', '-66.90', 'Streaming Video')
+        self._txn('Disney+ Premium (via Apple)', '2026-04-29', '-66.90', 'Streaming Video')
+        self._txn('Apple Developer Anual (via Apple)', '2026-01-30', '-548.46', 'Software')
+        # Price-change collision: TV+ at 14.90 (older), Arcade at 14.90 (newer)
+        # — recency must win, so 14.90 → Gaming.
+        self._txn('Apple TV+ (via Apple)', '2025-09-14', '-14.90', 'Streaming Video')
+        self._txn('Apple Arcade (via Apple)', '2026-04-14', '-14.90', 'Gaming')
+        # Near-identical amounts that integer rounding would have collided.
+        self._txn('Notion (via Apple)', '2026-03-10', '-29.99', 'Software')
+        self._txn('iCloud Mini (via Apple)', '2026-03-10', '-29.90', 'Apple One')
+        # Generic noise — must be EXCLUDED from the learned map.
+        self._txn('Apple Services', '2026-02-24', '-66.90', 'Apple One')
+
+    def test_build_map_excludes_generic_and_recency_wins(self):
+        self._seed_history()
+        m = build_apple_amount_map(self.profile)
+        self.assertEqual(m[Decimal('66.90')]['description'], 'Disney+ Premium (via Apple)')
+        self.assertEqual(m[Decimal('548.46')]['description'], 'Apple Developer Anual (via Apple)')
+        # Recency: newest 14.90 is Apple Arcade.
+        self.assertEqual(m[Decimal('14.90')]['description'], 'Apple Arcade (via Apple)')
+        self.assertEqual(m[Decimal('14.90')]['subcategory_id'], self.subs['Gaming'].id)
+        # Cent precision: 29.90 and 29.99 must NOT collide.
+        self.assertEqual(m[Decimal('29.99')]['description'], 'Notion (via Apple)')
+        self.assertEqual(m[Decimal('29.90')]['description'], 'iCloud Mini (via Apple)')
+
+    def test_resolve_hits_known_amount_and_misses_novel(self):
+        self._seed_history()
+        m = build_apple_amount_map(self.profile)
+        hit = resolve_apple_subscription(self.profile, Decimal('-66.90'), m)
+        self.assertEqual(hit['description'], 'Disney+ Premium (via Apple)')
+        self.assertEqual(hit['subcategory'], self.subs['Streaming Video'])
+        # Novel amount → no history → abstain.
+        self.assertIsNone(resolve_apple_subscription(self.profile, Decimal('-79.00'), m))
+        self.assertTrue(_is_generic_apple('Apple Services'))
+        self.assertFalse(_is_generic_apple('Disney+ Premium (via Apple)'))
+
+    def test_recategorize_command_fixes_generic_respects_manual_and_novel(self):
+        self._seed_history()
+        wrong = self._txn('Apple Services', '2026-05-29', '-66.90', 'Apple One')  # → Disney+
+        manual = self._txn('Apple Services', '2026-05-26', '-66.90', 'Software', manual=True)
+        novel = self._txn('Apple Services', '2026-05-06', '-79.00', 'Apple One')  # no history
+
+        call_command('recategorize_apple', profile='Tester', verbosity=0)
+
+        wrong.refresh_from_db(); manual.refresh_from_db(); novel.refresh_from_db()
+        # Generic 66.90 fixed to Disney+/Streaming Video.
+        self.assertEqual(wrong.description, 'Disney+ Premium (via Apple)')
+        self.assertEqual(wrong.subcategory, self.subs['Streaming Video'])
+        # Manual override untouched.
+        self.assertEqual(manual.description, 'Apple Services')
+        self.assertEqual(manual.subcategory, self.subs['Software'])
+        # Novel amount left generic.
+        self.assertEqual(novel.description, 'Apple Services')
+        self.assertEqual(novel.subcategory, self.subs['Apple One'])
+
+
+class PluggyBilledDuplicateSkipTests(TestCase):
+    """Regression for the over-aggressive 'unbilled dup' skip that suppressed
+    real charges on an OPEN bill.
+
+    The old guard skipped any no-billId CC transaction whose heuristic
+    invoice_month merely *had a bill* (``invoice_month in billed_months``).
+    On an open bill, recent purchases (last days before close) have no billId
+    yet, so real charges like ICATU (the 28th) were silently dropped every
+    cycle. The fix only skips a no-billId copy when a billed twin of THAT exact
+    purchase exists, and resolves it before touching the dedup indices.
+    """
+
+    def _cmd(self, profile, bill_map):
+        from api.management.commands.sync_pluggy import Command
+        cmd = Command()
+        cmd.profile = profile
+        cmd.dry_run = False
+        cmd.verbosity = 0
+        cmd.bill_map = bill_map
+        cmd.bill_totals = {}
+        cmd.card_account_map = {}
+        cmd.rename_rules = []
+        cmd.pluggy_mappings = {}
+        cmd.categorization_rules = []
+        cmd.apple_amount_map = {}
+        return cmd
+
+    def _ptxn(self, _id, desc, iso_date, amount, bill_id=None, total_inst=None):
+        meta = {}
+        if bill_id:
+            meta['billId'] = bill_id
+        if total_inst:
+            meta.update(totalInstallments=total_inst, installmentNumber=1)
+        return {
+            'id': _id,
+            'description': desc,
+            'descriptionRaw': desc,
+            'amount': amount,  # Pluggy CC: positive = charge
+            'date': iso_date,
+            'creditCardMetadata': meta or None,
+        }
+
+    def test_open_bill_and_recurring_charges_kept_only_true_dups_skipped(self):
+        profile = Profile.objects.create(name='Tester')
+        # Itaú-style: closes the 30th, due the 5th next month (due_offset 1).
+        card = Account.objects.create(
+            profile=profile, name='Visa Infinite', account_type='credit_card',
+            closing_day=30, due_day=5,
+        )
+        # Pluggy maps the APRIL ICATU charge's billId to invoice 2026-06 — the
+        # SAME invoice month the heuristic gives the no-billId MAY charge. That
+        # cross-month collision is exactly what an invoice_month-keyed skip got
+        # wrong; identity-by-date must keep both.
+        bill_map = {'B-MAR': '2026-04', 'B-ICATU-APR': '2026-06', 'B-MAY': '2026-06'}
+
+        pluggy_txns = [
+            # Baseline billed charge.
+            self._ptxn('t-store', 'STORE OLD', '2026-03-05', 100.0, bill_id='B-MAR'),
+            # April instance of a RECURRING charge, billed (billId -> 2026-06),
+            # same amount+desc as the May instance below, ~30 days earlier.
+            self._ptxn('t-icatu-apr', 'ICATUSEGUROS*Icat', '2026-04-28', 493.83,
+                       bill_id='B-ICATU-APR'),
+            # NuBank-style genuine duplicate: account-level copy FIRST (no
+            # billId), then its billId twin 1 day off. Tests that the skipped
+            # copy does NOT poison the content index and drop the twin too.
+            self._ptxn('t-petz-acct', 'PETZ DIGITAL', '2026-05-30', 283.65),
+            self._ptxn('t-petz-bill', 'PETZ DIGITAL', '2026-05-29', 283.65, bill_id='B-MAY'),
+            # MAY instance of the recurring charge, no billId yet (the ICATU
+            # failure mode). Heuristic invoice_month = 2026-06 collides with the
+            # April instance's billId month, but the dates are ~30 days apart ->
+            # NOT a duplicate -> must be KEPT.
+            self._ptxn('t-icatu-may', 'ICATUSEGUROS*Icat', '2026-05-28', 493.83),
+        ]
+
+        cmd = self._cmd(profile, bill_map)
+        new, skipped, updated = cmd._sync_transactions(pluggy_txns, card)
+
+        # Both recurring instances survive (different months, same amount/desc).
+        icatu = Transaction.objects.filter(description__icontains='ICATU')
+        self.assertEqual(icatu.count(), 2)
+        self.assertTrue(icatu.filter(date=date(2026, 5, 28),
+                                     amount=Decimal('-493.83')).exists())
+
+        # PETZ kept exactly once (the billId twin), account-level dup dropped.
+        self.assertEqual(
+            Transaction.objects.filter(description__icontains='PETZ').count(), 1)
+
+        # 4 created (store, icatu-apr, petz-billed, icatu-may); 1 skipped (petz-acct).
+        self.assertEqual(new, 4)
+        self.assertEqual(skipped, 1)
+
+    def test_billed_dup_key_is_signed(self):
+        """The billed-twin gate keys on the SIGNED amount, so a no-billId
+        refund (-X) is not collapsed onto a billed same-merchant purchase (+X)
+        by THIS gate. (Same-day same-amount refunds are still collapsed by the
+        pre-existing abs-keyed synced dedup — out of scope here; the assertion
+        below only covers the gate added by this fix.)"""
+        profile = Profile.objects.create(name='Tester')
+        card = Account.objects.create(
+            profile=profile, name='Visa Infinite', account_type='credit_card',
+            closing_day=30, due_day=5,
+        )
+        bill_map = {'B-MAY': '2026-06'}
+        # Refund 2 days after the billed purchase — outside the ±1 day window of
+        # every dedup path, so it must survive end-to-end.
+        pluggy_txns = [
+            self._ptxn('t-buy', 'STORE X', '2026-05-20', 50.0, bill_id='B-MAY'),
+            self._ptxn('t-refund', 'STORE X', '2026-05-22', -50.0),
+        ]
+        cmd = self._cmd(profile, bill_map)
+        new, skipped, updated = cmd._sync_transactions(pluggy_txns, card)
+
+        store = Transaction.objects.filter(description__icontains='STORE X')
+        self.assertEqual(store.count(), 2)
+        self.assertEqual(
+            set(store.values_list('amount', flat=True)),
+            {Decimal('-50.00'), Decimal('50.00')},
+        )
+        self.assertEqual(new, 2)
+        self.assertEqual(skipped, 0)

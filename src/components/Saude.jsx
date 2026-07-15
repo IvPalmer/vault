@@ -17,10 +17,10 @@
  *   - Vitals sparklines
  *   - Full exam history grouped by year
  */
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useProfile } from '../context/ProfileContext'
-import api from '../api/client'
+import api, { API_BASE_URL } from '../api/client'
 import styles from './Saude.module.css'
 import widgetStyles from './saude/saude-widgets.module.css'
 import PregnancyHero from './saude/PregnancyHero'
@@ -37,8 +37,14 @@ import CarenciaExamConflictWidget from './saude/CarenciaExamConflictWidget'
 import LabPanelDashboard from './saude/LabPanelDashboard'
 import HipImagingCard from './saude/HipImagingCard'
 import ClinicalReportCard from './saude/ClinicalReportCard'
-import { PALMER_LAB_PANEL, PALMER_CLINICAL_REPORT, PALMER_OBSERVATIONS } from './saude/palmerHealthData'
-import { RAFA_LAB_PANEL, RAFA_PREGNANCY_REPORT, RAFA_OBSERVATIONS } from './saude/rafaHealthData'
+import MealPlanCard from './saude/MealPlanCard'
+import GlucoseLogCard from './saude/GlucoseLogCard'
+import ShoppingListCard from './saude/ShoppingListCard'
+import CursosView from './saude/CursosView'
+// Health content (clinical report, glucose log, meal plan, shopping list, hip
+// imaging) is fetched from /saude/content/ — see HealthContent in models.py.
+// It used to be hardcoded here, which compiled real medical records into the
+// public SPA bundle, served before any auth ran.
 import { useLabPanel } from './saude/useLabPanel'
 
 const EXAM_TYPE_LABELS = {
@@ -55,8 +61,23 @@ function formatDate(iso) {
   return `${d}/${m}/${y}`
 }
 
+// Exam videos stream through the same same-origin proxy as the courses
+// (reliable regardless of Drive's preview transcoding). See CursosView.
+const examStreamUrl = (id) => `${API_BASE_URL}/google/drive/stream/${id}/`
+
 function ExamRow({ exam }) {
-  const valoresEntries = exam.valores ? Object.entries(exam.valores).slice(0, 4) : []
+  // A static /exam-media/ URL (served by nginx with native byte-range support)
+  // takes precedence — reliable playback; otherwise fall back to the Drive
+  // stream proxy by file id.
+  const videoUrl = exam.valores?.video_url || null
+  const videoDriveId = exam.valores?.video_drive_id || null
+  const videoSrc = videoUrl || (videoDriveId ? examStreamUrl(videoDriveId) : null)
+  // Player hints, not lab values — keep them out of the value chips.
+  const HIDDEN_KEYS = new Set(['video_url', 'video_drive_id'])
+  const valoresAll = exam.valores
+    ? Object.entries(exam.valores).filter(([k]) => !HIDDEN_KEYS.has(k))
+    : []
+  const valoresEntries = valoresAll.slice(0, 4)
   return (
     <div className={styles.examRow}>
       <div className={styles.examMain}>
@@ -79,24 +100,76 @@ function ExamRow({ exam }) {
                 <strong>{k}:</strong> {String(v)}
               </span>
             ))}
-            {Object.keys(exam.valores || {}).length > 4 && (
-              <span className={styles.examValor}>+{Object.keys(exam.valores).length - 4}</span>
+            {valoresAll.length > 4 && (
+              <span className={styles.examValor}>+{valoresAll.length - 4}</span>
             )}
           </div>
         )}
         {exam.notes && <div className={styles.examNotes}>{exam.notes}</div>}
+        {videoSrc && (
+          <video
+            key={videoSrc}
+            src={videoSrc}
+            controls
+            playsInline
+            preload="metadata"
+            style={{ width: '100%', maxWidth: 560, marginTop: 10, borderRadius: 8, background: '#000', display: 'block' }}
+          />
+        )}
       </div>
-      {exam.arquivo_path && (
-        <a
-          className={styles.examFile}
-          href={`file://${exam.arquivo_path.startsWith('/') ? exam.arquivo_path : '/Users/palmer/Documents/' + exam.arquivo_path}`}
-          target="_blank"
-          rel="noreferrer"
-          title="Abrir arquivo local"
-        >
-          PDF
-        </a>
-      )}
+      {exam.arquivo_path && (() => {
+        // arquivo_path can be (a) a https:// URL (Drive, etc.) — works on any
+        // device, or (b) a legacy local path that only resolves via file://
+        // when we're on Palmer's Mac AND the browser is on a local origin.
+        const path = exam.arquivo_path
+        const isUrl = /^https?:\/\//i.test(path)
+
+        if (isUrl) {
+          return (
+            <a
+              className={styles.examFile}
+              href={path}
+              target="_blank"
+              rel="noreferrer"
+              title="Abrir anexo"
+            >
+              PDF
+            </a>
+          )
+        }
+
+        const host = (typeof window !== 'undefined' && window.location.hostname) || ''
+        const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || ''
+        const plat = (typeof navigator !== 'undefined' && navigator.platform) || ''
+        const isMacUA = /Macintosh/.test(ua) && !/iPad|iPhone|iPod/.test(ua)
+        const isMacPlat = /Mac/i.test(plat) && (navigator.maxTouchPoints || 0) < 2
+        const isLocalHost = host === 'localhost'
+          || host === '127.0.0.1'
+          || host.endsWith('.ts.net')
+        const isLocalMac = isMacUA && isMacPlat && isLocalHost
+        if (!isLocalMac) {
+          return (
+            <span
+              className={`${styles.examFile} ${styles.examFileDisabled}`}
+              title="Arquivo local (legado) — apenas no Mac do Palmer"
+              aria-disabled="true"
+            >
+              PDF
+            </span>
+          )
+        }
+        return (
+          <a
+            className={styles.examFile}
+            href={`file://${path.startsWith('/') ? path : '/Users/palmer/Documents/' + path}`}
+            target="_blank"
+            rel="noreferrer"
+            title="Abrir arquivo local"
+          >
+            PDF
+          </a>
+        )
+      })()}
     </div>
   )
 }
@@ -107,6 +180,10 @@ function ExamRow({ exam }) {
  */
 function PersonalView({ profileId, profileName }) {
   const [adding, setAdding] = useState(false)
+  // Sub-tab inside the profile view. Default = Resumo (clinical narrative).
+  // Painel = full lab panel only. Histórico = full exam list.
+  const [subTab, setSubTab] = useState('resumo')
+
   const { data: exams = [], isLoading: examsLoading } = useQuery({
     queryKey: ['health-exams', profileId],
     queryFn: () => api.get(`/saude/exams/${profileId ? `?profile_id=${profileId}` : ''}`),
@@ -115,6 +192,13 @@ function PersonalView({ profileId, profileName }) {
   const { data: vitals = [] } = useQuery({
     queryKey: ['vital-readings', profileId],
     queryFn: () => api.get(`/saude/vitals/${profileId ? `?profile_id=${profileId}` : ''}`),
+    enabled: !!profileId,
+  })
+  // {slug: payload} — clinical_report, observations, hip_imaging, glucose_log,
+  // meal_plan, shopping_list. Absent slugs just mean the card doesn't render.
+  const { data: healthContent = {} } = useQuery({
+    queryKey: ['health-content', profileId],
+    queryFn: () => api.get(`/saude/content/${profileId ? `?profile_id=${profileId}` : ''}`),
     enabled: !!profileId,
   })
 
@@ -128,85 +212,168 @@ function PersonalView({ profileId, profileName }) {
     return Object.entries(grouped).sort(([a], [b]) => b.localeCompare(a))
   }, [exams])
 
-  const isPalmer = profileName?.toLowerCase().includes('palmer')
+  // isPalmer is gone: the cards it gated (clinical report, hip imaging) now key
+  // off whether the profile actually has that content, not off their name.
   const isRafa = profileName?.toLowerCase().includes('rafa')
 
-  // DB-driven lab panel with fallback to hardcoded JS
-  const fallback = isPalmer ? PALMER_LAB_PANEL : (isRafa ? RAFA_LAB_PANEL : null)
-  const { panel: livePanel, source: panelSource } = useLabPanel(profileId, fallback)
+  // DB-driven lab panel. The old hardcoded fallbacks are gone: LabMarker rows
+  // are the source (Palmer 34, Rafa 105), so the fallback never fired — it just
+  // shipped the panels to anyone who downloaded the bundle.
+  const { panel: livePanel, source: panelSource } = useLabPanel(profileId, null)
+
+  // Nutrição tab only exists for Rafa. If user switches profile while on it,
+  // fall back to Resumo so the panel doesn't render empty.
+  useEffect(() => {
+    if (subTab === 'nutricao' && !isRafa) setSubTab('resumo')
+  }, [isRafa, subTab])
 
   return (
     <div className={styles.tabContent}>
-      <div className={styles.gridTwoCol}>
-        <ExamsRecentWidget exams={exams} title={`${profileName} · últimos exames`} limit={5} />
-        <div className={widgetStyles.examsWidget}>
-          <div className={widgetStyles.widgetLabel}>Vitais recentes</div>
-          {vitals.length === 0 ? (
-            <div className={widgetStyles.examsEmpty}>Nenhuma leitura de vitais ainda.</div>
-          ) : (
-            <div className={widgetStyles.examsList}>
-              {vitals.slice(0, 8).map(v => (
-                <div key={v.id} className={widgetStyles.examMini}>
-                  <span className={widgetStyles.examMiniChip} style={{ background: '#5b8bc4' }}>
-                    {v.tipo_label || v.tipo}
-                  </span>
-                  <div className={widgetStyles.examMiniBody}>
-                    <div className={widgetStyles.examMiniName}>{v.valor}</div>
-                  </div>
-                  <span className={widgetStyles.examMiniDate}>{formatDate(v.data)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+      <div className={styles.subTabs} role="tablist" aria-label="Seções de saúde">
+        <button
+          id="saude-subtab-resumo"
+          role="tab"
+          aria-selected={subTab === 'resumo'}
+          aria-controls="saude-subpanel-resumo"
+          tabIndex={subTab === 'resumo' ? 0 : -1}
+          className={subTab === 'resumo' ? styles.subTabActive : styles.subTab}
+          onClick={() => setSubTab('resumo')}
+        >
+          Resumo
+        </button>
+        <button
+          id="saude-subtab-painel"
+          role="tab"
+          aria-selected={subTab === 'painel'}
+          aria-controls="saude-subpanel-painel"
+          tabIndex={subTab === 'painel' ? 0 : -1}
+          className={subTab === 'painel' ? styles.subTabActive : styles.subTab}
+          onClick={() => setSubTab('painel')}
+        >
+          Painel laboratorial
+        </button>
+        {isRafa && (
+          <button
+            id="saude-subtab-nutricao"
+            role="tab"
+            aria-selected={subTab === 'nutricao'}
+            aria-controls="saude-subpanel-nutricao"
+            tabIndex={subTab === 'nutricao' ? 0 : -1}
+            className={subTab === 'nutricao' ? styles.subTabActive : styles.subTab}
+            onClick={() => setSubTab('nutricao')}
+          >
+            Nutrição
+          </button>
+        )}
+        <button
+          id="saude-subtab-historico"
+          role="tab"
+          aria-selected={subTab === 'historico'}
+          aria-controls="saude-subpanel-historico"
+          tabIndex={subTab === 'historico' ? 0 : -1}
+          className={subTab === 'historico' ? styles.subTabActive : styles.subTab}
+          onClick={() => setSubTab('historico')}
+        >
+          Histórico <span className={styles.subTabCount}>{exams.length}</span>
+        </button>
       </div>
 
-      {isPalmer && (
-        <>
-          <div className={widgetStyles.relatorioBanner}>
-            <div>
-              <div className={widgetStyles.relatorioBannerTitle}>Relatório médico completo</div>
-              <div className={widgetStyles.relatorioBannerDesc}>Síntese de imagem + laboratório + hipóteses diagnósticas para encaminhamento. Print-ready (A4).</div>
-            </div>
-            <a href="/relatorio-palmer.html" target="_blank" rel="noopener" className={widgetStyles.relatorioBannerBtn}>
-              Abrir relatório →
-            </a>
+      {subTab === 'resumo' && (
+        <div
+          id="saude-subpanel-resumo"
+          role="tabpanel"
+          aria-labelledby="saude-subtab-resumo"
+        >
+          {/* Clinical synthesis dashboard — primary focus of the page.
+              Gated on the content existing rather than on the profile's name:
+              same result for Palmer/Rafa, and nothing to render for anyone else. */}
+          {healthContent.clinical_report && (
+            <ClinicalReportCard
+              report={healthContent.clinical_report}
+              observations={healthContent.observations}
+            />
+          )}
+
+          {/* Secondary row: recent exams + vitals (vitals only if present) */}
+          <div className={vitals.length > 0 ? styles.gridTwoCol : styles.gridOneCol}>
+            <ExamsRecentWidget exams={exams} title={`Últimos exames de ${profileName}`} limit={3} />
+            {vitals.length > 0 && (
+              <div className={widgetStyles.examsWidget}>
+                <div className={widgetStyles.widgetLabel}>Vitais recentes</div>
+                <div className={widgetStyles.examsList}>
+                  {vitals.slice(0, 8).map(v => (
+                    <div key={v.id} className={widgetStyles.examMini}>
+                      <span className={widgetStyles.examMiniChip} style={{ background: '#5b8bc4' }}>
+                        {v.tipo_label || v.tipo}
+                      </span>
+                      <div className={widgetStyles.examMiniBody}>
+                        <div className={widgetStyles.examMiniName}>{v.valor}</div>
+                      </div>
+                      <span className={widgetStyles.examMiniDate}>{formatDate(v.data)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-          <ClinicalReportCard report={PALMER_CLINICAL_REPORT} observations={PALMER_OBSERVATIONS} />
-          <HipImagingCard />
-          <LabPanelDashboard panel={livePanel} source={panelSource} />
-        </>
-      )}
-      {isRafa && (
-        <>
-          <ClinicalReportCard report={RAFA_PREGNANCY_REPORT} observations={RAFA_OBSERVATIONS} />
-          <LabPanelDashboard panel={livePanel} source={panelSource} />
-        </>
+
+          {healthContent.hip_imaging && <HipImagingCard data={healthContent.hip_imaging} />}
+        </div>
       )}
 
-      <section className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <h2 className={styles.sectionTitle}>Histórico completo · exames</h2>
-          <span className={styles.sectionCount}>{exams.length}</span>
-          <button className={widgetStyles.addBtn} onClick={() => setAdding(true)}>+ Adicionar exame</button>
+      {subTab === 'nutricao' && isRafa && (
+        <div
+          id="saude-subpanel-nutricao"
+          role="tabpanel"
+          aria-labelledby="saude-subtab-nutricao"
+          className={styles.tabContent}
+        >
+          <MealPlanCard plan={healthContent.meal_plan} />
+          <GlucoseLogCard log={healthContent.glucose_log} />
+          <ShoppingListCard list={healthContent.shopping_list} />
         </div>
-        {examsLoading ? (
-          <div className={styles.empty}>Carregando…</div>
-        ) : exams.length === 0 ? (
-          <div className={styles.empty}>
-            Nenhum exame cadastrado para {profileName}. Use o admin Django.
+      )}
+
+      {subTab === 'painel' && (
+        <div
+          id="saude-subpanel-painel"
+          role="tabpanel"
+          aria-labelledby="saude-subtab-painel"
+        >
+          <LabPanelDashboard panel={livePanel} source={panelSource} />
+        </div>
+      )}
+
+      {subTab === 'historico' && (
+        <section
+          id="saude-subpanel-historico"
+          role="tabpanel"
+          aria-labelledby="saude-subtab-historico"
+          className={styles.section}
+        >
+          <div className={styles.sectionHeader}>
+            <h2 className={styles.sectionTitle}>Histórico completo · exames</h2>
+            <span className={styles.sectionCount}>{exams.length}</span>
+            <button className={widgetStyles.addBtn} onClick={() => setAdding(true)}>+ Adicionar exame</button>
           </div>
-        ) : (
-          examsByYear.map(([year, list]) => (
-            <div key={year} className={styles.yearGroup}>
-              <h3 className={styles.yearTitle}>{year}</h3>
-              <div className={styles.examList}>
-                {list.map(e => <ExamRow key={e.id} exam={e} />)}
-              </div>
+          {examsLoading ? (
+            <div className={styles.empty}>Carregando…</div>
+          ) : exams.length === 0 ? (
+            <div className={styles.empty}>
+              Nenhum exame cadastrado para {profileName}. Use o admin Django.
             </div>
-          ))
-        )}
-      </section>
+          ) : (
+            examsByYear.map(([year, list]) => (
+              <div key={year} className={styles.yearGroup}>
+                <h3 className={styles.yearTitle}>{year}</h3>
+                <div className={styles.examList}>
+                  {list.map(e => <ExamRow key={e.id} exam={e} />)}
+                </div>
+              </div>
+            ))
+          )}
+        </section>
+      )}
 
       {adding && (
         <AddExamForm profileId={profileId} profileName={profileName} onClose={() => setAdding(false)} />
@@ -220,6 +387,7 @@ function PersonalView({ profileId, profileName }) {
  */
 function FamiliaView() {
   const [adding, setAdding] = useState(false)
+  const [famTab, setFamTab] = useState('acompanhamento')
   const { data: pregnancies = [], isLoading } = useQuery({
     queryKey: ['pregnancies-shared'],
     queryFn: () => api.get('/saude/pregnancies/'),
@@ -227,18 +395,59 @@ function FamiliaView() {
   const ativa = pregnancies.find(p => p.status === 'ativa')
   const completedSet = useMemo(() => new Set(ativa?.completed_checkpoint_ids || []), [ativa])
 
-  if (isLoading) return <div className={styles.empty}>Carregando…</div>
-  if (!ativa) {
-    return (
-      <div className={styles.empty}>
-        Nenhuma gestação ativa registrada. Use o admin Django para cadastrar.
-      </div>
-    )
-  }
+  // Baby implications are the gestante's lab findings — fetched, not hardcoded.
+  // Same queryKey as PersonalView, so react-query serves it from cache there.
+  const gestanteId = ativa?.gestante
+  const { data: famContent = {} } = useQuery({
+    queryKey: ['health-content', gestanteId],
+    queryFn: () => api.get(`/saude/content/?profile_id=${gestanteId}`),
+    enabled: !!gestanteId,
+  })
 
   return (
     <div className={styles.tabContent}>
-      <div className={styles.heroRow}>
+      <div className={styles.subTabs} role="tablist" aria-label="Seções da família">
+        <button
+          id="fam-subtab-acompanhamento"
+          role="tab"
+          aria-selected={famTab === 'acompanhamento'}
+          aria-controls="fam-subpanel-acompanhamento"
+          tabIndex={famTab === 'acompanhamento' ? 0 : -1}
+          className={famTab === 'acompanhamento' ? styles.subTabActive : styles.subTab}
+          onClick={() => setFamTab('acompanhamento')}
+        >
+          Acompanhamento
+        </button>
+        <button
+          id="fam-subtab-cursos"
+          role="tab"
+          aria-selected={famTab === 'cursos'}
+          aria-controls="fam-subpanel-cursos"
+          tabIndex={famTab === 'cursos' ? 0 : -1}
+          className={famTab === 'cursos' ? styles.subTabActive : styles.subTab}
+          onClick={() => setFamTab('cursos')}
+        >
+          Cursos
+        </button>
+      </div>
+
+      {famTab === 'cursos' && (
+        <div id="fam-subpanel-cursos" role="tabpanel" aria-labelledby="fam-subtab-cursos">
+          <CursosView />
+        </div>
+      )}
+
+      {famTab === 'acompanhamento' && (
+        <div id="fam-subpanel-acompanhamento" role="tabpanel" aria-labelledby="fam-subtab-acompanhamento">
+        {isLoading ? (
+          <div className={styles.empty}>Carregando…</div>
+        ) : !ativa ? (
+          <div className={styles.empty}>
+            Nenhuma gestação ativa registrada. Use o admin Django para cadastrar.
+          </div>
+        ) : (
+          <>
+            <div className={styles.heroRow}>
         <div className={styles.heroLeft}>
           <div className={styles.familyTitle}>Gestação · {ativa.gestante_name}</div>
           <div className={styles.familyMeta}>
@@ -254,11 +463,16 @@ function FamiliaView() {
         </div>
       </div>
 
-      <PregnancyTimeline pregnancy={ativa} completedIds={completedSet} />
-
       <CarenciaExamConflictWidget pregnancy={ativa} />
 
-      <BabyImplicationsSection />
+      <BabyImplicationsSection items={famContent.baby_implications} />
+
+      {/* Linha do tempo horizontal recolhida — duplica conteúdo dos
+         checkpoints abaixo. Disponível sob demanda. */}
+      <details className={styles.timelineAccordion}>
+        <summary>Linha do tempo gestacional · 0–40 semanas</summary>
+        <PregnancyTimeline pregnancy={ativa} completedIds={completedSet} />
+      </details>
 
       <div className={styles.gridTwoCol}>
         <MobilogramaWidget pregnancy={ativa} profileId={ativa.gestante} />
@@ -304,6 +518,10 @@ function FamiliaView() {
             ))}
           </div>
         </section>
+      )}
+          </>
+        )}
+        </div>
       )}
     </div>
   )

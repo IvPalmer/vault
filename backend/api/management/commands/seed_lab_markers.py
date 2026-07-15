@@ -100,13 +100,16 @@ PALMER_CATEGORIES = [
         ],
     },
     {
-        'slug': 'inflamatorio', 'label': 'Marcadores inflamatórios', 'order': 8,
+        'slug': 'inflamatorio', 'label': 'Marcadores inflamatórios + EpA', 'order': 8,
         'exam_date': PALMER_FOLLOWUP_DATE,  # most recent values
         'markers': [
             {'key': 'pcr', 'label': 'PCR ultrassensível', 'value': 0.25, 'unit': 'mg/dL', 'ref_max': 0.5, 'status': 'normal',
              'obs': 'Normalizou — caiu 13× desde mai/2025. Resolução do processo inflamatório sistêmico.'},
             {'key': 'vhs', 'label': 'VHS', 'value': 14, 'unit': 'mm/h', 'ref_max': 15, 'status': 'normal',
              'obs': 'Dentro da referência. Caiu de 17 (mai/2025).'},
+            {'key': 'hla_b27', 'label': 'HLA-B27', 'value_text': 'Não detectado', 'status': 'normal',
+             'ref_text': 'Não detectado',
+             'obs': 'Negativo. Exclui predisposição genética para espondiloartropatias (EpA, espondilite anquilosante, artrite reativa, psoriásica axial). Investigação reumatológica encerrada.'},
         ],
     },
     {
@@ -134,6 +137,7 @@ PALMER_CATEGORIES = [
 
 # ─── RAFA PANEL — collected 2025-05-01 by DASA ──────────────────────
 RAFA_BASELINE_DATE = date(2025, 5, 1)  # matches seed_health "Hemograma — Consolidado"
+RAFA_VITD_FOLLOWUP_DATE = date(2026, 5, 13)  # matches seed_health "25-OH Vitamina D (coleta avulsa)"
 
 RAFA_CATEGORIES = [
     {
@@ -205,7 +209,16 @@ RAFA_CATEGORIES = [
             {'key': 'folato', 'label': 'Ácido fólico', 'value': 23.6, 'unit': 'ng/mL', 'ref_min': 5.38, 'status': 'normal',
              'obs': 'Crítico na gestação para tubo neural — níveis ótimos.'},
             {'key': 'homocisteina', 'label': 'Homocisteína', 'value': 5.53, 'unit': 'µmol/L', 'ref_min': 4.44, 'ref_max': 13.56, 'status': 'normal'},
-            {'key': 'vit_d', 'label': '25-OH Vitamina D', 'value': 40.8, 'unit': 'ng/mL', 'ref_min': 30, 'ref_max': 60, 'status': 'normal'},
+            {'key': 'vit_d', 'label': '25-OH Vitamina D', 'value': 40.8, 'unit': 'ng/mL', 'ref_min': 30, 'ref_max': 60, 'status': 'normal',
+             'obs': 'Baseline pré-gestacional 28/05/2025. Caiu para 19 em 13/05/2026 (insuficiência gestacional) — ver follow-up.'},
+        ],
+    },
+    {
+        'slug': 'micronutrientes', 'label': 'Vitamina D follow-up (gestação)', 'order': 5,
+        'exam_date': RAFA_VITD_FOLLOWUP_DATE,
+        'markers': [
+            {'key': 'vit_d_fu', 'label': '25-OH Vitamina D (follow-up gestacional)', 'value': 19, 'unit': 'ng/mL', 'ref_min': 30, 'ref_max': 60, 'status': 'low',
+             'obs': 'INSUFICIÊNCIA. Ref grupo risco (gestante): 30-60 ng/mL. Histórico: 41 (mai/2025) → 19 (mai/2026, IG ~12s). Ação: discutir D3 com Dra. Nahara + recoletar em 8-12 sem. Hipovit D associada a maior risco de pré-eclâmpsia e DMG.'},
         ],
     },
     {

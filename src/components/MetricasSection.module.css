@@ -87,6 +87,21 @@
   gap: var(--space-xs, 6px);
 }
 
+/* Hero group — RESUMO renders above the fold with stronger emphasis */
+.cardGroupHero {
+  padding: var(--space-md) 0 var(--space-lg);
+  margin-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--color-border);
+  gap: var(--space-sm);
+}
+
+.cardGroupHero .groupLabel {
+  font-size: 0.66rem;
+  letter-spacing: 2px;
+  color: var(--color-text);
+  opacity: 0.55;
+}
+
 .groupHeader {
   display: flex;
   align-items: center;
@@ -113,6 +128,16 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: var(--space-sm);
+}
+
+/* Hero grid — fewer, larger cards. Actual value sizing happens via
+   MetricCard's `size="lg"` variant in MetricCard.module.css. */
+.gridHero {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-md);
+}
+.gridHero > * {
+  min-height: 110px;
 }
 
 .loading,

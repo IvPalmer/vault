@@ -59,6 +59,21 @@
   border-radius: var(--radius-lg);
   padding: var(--space-md);
   box-shadow: var(--shadow-sm);
+  container-type: inline-size;
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  .card {
+    padding: var(--space-sm);
+  }
+  /* Recharts SVG: reduce tick label font size on tight screens to prevent overlap */
+  .card :global(.recharts-cartesian-axis-tick-value) {
+    font-size: 10px;
+  }
+  .card :global(.recharts-legend-wrapper) {
+    font-size: 11px;
+  }
 }
 
 .cardTitle {

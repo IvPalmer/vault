@@ -1,11 +1,15 @@
 import { useState, useRef, useCallback, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import api, { getProfileId } from '../api/client'
+import api, { getProfileId, getAccessToken } from '../api/client'
 import { useProfile } from '../context/ProfileContext'
 import InlineEdit from './InlineEdit'
 import CalendarSettings from './CalendarSettings'
 import RemindersSettings from './RemindersSettings'
+import {
+  IconGear, IconSync, IconUser, IconBank, IconList,
+  IconTag, IconMoney, IconPencil, IconDownload, IconChart,
+} from './SettingsIcons'
 import styles from './Settings.module.css'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
@@ -58,6 +62,11 @@ function TemplateTypeSelector({ value, onChange }) {
 
 function SalarySection({ config, projection, templates, editing, setEditing, syncing, syncResult, onSync, onSave }) {
   const [form, setForm] = useState({})
+  // Percent inputs are held as raw editable strings (e.g. "0.91") while editing,
+  // and converted back to their stored fractional form (0.0091) only on save.
+  // Storing them in form.* as fractions and re-deriving value={(form.x*100)...}
+  // reformatted every keystroke, making the fields un-typeable.
+  const [pctStr, setPctStr] = useState({})
   const incomeTemplates = templates.filter(t => t.template_type === 'Income')
 
   const startEdit = () => {
@@ -72,7 +81,26 @@ function SalarySection({ config, projection, templates, editing, setEditing, syn
       advance_num_cycles: config?.advance_num_cycles || 0,
       income_template_id: config?.income_template_id || '',
     })
+    setPctStr({
+      wise_fee_pct: String(((config?.wise_fee_pct ?? 0.0091) * 100).toFixed(2)),
+      tax_hold_pct: String(((config?.tax_hold_pct ?? 0.08) * 100).toFixed(0)),
+      advance_recoup_pct: String(((config?.advance_recoup_pct ?? 0.125) * 100).toFixed(1)),
+    })
     setEditing(true)
+  }
+
+  // Build the save payload, converting the raw percent strings back to fractions.
+  const handleSave = () => {
+    const toFraction = (s, fallback) => {
+      const n = parseFloat(s)
+      return Number.isFinite(n) ? n / 100 : fallback
+    }
+    onSave({
+      ...form,
+      wise_fee_pct: toFraction(pctStr.wise_fee_pct, form.wise_fee_pct),
+      tax_hold_pct: toFraction(pctStr.tax_hold_pct, form.tax_hold_pct),
+      advance_recoup_pct: toFraction(pctStr.advance_recoup_pct, form.advance_recoup_pct),
+    })
   }
 
   const fmtBrl = (v) => v != null ? `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '—'
@@ -84,7 +112,7 @@ function SalarySection({ config, projection, templates, editing, setEditing, syn
   return (
     <div className={styles.section}>
       <div className={styles.sectionHeader}>
-        <div className={styles.sectionIcon}>💰</div>
+        <div className={styles.sectionIcon}><IconMoney /></div>
         <div>
           <h2 className={styles.sectionTitle}>Projecao Salarial</h2>
           <p className={styles.sectionDesc}>
@@ -128,8 +156,8 @@ function SalarySection({ config, projection, templates, editing, setEditing, syn
                   type="number"
                   step="0.01"
                   className={styles.formInput}
-                  value={(form.wise_fee_pct * 100).toFixed(2)}
-                  onChange={(e) => setForm({ ...form, wise_fee_pct: parseFloat(e.target.value) / 100 || 0 })}
+                  value={pctStr.wise_fee_pct ?? ''}
+                  onChange={(e) => setPctStr({ ...pctStr, wise_fee_pct: e.target.value })}
                 />
               </label>
               <label>
@@ -148,8 +176,8 @@ function SalarySection({ config, projection, templates, editing, setEditing, syn
                   type="number"
                   step="0.01"
                   className={styles.formInput}
-                  value={(form.tax_hold_pct * 100).toFixed(0)}
-                  onChange={(e) => setForm({ ...form, tax_hold_pct: parseFloat(e.target.value) / 100 || 0 })}
+                  value={pctStr.tax_hold_pct ?? ''}
+                  onChange={(e) => setPctStr({ ...pctStr, tax_hold_pct: e.target.value })}
                 />
               </label>
               <label>
@@ -171,8 +199,8 @@ function SalarySection({ config, projection, templates, editing, setEditing, syn
                   type="number"
                   step="0.01"
                   className={styles.formInput}
-                  value={(form.advance_recoup_pct * 100).toFixed(1)}
-                  onChange={(e) => setForm({ ...form, advance_recoup_pct: parseFloat(e.target.value) / 100 || 0 })}
+                  value={pctStr.advance_recoup_pct ?? ''}
+                  onChange={(e) => setPctStr({ ...pctStr, advance_recoup_pct: e.target.value })}
                 />
               </label>
               <label>
@@ -196,7 +224,7 @@ function SalarySection({ config, projection, templates, editing, setEditing, syn
               </label>
             </div>
             <div className={styles.salaryFormActions}>
-              <button className={styles.formSaveBtn} onClick={() => onSave(form)}>Salvar</button>
+              <button className={styles.formSaveBtn} onClick={handleSave}>Salvar</button>
               <button className={styles.cancelBtn} onClick={() => setEditing(false)}>Cancelar</button>
             </div>
           </div>
@@ -288,6 +316,9 @@ function Settings({ onOpenWizard }) {
   const [newType, setNewType] = useState('Fixo')
   const [newAmount, setNewAmount] = useState('')
   const [newDueDay, setNewDueDay] = useState('')
+  const [newCategoryMode, setNewCategoryMode] = useState(false)
+  const [newCategoryId, setNewCategoryId] = useState('')
+  const [newExpectedSource, setNewExpectedSource] = useState('avg_3m')
   const [newSaving, setNewSaving] = useState(false)
 
   // Categories management
@@ -300,6 +331,24 @@ function Settings({ onOpenWizard }) {
 
   // Budget subcategory expansion
   const [expandedBudgetCat, setExpandedBudgetCat] = useState(null)
+
+  // Budget month selector (for monthly limit overrides)
+  const [selectedBudgetMonth, setSelectedBudgetMonth] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
+
+  const budgetMonthOptions = useMemo(() => {
+    const options = []
+    const base = new Date()
+    for (let offset = -3; offset <= 12; offset++) {
+      const d = new Date(base.getFullYear(), base.getMonth() + offset, 1)
+      const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      const label = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', '').replace(/(^\w)/, m => m.toUpperCase())
+      options.push({ value, label })
+    }
+    return options
+  }, [])
 
   // Profile settings
   const { profileId, currentProfile, profileSlug } = useProfile()
@@ -542,7 +591,11 @@ function Settings({ onOpenWizard }) {
 
     try {
       const profileId = getProfileId()
-      const headers = profileId ? { 'X-Profile-ID': profileId } : {}
+      const token = getAccessToken()
+      const headers = {
+        ...(profileId && { 'X-Profile-ID': profileId }),
+        ...(token && { Authorization: `Bearer ${token}` }),
+      }
       const res = await fetch(`${API_BASE}/import/?action=upload`, {
         method: 'POST',
         body: formData,
@@ -560,6 +613,7 @@ function Settings({ onOpenWizard }) {
             headers: {
               'Content-Type': 'application/json',
               ...(profileId && { 'X-Profile-ID': profileId }),
+              ...(token && { Authorization: `Bearer ${token}` }),
             },
           })
           const importData = await importRes.json()
@@ -595,11 +649,13 @@ function Settings({ onOpenWizard }) {
     setImportResult(null)
     try {
       const profileId = getProfileId()
+      const token = getAccessToken()
       const res = await fetch(`${API_BASE}/import/?action=run`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(profileId && { 'X-Profile-ID': profileId }),
+          ...(token && { Authorization: `Bearer ${token}` }),
         },
       })
       const data = await res.json()
@@ -643,6 +699,57 @@ function Settings({ onOpenWizard }) {
     }
   }
 
+  // Drag-and-drop state for reordering Itens Recorrentes.
+  // Reorder is scoped per template_type group so dropping a Fixo item onto
+  // an Income row doesn't cross categories. Backend accepts display_order
+  // via the existing PATCH /analytics/recurring/templates/ endpoint.
+  const [dragTplId, setDragTplId] = useState(null)
+  const [dragOverTplId, setDragOverTplId] = useState(null)
+  const [dragTplGroup, setDragTplGroup] = useState(null)
+
+  const handleTplDragStart = (e, id, groupType) => {
+    setDragTplId(id)
+    setDragTplGroup(groupType)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(id))
+  }
+  const handleTplDragEnd = () => {
+    setDragTplId(null)
+    setDragOverTplId(null)
+    setDragTplGroup(null)
+  }
+  const handleTplDragOver = (e, id, groupType) => {
+    if (dragTplGroup && dragTplGroup !== groupType) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (dragOverTplId !== id) setDragOverTplId(id)
+  }
+  const handleTplDragLeave = () => setDragOverTplId(null)
+  const handleTplDrop = async (e, targetId, groupType, items) => {
+    e.preventDefault()
+    const srcId = dragTplId
+    setDragTplId(null)
+    setDragOverTplId(null)
+    setDragTplGroup(null)
+    if (!srcId || srcId === targetId) return
+    if (groupType !== dragTplGroup) return
+    const srcIdx = items.findIndex(t => t.id === srcId)
+    const tgtIdx = items.findIndex(t => t.id === targetId)
+    if (srcIdx < 0 || tgtIdx < 0) return
+    const reordered = [...items]
+    const [moved] = reordered.splice(srcIdx, 1)
+    reordered.splice(tgtIdx, 0, moved)
+    // Patch display_order sequentially (0, 1, 2, ...)
+    try {
+      await Promise.all(reordered.map((tpl, idx) =>
+        api.patch('/analytics/recurring/templates/', { id: tpl.id, display_order: idx })
+      ))
+      refetchTemplates()
+    } catch (err) {
+      console.error('Failed to reorder templates:', err)
+    }
+  }
+
   // Template management handlers
   const handleUpdateTemplate = async (id, field, value) => {
     try {
@@ -668,21 +775,32 @@ function Settings({ onOpenWizard }) {
 
   const handleCreateTemplate = async (e) => {
     e.preventDefault()
-    if (!newName.trim() || !newAmount) return
+    if (!newName.trim()) return
+    if (newCategoryMode ? !newCategoryId : !newAmount) return
     setNewSaving(true)
     try {
-      await api.post('/analytics/recurring/templates/', {
+      const payload = {
         name: newName.trim(),
         template_type: newType,
-        default_limit: parseFloat(newAmount),
+        default_limit: newCategoryMode ? 0 : parseFloat(newAmount),
         due_day: newDueDay ? parseInt(newDueDay) : null,
-      })
+      }
+      if (newCategoryMode) {
+        payload.match_mode = 'category'
+        payload.category_id = newCategoryId
+        payload.expected_source = newExpectedSource
+        if (newAmount) payload.expected_floor_amount = parseFloat(newAmount)
+      }
+      await api.post('/analytics/recurring/templates/', payload)
       refetchTemplates()
       setShowNewForm(false)
       setNewName('')
       setNewType('Fixo')
       setNewAmount('')
       setNewDueDay('')
+      setNewCategoryMode(false)
+      setNewCategoryId('')
+      setNewExpectedSource('avg_3m')
     } catch (err) {
       console.error('Failed to create template:', err)
     } finally {
@@ -695,6 +813,81 @@ function Settings({ onOpenWizard }) {
     queryKey: ['all-categories'],
     queryFn: () => api.get('/categories/'),
   })
+
+  // BudgetConfig overrides for the selected month (per-category monthly limits)
+  const { data: budgetConfigsData } = useQuery({
+    queryKey: ['budget-configs', selectedBudgetMonth],
+    queryFn: () => api.get(`/budget-configs/?month_str=${selectedBudgetMonth}`),
+  })
+
+  const budgetConfigsByCategory = useMemo(() => {
+    const map = new Map()
+    if (!budgetConfigsData) return map
+    const list = Array.isArray(budgetConfigsData) ? budgetConfigsData : (budgetConfigsData.results || [])
+    for (const cfg of list) {
+      if (cfg.category) map.set(String(cfg.category), cfg)
+    }
+    return map
+  }, [budgetConfigsData])
+
+  // Orcamento (consumo atual por categoria + subcategoria no mês selecionado)
+  const { data: orcamentoData } = useQuery({
+    queryKey: ['orcamento-settings', selectedBudgetMonth],
+    queryFn: () => api.get(`/analytics/orcamento/?month_str=${selectedBudgetMonth}`),
+    enabled: !!selectedBudgetMonth,
+  })
+
+  const orcamentoByCategory = useMemo(() => {
+    const map = new Map()
+    if (!orcamentoData?.categories) return map
+    for (const oc of orcamentoData.categories) {
+      const subSpent = new Map()
+      for (const s of oc.subcategories || []) {
+        subSpent.set(String(s.id), parseFloat(s.spent || 0))
+      }
+      map.set(String(oc.id), { spent: parseFloat(oc.spent || 0), subSpent })
+    }
+    return map
+  }, [orcamentoData])
+
+  // Status helper: ok < 80%, warning 80-100%, over > 100%, sem limite + gasto > 0 = over
+  const computeUsageStatus = (spent, limit) => {
+    if (!limit || limit <= 0) return spent > 0 ? 'over' : 'ok'
+    const pct = spent / limit
+    if (pct > 1) return 'over'
+    if (pct >= 0.8) return 'warning'
+    return 'ok'
+  }
+
+  const saveBudgetOverride = async (categoryId, value) => {
+    const existing = budgetConfigsByCategory.get(String(categoryId))
+    try {
+      if (existing) {
+        await api.patch(`/budget-configs/${existing.id}/`, { limit_override: value })
+      } else {
+        await api.post('/budget-configs/', {
+          category: categoryId,
+          month_str: selectedBudgetMonth,
+          pay_num: 0,
+          limit_override: value,
+        })
+      }
+      queryClient.invalidateQueries({ queryKey: ['budget-configs', selectedBudgetMonth] })
+    } catch (err) {
+      console.error('Failed to save budget override:', err)
+    }
+  }
+
+  const clearBudgetOverride = async (categoryId) => {
+    const existing = budgetConfigsByCategory.get(String(categoryId))
+    if (!existing) return
+    try {
+      await api.delete(`/budget-configs/${existing.id}/`)
+      queryClient.invalidateQueries({ queryKey: ['budget-configs', selectedBudgetMonth] })
+    } catch (err) {
+      console.error('Failed to clear budget override:', err)
+    }
+  }
 
   const allCategories = useMemo(() => {
     if (!categoriesData) return []
@@ -825,19 +1018,44 @@ function Settings({ onOpenWizard }) {
   }, [templatesData])
 
   const totalAllocated = useMemo(() => {
-    return taxonomyCategories.reduce((s, c) => s + parseFloat(c.default_limit || 0), 0)
-  }, [taxonomyCategories])
+    return taxonomyCategories.reduce((s, c) => {
+      const cfg = budgetConfigsByCategory.get(String(c.id))
+      const value = cfg ? parseFloat(cfg.limit_override || 0) : parseFloat(c.default_limit || 0)
+      return s + value
+    }, 0)
+  }, [taxonomyCategories, budgetConfigsByCategory])
+
+  const SECTION_NAV = [
+    { id: 'wizard', label: 'Wizard' },
+    { id: 'pluggy', label: 'Pluggy' },
+    { id: 'google', label: 'Google' },
+    { id: 'reminders', label: 'Lembretes' },
+    { id: 'profile', label: 'Perfil' },
+    { id: 'contas', label: 'Contas' },
+    { id: 'recorrentes', label: 'Recorrentes' },
+    { id: 'categorias', label: 'Categorias' },
+    { id: 'orcamento', label: 'Orçamento' },
+    { id: 'regras', label: 'Regras' },
+    { id: 'importar', label: 'Importar' },
+    { id: 'salario', label: 'Salário' },
+    { id: 'status', label: 'Status' },
+  ]
 
   return (
     <div className={styles.container}>
+      <nav className={styles.sectionNav} aria-label="Seções de configuração">
+        {SECTION_NAV.map(s => (
+          <a key={s.id} href={`#${s.id}`} className={styles.sectionNavLink}>{s.label}</a>
+        ))}
+      </nav>
 
       {/* ============================================================ */}
       {/* SETUP WIZARD BUTTON                                          */}
       {/* ============================================================ */}
       {onOpenWizard && (
-        <div className={styles.section}>
+        <div id="wizard" className={styles.section}>
           <div className={styles.sectionHeader}>
-            <div className={styles.sectionIcon}>&#9881;</div>
+            <div className={styles.sectionIcon}><IconGear /></div>
             <div style={{ flex: 1 }}>
               <h2 className={styles.sectionTitle}>Assistente de Configuracao</h2>
               <p className={styles.sectionDesc}>
@@ -857,9 +1075,9 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* PLUGGY SYNC                                                   */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="pluggy" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>🔄</div>
+          <div className={styles.sectionIcon}><IconSync /></div>
           <div style={{ flex: 1 }}>
             <h2 className={styles.sectionTitle}>Sincronizacao Pluggy</h2>
             <p className={styles.sectionDesc}>
@@ -898,15 +1116,15 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* CALENDAR SETTINGS                                             */}
       {/* ============================================================ */}
-      <CalendarSettings />
-      <RemindersSettings />
+      <div id="google"><CalendarSettings /></div>
+      <div id="reminders"><RemindersSettings /></div>
 
       {/* ============================================================ */}
       {/* SECTION 1: PROFILE SETTINGS (PERFIL)                         */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="profile" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>👤</div>
+          <div className={styles.sectionIcon}><IconUser /></div>
           <div>
             <h2 className={styles.sectionTitle}>Perfil</h2>
             <p className={styles.sectionDesc}>
@@ -962,9 +1180,9 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* SECTION 2: ACCOUNT MANAGEMENT (CONTAS BANCÁRIAS)             */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="contas" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>🏦</div>
+          <div className={styles.sectionIcon}><IconBank /></div>
           <div>
             <h2 className={styles.sectionTitle}>Contas Bancárias</h2>
             <p className={styles.sectionDesc}>
@@ -1050,7 +1268,7 @@ function Settings({ onOpenWizard }) {
                       onSave={(val) => handleUpdateAccount(acct.id, 'closing_day', val)}
                       format="currency"
                       prefix=""
-                      placeholder={'\u2014'}
+                      placeholder={"—"}
                       color="var(--color-text-secondary)"
                     />
                   </span>
@@ -1061,7 +1279,7 @@ function Settings({ onOpenWizard }) {
                       onSave={(val) => handleUpdateAccount(acct.id, 'due_day', val)}
                       format="currency"
                       prefix=""
-                      placeholder={'\u2014'}
+                      placeholder={"—"}
                       color="var(--color-text-secondary)"
                     />
                   </span>
@@ -1070,7 +1288,7 @@ function Settings({ onOpenWizard }) {
                     onClick={() => handleDeleteAccount(acct.id, acct.name)}
                     title="Excluir conta"
                   >
-                    {'\u00d7'}
+                    {'×'}
                   </button>
                 </div>
               )
@@ -1085,9 +1303,9 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* SECTION 3: RECURRING TEMPLATES                               */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="recorrentes" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>📋</div>
+          <div className={styles.sectionIcon}><IconList /></div>
           <div>
             <h2 className={styles.sectionTitle}>Itens Recorrentes</h2>
             <p className={styles.sectionDesc}>
@@ -1116,19 +1334,54 @@ function Settings({ onOpenWizard }) {
             <select
               className={styles.formSelect}
               value={newType}
-              onChange={(e) => setNewType(e.target.value)}
+              onChange={(e) => { setNewType(e.target.value); if (e.target.value !== 'Fixo') setNewCategoryMode(false) }}
             >
               <option value="Fixo">Fixo</option>
               <option value="Variavel">Variável</option>
               <option value="Income">Entrada</option>
               <option value="Investimento">Investimento</option>
             </select>
+            {newType === 'Fixo' && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={newCategoryMode}
+                  onChange={(e) => setNewCategoryMode(e.target.checked)}
+                />
+                Categoria inteira
+              </label>
+            )}
+            {newCategoryMode && (
+              <>
+                <select
+                  className={styles.formSelect}
+                  value={newCategoryId}
+                  onChange={(e) => setNewCategoryId(e.target.value)}
+                >
+                  <option value="">Categoria…</option>
+                  {allCategories.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                <select
+                  className={styles.formSelect}
+                  value={newExpectedSource}
+                  onChange={(e) => setNewExpectedSource(e.target.value)}
+                  title="Como o valor esperado é calculado"
+                >
+                  <option value="avg_3m">Média 3m</option>
+                  <option value="prev_month">Mês anterior</option>
+                  <option value="max_floor_avg">Max(piso, média)</option>
+                  <option value="manual">Manual</option>
+                </select>
+              </>
+            )}
             <div className={styles.amountWrap}>
               <span className={styles.amountPrefix}>R$</span>
               <input
                 className={styles.amountInput}
                 type="number"
-                placeholder="0"
+                placeholder={newCategoryMode ? 'Piso (opc)' : '0'}
                 value={newAmount}
                 onChange={(e) => setNewAmount(e.target.value)}
                 step="0.01"
@@ -1147,7 +1400,7 @@ function Settings({ onOpenWizard }) {
             <button
               className={styles.formSaveBtn}
               type="submit"
-              disabled={newSaving || !newName.trim() || !newAmount}
+              disabled={newSaving || !newName.trim() || (newCategoryMode ? !newCategoryId : !newAmount)}
             >
               {newSaving ? '...' : 'Criar'}
             </button>
@@ -1172,19 +1425,52 @@ function Settings({ onOpenWizard }) {
                     R$ {Math.abs(groupTotal).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
                   </span>
                 </div>
+                <div className={styles.tplHeaderRow} aria-hidden="true">
+                  <span className={styles.tplDragCol} />
+                  <span className={styles.tplDueDay}>Dia</span>
+                  <span className={styles.tplName}>Item</span>
+                  <span className={styles.tplType}>Tipo</span>
+                  <span className={styles.tplAmount}>Valor</span>
+                  <span className={styles.tplDateCol}>Início</span>
+                  <span className={styles.tplDateCol}>Fim</span>
+                  <span className={styles.tplDelCol} />
+                </div>
                 <div className={styles.itemList}>
-                  {items.map((tpl) => (
-                    <div key={tpl.id} className={styles.tplRow}>
+                  {items.map((tpl, idx) => (
+                    <div
+                      key={tpl.id}
+                      className={`${styles.tplRow} ${dragTplId === tpl.id ? styles.tplRowDragging : ''} ${dragOverTplId === tpl.id && dragTplId !== tpl.id ? styles.tplRowDragOver : ''}`}
+                      onDragOver={(e) => handleTplDragOver(e, tpl.id, groupType)}
+                      onDragLeave={handleTplDragLeave}
+                      onDrop={(e) => handleTplDrop(e, tpl.id, groupType, items)}
+                    >
+                      <span
+                        className={styles.tplDragHandle}
+                        draggable
+                        onDragStart={(e) => handleTplDragStart(e, tpl.id, groupType)}
+                        onDragEnd={handleTplDragEnd}
+                        title="Arrastar para reordenar"
+                        aria-label="Arrastar para reordenar"
+                      >
+                        <svg width="12" height="14" viewBox="0 0 12 14" aria-hidden="true">
+                          <circle cx="3" cy="3" r="1.2" fill="currentColor" />
+                          <circle cx="9" cy="3" r="1.2" fill="currentColor" />
+                          <circle cx="3" cy="7" r="1.2" fill="currentColor" />
+                          <circle cx="9" cy="7" r="1.2" fill="currentColor" />
+                          <circle cx="3" cy="11" r="1.2" fill="currentColor" />
+                          <circle cx="9" cy="11" r="1.2" fill="currentColor" />
+                        </svg>
+                      </span>
                       <span className={styles.tplDueDay}>
                         {tpl.due_day == null ? (
-                          <span style={{ color: 'var(--color-text-secondary)' }}>{'\u2014'}</span>
+                          <span style={{ color: 'var(--color-text-secondary)' }}>{"—"}</span>
                         ) : (
                           <InlineEdit
                             value={tpl.due_day}
                             onSave={(val) => handleUpdateTemplate(tpl.id, 'due_day', val)}
                             format="currency"
                             prefix=""
-                            placeholder="\u2014"
+                            placeholder="—"
                             color="var(--color-text-secondary)"
                           />
                         )}
@@ -1211,12 +1497,30 @@ function Settings({ onOpenWizard }) {
                           color="var(--color-text)"
                         />
                       </span>
+                      <span className={styles.tplDateCol} title="Início do contrato (YYYY-MM)">
+                        <InlineEdit
+                          value={tpl.contract_start || ''}
+                          placeholder="—"
+                          format="text"
+                          onSave={(val) => handleUpdateTemplate(tpl.id, 'contract_start', val)}
+                          color="var(--color-text-secondary)"
+                        />
+                      </span>
+                      <span className={styles.tplDateCol} title="Fim do contrato (YYYY-MM)">
+                        <InlineEdit
+                          value={tpl.end_month || ''}
+                          placeholder="—"
+                          format="text"
+                          onSave={(val) => handleUpdateTemplate(tpl.id, 'end_month', val)}
+                          color="var(--color-text-secondary)"
+                        />
+                      </span>
                       <button
                         className={styles.deleteBtn}
                         onClick={() => handleDeleteTemplate(tpl.id, tpl.name)}
                         title="Desativar template"
                       >
-                        {'\u00d7'}
+                        {'×'}
                       </button>
                     </div>
                   ))}
@@ -1230,9 +1534,9 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* SECTION 4: CATEGORIES & SUBCATEGORIES (taxonomy only)        */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="categorias" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>🏷️</div>
+          <div className={styles.sectionIcon}><IconTag /></div>
           <div>
             <h2 className={styles.sectionTitle}>Categorias & Subcategorias</h2>
             <p className={styles.sectionDesc}>
@@ -1283,12 +1587,12 @@ function Settings({ onOpenWizard }) {
           </span>
 
           {/* Flat alphabetical list of taxonomy categories */}
-          <div className={styles.itemList}>
+          <div className={styles.catGridList}>
             {taxonomyCategories.map((cat) => {
               const isExpanded = expandedCat === cat.id
               const subCount = cat.subcategories?.length || 0
               return (
-                <div key={cat.id}>
+                <div key={cat.id} className={isExpanded ? styles.catGridItemExpanded : styles.catGridItem}>
                   <div className={styles.catRow}>
                     <button
                       className={styles.catExpandBtn}
@@ -1314,7 +1618,7 @@ function Settings({ onOpenWizard }) {
                       onClick={() => handleDeleteCategory(cat.id, cat.name)}
                       title="Desativar categoria"
                     >
-                      {'\u00d7'}
+                      {'×'}
                     </button>
                   </div>
 
@@ -1330,7 +1634,7 @@ function Settings({ onOpenWizard }) {
                             onClick={() => handleDeleteSubcategory(sub.id, sub.name)}
                             title="Excluir subcategoria"
                           >
-                            {'\u00d7'}
+                            {'×'}
                           </button>
                         </div>
                       ))}
@@ -1370,9 +1674,9 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* SECTION 5: BUDGET & INVESTMENTS (ORÇAMENTO & INVESTIMENTOS)  */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="orcamento" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>💰</div>
+          <div className={styles.sectionIcon}><IconMoney /></div>
           <div>
             <h2 className={styles.sectionTitle}>Orçamento & Investimentos</h2>
             <p className={styles.sectionDesc}>
@@ -1409,13 +1713,47 @@ function Settings({ onOpenWizard }) {
             </div>
           </div>
 
-          {/* Category budget limits with subcategory expansion */}
-          <h4 className={styles.subheading}>Limites por Categoria (Variável)</h4>
+          {/* Category budget limits with monthly override + subcategory expansion */}
+          <div className={styles.budgetToolbar}>
+            <h4 className={styles.subheading} style={{ margin: 0 }}>Limites por Categoria</h4>
+            <select
+              className={styles.budgetMonthSelect}
+              value={selectedBudgetMonth}
+              onChange={(e) => setSelectedBudgetMonth(e.target.value)}
+              title="Mês do override (vazio = usa o padrão da categoria)"
+            >
+              {budgetMonthOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className={styles.budgetTableHeader}>
+            <span style={{ width: 24, flexShrink: 0 }} />
+            <span className={styles.budgetCatName}>Categoria</span>
+            <span className={styles.budgetLimitSmall} title="Limite usado quando não há override do mês">Padrão</span>
+            <span className={styles.budgetLimitSmall} title="Override apenas para o mês selecionado">Override</span>
+            <span className={styles.budgetLimitEffective}>Efetivo</span>
+            <span className={styles.budgetLimitSmall} title="Gasto realizado no mês">Gasto</span>
+            <span className={styles.budgetUsageCell} title="Uso do limite">Uso</span>
+            <span style={{ width: 32, flexShrink: 0 }} />
+          </div>
           <div className={styles.itemList}>
             {taxonomyCategories.map((cat) => {
               const subs = cat.subcategories || []
               const hasSubs = subs.length > 0
               const isBudgetExpanded = expandedBudgetCat === cat.id
+              const cfg = budgetConfigsByCategory.get(String(cat.id))
+              const hasOverride = Boolean(cfg)
+              const defaultLimit = parseFloat(cat.default_limit || 0)
+              const overrideLimit = hasOverride ? parseFloat(cfg.limit_override || 0) : 0
+              const effectiveLimit = hasOverride ? overrideLimit : defaultLimit
+              const orcCat = orcamentoByCategory.get(String(cat.id))
+              const catSpent = orcCat ? orcCat.spent : 0
+              const catStatus = computeUsageStatus(catSpent, effectiveLimit)
+              const catUsagePct = effectiveLimit > 0 ? (catSpent / effectiveLimit) * 100 : null
+              const subSpentMap = orcCat ? orcCat.subSpent : new Map()
+              const distributed = subs.reduce((s, sub) => s + parseFloat(sub.default_limit || 0), 0)
+              const distribDelta = distributed - effectiveLimit
               return (
                 <div key={cat.id}>
                   <div className={styles.budgetTableRow}>
@@ -1425,34 +1763,129 @@ function Settings({ onOpenWizard }) {
                         onClick={() => setExpandedBudgetCat(isBudgetExpanded ? null : cat.id)}
                         title={isBudgetExpanded ? 'Fechar' : 'Ver subcategorias'}
                       >
-                        {isBudgetExpanded ? '▾' : '▸'}
+                        {isBudgetExpanded ? '\u25BE' : '\u25B8'}
                       </button>
                     ) : (
                       <span style={{ width: 24, display: 'inline-block' }} />
                     )}
                     <span className={styles.budgetCatName}>{cat.name}</span>
-                    <span className={styles.budgetLimit}>
+                    <span className={styles.budgetLimitSmall}>
                       <InlineEdit
-                        value={cat.default_limit || 0}
+                        value={defaultLimit}
                         onSave={(val) => handleUpdateCategory(cat.id, 'default_limit', val)}
-                        color="var(--color-text)"
+                        color="var(--color-text-secondary)"
+                        placeholder="—"
                       />
                     </span>
+                    <span className={styles.budgetLimitSmall}>
+                      <InlineEdit
+                        value={hasOverride ? overrideLimit : 0}
+                        onSave={(val) => saveBudgetOverride(cat.id, val)}
+                        color={hasOverride ? 'var(--color-accent)' : 'var(--color-text-secondary)'}
+                        placeholder="usa padrão"
+                      />
+                    </span>
+                    <span
+                      className={styles.budgetLimitEffective}
+                      style={{ color: hasOverride ? 'var(--color-accent)' : 'var(--color-text)' }}
+                    >
+                      {effectiveLimit > 0
+                        ? `R$ ${Math.round(effectiveLimit).toLocaleString('pt-BR')}`
+                        : '\u2014'}
+                    </span>
+                    <span
+                      className={styles.budgetLimitSmall}
+                      style={{ color: catStatus === 'over' ? 'var(--color-red)' : catStatus === 'warning' ? 'var(--color-orange)' : 'var(--color-text)' }}
+                    >
+                      {catSpent > 0
+                        ? `R$ ${Math.round(catSpent).toLocaleString('pt-BR')}`
+                        : '\u2014'}
+                    </span>
+                    <span className={styles.budgetUsageCell}>
+                      {catUsagePct !== null && catSpent > 0 ? (
+                        <span className={`${styles.budgetUsageBadge} ${styles['budgetStatus_' + catStatus]}`}>
+                          {Math.round(catUsagePct)}%
+                        </span>
+                      ) : catSpent > 0 && effectiveLimit === 0 ? (
+                        <span className={`${styles.budgetUsageBadge} ${styles.budgetStatus_over}`}>sem limite</span>
+                      ) : (
+                        <span style={{ color: 'var(--color-text-secondary)', opacity: 0.4 }}>—</span>
+                      )}
+                    </span>
+                    <span style={{ width: 32, flexShrink: 0, textAlign: 'right' }}>
+                      {hasOverride && (
+                        <button
+                          className={styles.budgetClearBtn}
+                          onClick={() => clearBudgetOverride(cat.id)}
+                          title="Limpar override deste mês"
+                        >
+                          {'\u2715'}
+                        </button>
+                      )}
+                    </span>
                   </div>
-                  {/* Subcategory limits */}
-                  {isBudgetExpanded && subs.map((sub) => (
-                    <div key={sub.id} className={styles.budgetTableRow} style={{ paddingLeft: 32, opacity: 0.85 }}>
-                      <span className={styles.subIndent}>{'\u2514'}</span>
-                      <span className={styles.budgetCatName} style={{ fontSize: '0.82rem' }}>{sub.name}</span>
-                      <span className={styles.budgetLimit}>
-                        <InlineEdit
-                          value={sub.default_limit || 0}
-                          onSave={(val) => handleUpdateSubcategory(sub.id, 'default_limit', val)}
-                          color="var(--color-text)"
-                        />
-                      </span>
+                  {/* Subcategorias — Limite editável (Subcategory.default_limit), Gasto do mês, Uso */}
+                  {isBudgetExpanded && subs.map((sub) => {
+                    const subLimit = parseFloat(sub.default_limit || 0)
+                    const subSpent = parseFloat(subSpentMap.get(String(sub.id)) || 0)
+                    const subStatus = computeUsageStatus(subSpent, subLimit)
+                    const subUsagePct = subLimit > 0 ? (subSpent / subLimit) * 100 : null
+                    return (
+                      <div key={sub.id} className={styles.budgetTableRow} style={{ paddingLeft: 32, opacity: 0.92 }}>
+                        <span className={styles.subIndent}>{'\u2514'}</span>
+                        <span className={styles.budgetCatName} style={{ fontSize: '0.82rem' }}>{sub.name}</span>
+                        <span className={styles.budgetLimitSmall}>
+                          <InlineEdit
+                            value={subLimit}
+                            onSave={(val) => handleUpdateSubcategory(sub.id, 'default_limit', val)}
+                            color="var(--color-text-secondary)"
+                            placeholder="—"
+                          />
+                        </span>
+                        <span className={styles.budgetLimitSmall} title="Override mensal por subcategoria não disponível">
+                          <span style={{ color: 'var(--color-text-secondary)', opacity: 0.4 }}>—</span>
+                        </span>
+                        <span
+                          className={styles.budgetLimitEffective}
+                          style={{ color: 'var(--color-text)' }}
+                        >
+                          {subLimit > 0
+                            ? `R$ ${Math.round(subLimit).toLocaleString('pt-BR')}`
+                            : '\u2014'}
+                        </span>
+                        <span
+                          className={styles.budgetLimitSmall}
+                          style={{ color: subStatus === 'over' ? 'var(--color-red)' : subStatus === 'warning' ? 'var(--color-orange)' : 'var(--color-text)' }}
+                        >
+                          {subSpent > 0
+                            ? `R$ ${Math.round(subSpent).toLocaleString('pt-BR')}`
+                            : '\u2014'}
+                        </span>
+                        <span className={styles.budgetUsageCell}>
+                          {subUsagePct !== null && subSpent > 0 ? (
+                            <span className={`${styles.budgetUsageBadge} ${styles['budgetStatus_' + subStatus]}`}>
+                              {Math.round(subUsagePct)}%
+                            </span>
+                          ) : subSpent > 0 && subLimit === 0 ? (
+                            <span className={`${styles.budgetUsageBadge} ${styles.budgetStatus_over}`}>sem limite</span>
+                          ) : (
+                            <span style={{ color: 'var(--color-text-secondary)', opacity: 0.4 }}>—</span>
+                          )}
+                        </span>
+                        <span style={{ width: 32, flexShrink: 0 }} />
+                      </div>
+                    )
+                  })}
+                  {isBudgetExpanded && subs.length > 0 && (
+                    <div className={styles.budgetDistribSummary}>
+                      Distribuído: R$ {Math.round(distributed).toLocaleString('pt-BR')} de R$ {Math.round(effectiveLimit).toLocaleString('pt-BR')}
+                      {effectiveLimit > 0 && Math.abs(distribDelta) > 1 && (
+                        <span style={{ color: distribDelta > 0 ? 'var(--color-red)' : 'var(--color-orange)', marginLeft: 8 }}>
+                          ({distribDelta > 0 ? '+' : ''}{Math.round(distribDelta).toLocaleString('pt-BR')})
+                        </span>
+                      )}
                     </div>
-                  ))}
+                  )}
                 </div>
               )
             })}
@@ -1467,9 +1900,9 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* SECTION 6: RENAME RULES (REGRAS DE RENOMEAÇÃO)               */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="regras" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>✏️</div>
+          <div className={styles.sectionIcon}><IconPencil /></div>
           <div>
             <h2 className={styles.sectionTitle}>Regras de Renomeação</h2>
             <p className={styles.sectionDesc}>
@@ -1555,7 +1988,7 @@ function Settings({ onOpenWizard }) {
                   onClick={() => handleDeleteRename(rule.id, rule.keyword)}
                   title="Desativar regra"
                 >
-                  {'\u00d7'}
+                  {'×'}
                 </button>
               </div>
             ))}
@@ -1571,9 +2004,9 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* SECTION 7: IMPORT                                            */}
       {/* ============================================================ */}
-      <div className={styles.section}>
+      <div id="importar" className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionIcon}>📥</div>
+          <div className={styles.sectionIcon}><IconDownload /></div>
           <div>
             <h2 className={styles.sectionTitle}>Importar Extratos</h2>
             <p className={styles.sectionDesc}>
@@ -1734,7 +2167,7 @@ function Settings({ onOpenWizard }) {
       {/* ============================================================ */}
       {/* SECTION 8: SALARY PROJECTION                                 */}
       {/* ============================================================ */}
-      <SalarySection
+      <div id="salario"><SalarySection
         config={salaryConfig}
         projection={salaryProjection}
         templates={templatesData?.templates || []}
@@ -1744,15 +2177,15 @@ function Settings({ onOpenWizard }) {
         syncResult={salarySyncResult}
         onSync={handleSalarySync}
         onSave={handleSalaryConfigSave}
-      />
+      /></div>
 
       {/* ============================================================ */}
       {/* SECTION 9: STATUS                                            */}
       {/* ============================================================ */}
       {status && (
-        <div className={styles.section}>
+        <div id="status" className={styles.section}>
           <div className={styles.sectionHeader}>
-            <div className={styles.sectionIcon}>📊</div>
+            <div className={styles.sectionIcon}><IconChart /></div>
             <div>
               <h2 className={styles.sectionTitle}>Status do Banco</h2>
               <p className={styles.sectionDesc}>

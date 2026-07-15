@@ -13,8 +13,8 @@ from .views import (
     ImportStatementsView,
     RecurringInitializeView, RecurringExpectedView, RecurringUpdateView,
     RecurringCustomView, RecurringSkipView, BalanceSaveView,
-    ProjectionView, OrcamentoView, AnalyticsTrendsView, SpendingInsightsView,
-    SmartCategorizeView, InstallmentDetailsView,
+    ProjectionView, OrcamentoView, AnalyticsTrendsView, SpendingInsightsView, SubscriptionsControlView,
+    SmartCategorizeView, InstallmentDetailsView, InstallmentOverrideView,
     RecurringTemplatesView, ReapplyTemplateView,
     CheckingTransactionsView,
     MonthCategoriesView,
@@ -40,7 +40,7 @@ from .views import (
     PluggySyncView,
     ProjectViewSet, PersonalTaskViewSet, PersonalNoteViewSet,
     HealthExamViewSet, VitalReadingViewSet, LabMarkerViewSet,
-    PregnancyViewSet, PrenatalConsultationViewSet,
+    PregnancyViewSet, PrenatalConsultationViewSet, HealthContentView,
 )
 from .auth_views import GoogleLoginView, TokenRefreshView, AuthMeView, GoogleAuthStartView, GoogleAuthCallbackView
 from .dashboard_views import DashboardStateView
@@ -49,6 +49,7 @@ from .google_views import (
     GmailMessagesView, GmailMessageDetailView, GmailSendView,
     GmailTrashView, GmailLabelsView,
     DriveFilesView, DriveFileContentView, SpreadsheetView, DocumentView,
+    CursoStreamView,
 )
 
 router = DefaultRouter()
@@ -113,11 +114,13 @@ urlpatterns = [
     path('analytics/trends/', AnalyticsTrendsView.as_view(), name='analytics-trends'),
     # Spending insights (BUDG-03)
     path('analytics/insights/', SpendingInsightsView.as_view(), name='spending-insights'),
+    path('analytics/subscriptions/', SubscriptionsControlView.as_view(), name='subscriptions-control'),
     # Phase B: projection + orçamento
     path('analytics/projection/', ProjectionView.as_view(), name='analytics-projection'),
     path('analytics/orcamento/', OrcamentoView.as_view(), name='analytics-orcamento'),
     # Installment details
     path('analytics/installments/', InstallmentDetailsView.as_view(), name='analytics-installments'),
+    path('installment-overrides/', InstallmentOverrideView.as_view(), name='installment-overrides'),
     # Smart categorization
     path('analytics/smart-categorize/', SmartCategorizeView.as_view(), name='smart-categorize'),
     # Recurring templates (Settings)
@@ -140,6 +143,7 @@ urlpatterns = [
     path('profiles/<uuid:pk>/setup-state/', ProfileSetupStateView.as_view(), name='profile-setup-state'),
     path('analytics/analyze-setup/', AnalyzeSetupView.as_view(), name='analyze-setup'),
     # Home / Family Hub
+    path('saude/content/', HealthContentView.as_view(), name='health-content'),
     path('home/reminders/', RemindersView.as_view(), name='home-reminders'),
     path('home/reminders/lists/', RemindersListsView.as_view(), name='home-reminders-lists'),
     path('home/reminders/add/', RemindersAddView.as_view(), name='home-reminders-add'),
@@ -172,6 +176,7 @@ urlpatterns = [
     # Drive
     path('google/drive/files/', DriveFilesView.as_view(), name='drive-files'),
     path('google/drive/files/<str:file_id>/content/', DriveFileContentView.as_view(), name='drive-file-content'),
+    path('google/drive/stream/<str:file_id>/', CursoStreamView.as_view(), name='curso-stream'),
     path('google/drive/sheets/<str:spreadsheet_id>/', SpreadsheetView.as_view(), name='drive-spreadsheet'),
     path('google/drive/docs/<str:document_id>/', DocumentView.as_view(), name='drive-document'),
 ]

@@ -1,0 +1,205 @@
+/* CursosView — two-pane course browser (rail + Drive embed). Palette mirrors
+   Saude.module.css: warm accent #b86530, white cards, subtle borders. */
+
+.layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+/* ── Left rail ──────────────────────────────────── */
+.rail {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 12px;
+  max-height: 78vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+@media (max-width: 900px) {
+  .rail { max-height: 360px; }
+}
+
+.courseBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.courseHead {
+  padding: 4px 6px 0;
+}
+
+.courseTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary, #2a2724);
+}
+
+.courseSubtitle {
+  font-size: 11px;
+  color: var(--text-secondary, #6b6660);
+  margin-top: 2px;
+}
+
+.moduleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.moduleTitle {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #6b6660);
+  padding: 8px 6px 4px;
+}
+
+.lessonList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.lesson,
+.lessonActive {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--text-primary, #2a2724);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.lesson:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.lessonActive {
+  background: var(--color-accent-light, rgba(184, 101, 48, 0.12));
+  color: var(--color-accent, #b86530);
+  font-weight: 600;
+}
+
+.lessonIcon {
+  flex-shrink: 0;
+  font-size: 10px;
+  width: 14px;
+  text-align: center;
+  color: var(--color-accent, #b86530);
+}
+
+.lessonName {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.lessonDur {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-secondary, #6b6660);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Main pane ──────────────────────────────────── */
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.playerHead {
+  padding: 0 2px;
+}
+
+.breadcrumb {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #6b6660);
+}
+
+.playerTitle {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary, #2a2724);
+  margin: 4px 0 0;
+}
+
+.embedVideo,
+.embedPdf {
+  position: relative;
+  width: 100%;
+  background: #000;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.embedVideo {
+  aspect-ratio: 16 / 9;
+}
+
+.embedPdf {
+  height: 78vh;
+  background: #f4ede4;
+}
+
+.embedVideo iframe,
+.embedVideo video,
+.embedPdf iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.openDrive {
+  align-self: flex-start;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-accent, #b86530);
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  transition: background 0.12s ease;
+}
+
+.openDrive:hover {
+  background: var(--color-accent-light, rgba(184, 101, 48, 0.12));
+}
+
+.empty {
+  padding: 32px;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px dashed rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  color: var(--text-secondary, #6b6660);
+  font-size: 13px;
+  text-align: center;
+}

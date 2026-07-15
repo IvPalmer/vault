@@ -36,10 +36,13 @@ function saveHistory(profileId, messages) {
 /** Simple markdown-ish rendering: bold, italic, code, line breaks */
 function renderContent(text) {
   if (!text) return null
+  // Escape the full raw text first so no user/assistant content can inject tags,
+  // then apply the markdown transforms on the already-escaped string.
+  let html = escHtml(text)
   // Code blocks
-  let html = text.replace(/```[\s\S]*?```/g, (m) => {
+  html = html.replace(/```[\s\S]*?```/g, (m) => {
     const code = m.slice(3, -3).replace(/^\w*\n/, '')
-    return `<pre class="${styles.codeBlock}">${escHtml(code)}</pre>`
+    return `<pre class="${styles.codeBlock}">${code}</pre>`
   })
   // Inline code
   html = html.replace(/`([^`]+)`/g, `<code class="${styles.inlineCode}">$1</code>`)

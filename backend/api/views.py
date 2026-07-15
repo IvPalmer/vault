@@ -65,6 +65,7 @@ from .models import (
     GoogleAccount, CalendarSelection,
     Project, PersonalTask, PersonalNote,
     HealthExam, VitalReading, Pregnancy, PrenatalConsultation, LabMarker,
+    HealthContent,
 )
 from .serializers import (
     AccountSerializer, CategorySerializer, SubcategorySerializer,
@@ -89,6 +90,7 @@ from .services import (
     skip_recurring, unskip_recurring, save_balance_override,
     get_projection, get_orcamento,
     smart_categorize, get_installment_details,
+    list_installment_overrides, set_installment_override, delete_installment_override,
     get_recurring_templates, update_recurring_template,
     create_recurring_template, delete_recurring_template,
     get_last_installment_month,
@@ -415,16 +417,21 @@ class CategoryBulkReassignView(APIView):
 
         if action == 'reassign_subcategory':
             # Move transactions from one subcategory to another (can be cross-category)
+            # Or to a bare category (no subcategory) when to_category_id is provided.
             from_sub_id = request.data.get('from_subcategory_id')
             to_sub_id = request.data.get('to_subcategory_id')
             to_cat_id = request.data.get('to_category_id')
 
-            if not from_sub_id or not to_sub_id:
-                return Response({'error': 'from_subcategory_id and to_subcategory_id required'}, status=400)
+            if not from_sub_id or (not to_sub_id and not to_cat_id):
+                return Response({'error': 'from_subcategory_id and (to_subcategory_id or to_category_id) required'}, status=400)
 
             from_sub = Subcategory.objects.get(id=from_sub_id, profile=profile)
-            to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile)
-            to_cat = to_sub.category
+            if to_sub_id:
+                to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile)
+                to_cat = to_sub.category
+            else:
+                to_sub = None
+                to_cat = Category.objects.get(id=to_cat_id, profile=profile)
 
             count = Transaction.objects.filter(
                 profile=profile, subcategory=from_sub
@@ -526,16 +533,23 @@ class CategoryBulkReassignView(APIView):
             return Response({'updated': count, 'action': action})
 
         elif action == 'set_subcategory':
-            # Assign subcategory to transactions that have category but no subcategory
+            # Assign subcategory to transactions that have category but no subcategory.
+            # Or move them to a different bare category when to_category_id is provided.
             cat_id = request.data.get('category_id')
             to_sub_id = request.data.get('to_subcategory_id')
-            if not cat_id or not to_sub_id:
-                return Response({'error': 'category_id and to_subcategory_id required'}, status=400)
+            to_cat_id = request.data.get('to_category_id')
+            if not cat_id or (not to_sub_id and not to_cat_id):
+                return Response({'error': 'category_id and (to_subcategory_id or to_category_id) required'}, status=400)
             cat = Category.objects.get(id=cat_id, profile=profile)
-            to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile)
-            count = Transaction.objects.filter(
+            qs = Transaction.objects.filter(
                 profile=profile, category=cat, subcategory__isnull=True
-            ).update(subcategory=to_sub)
+            )
+            if to_sub_id:
+                to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile)
+                count = qs.update(subcategory=to_sub)
+            else:
+                to_cat = Category.objects.get(id=to_cat_id, profile=profile)
+                count = qs.update(category=to_cat)
             return Response({'updated': count, 'action': action})
 
         elif action == 'get_sample_transactions':
@@ -605,11 +619,17 @@ class CategoryBulkReassignView(APIView):
             })
 
         elif action == 'recategorize_transaction':
-            # Move a single transaction + all matching descriptions to a new category/subcategory
-            # For installments, also propagate to all sibling positions
+            # Move transactions to a new category/subcategory.
+            # scope='single' (default): only the selected transaction
+            # scope='future': selected + same-description on/after its date
+            # scope='all': all transactions with same description (legacy bulk)
+            # Installment siblings always follow regardless of scope.
             txn_id = request.data.get('transaction_id')
             to_cat_id = request.data.get('to_category_id')
             to_sub_id = request.data.get('to_subcategory_id')
+            scope = request.data.get('scope', 'single')
+            if scope not in ('single', 'future', 'all'):
+                scope = 'single'
 
             if not txn_id or not to_cat_id:
                 return Response({'error': 'transaction_id and to_category_id required'}, status=400)
@@ -618,13 +638,26 @@ class CategoryBulkReassignView(APIView):
             to_cat = Category.objects.get(id=to_cat_id, profile=profile)
             to_sub = Subcategory.objects.get(id=to_sub_id, profile=profile) if to_sub_id else None
 
-            # Normalize description for matching (non-installment transactions)
-            from django.db.models.functions import Lower, Trim
-            desc_norm = txn.description.strip().lower()
-            matching = Transaction.objects.filter(profile=profile).annotate(
-                desc_norm=Trim(Lower('description'))
-            ).filter(desc_norm=desc_norm)
-            count = matching.update(category=to_cat, subcategory=to_sub)
+            if scope == 'single':
+                count = Transaction.objects.filter(profile=profile, id=txn.id).update(
+                    category=to_cat, subcategory=to_sub
+                )
+            else:
+                # Filter by same SIGN to avoid mixing purchases with refunds/estornos
+                # that happen to share the same merchant description.
+                from django.db.models.functions import Lower, Trim
+                desc_norm = txn.description.strip().lower()
+                sign_filter = {}
+                if txn.amount > 0:
+                    sign_filter = {'amount__gt': 0}
+                elif txn.amount < 0:
+                    sign_filter = {'amount__lt': 0}
+                matching = Transaction.objects.filter(profile=profile, **sign_filter).annotate(
+                    desc_norm=Trim(Lower('description'))
+                ).filter(desc_norm=desc_norm)
+                if scope == 'future':
+                    matching = matching.filter(date__gte=txn.date)
+                count = matching.update(category=to_cat, subcategory=to_sub)
 
             # For installments, also update all sibling positions
             sibling_count = 0
@@ -657,21 +690,37 @@ class CategoryBulkReassignView(APIView):
             return Response({'updated': count, 'action': action})
 
         elif action == 'uncategorize_transaction':
-            # Remove category from a transaction + all matching descriptions
-            # For installments, also clear all sibling positions
+            # Remove category. Honors `scope` param: 'single' (default), 'future', 'all'.
+            # Installment siblings always cleared regardless of scope.
             txn_id = request.data.get('transaction_id')
+            scope = request.data.get('scope', 'single')
+            if scope not in ('single', 'future', 'all'):
+                scope = 'single'
             if not txn_id:
                 return Response({'error': 'transaction_id required'}, status=400)
 
             txn = Transaction.objects.get(id=txn_id, profile=profile)
-            desc_norm = txn.description.strip().lower()
 
-            from django.db.models.functions import Lower, Trim
-            matching = Transaction.objects.filter(profile=profile).annotate(
-                desc_norm=Trim(Lower('description'))
-            ).filter(desc_norm=desc_norm)
+            if scope == 'single':
+                count = Transaction.objects.filter(profile=profile, id=txn.id).update(
+                    category=None, subcategory=None
+                )
+            else:
+                desc_norm = txn.description.strip().lower()
+                sign_filter = {}
+                if txn.amount > 0:
+                    sign_filter = {'amount__gt': 0}
+                elif txn.amount < 0:
+                    sign_filter = {'amount__lt': 0}
 
-            count = matching.update(category=None, subcategory=None)
+                from django.db.models.functions import Lower, Trim
+                matching = Transaction.objects.filter(profile=profile, **sign_filter).annotate(
+                    desc_norm=Trim(Lower('description'))
+                ).filter(desc_norm=desc_norm)
+                if scope == 'future':
+                    matching = matching.filter(date__gte=txn.date)
+
+                count = matching.update(category=None, subcategory=None)
 
             # For installments, also clear siblings
             if txn.is_installment:
@@ -1493,6 +1542,17 @@ class SpendingInsightsView(APIView):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+class SubscriptionsControlView(APIView):
+    """GET /api/analytics/subscriptions/"""
+    def get(self, request):
+        try:
+            from .services import get_subscriptions_control
+            return Response(get_subscriptions_control(profile=request.profile))
+        except Exception as e:
+            logger.exception('SubscriptionsControlView error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
 class OrcamentoView(APIView):
     """GET /api/analytics/orcamento/?month_str=2025-12"""
     def get(self, request):
@@ -1551,6 +1611,50 @@ class CategorizeInstallmentView(APIView):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+class InstallmentOverrideView(APIView):
+    """
+    GET/POST/DELETE /api/installment-overrides/ — cancel/shorten an installment series.
+
+    GET → list overrides for the profile.
+    POST { transaction_id, effective_total, note? } → mark the series of that REAL
+          installment row as ending at effective_total (projection stops beyond it).
+    DELETE { transaction_id } → remove the override (reactivate the series).
+    """
+    def get(self, request):
+        return Response(list_installment_overrides(request.profile))
+
+    def post(self, request):
+        txn_id = request.data.get('transaction_id')
+        eff = request.data.get('effective_total')
+        if not txn_id or eff is None:
+            return Response(
+                {'error': 'transaction_id e effective_total são obrigatórios'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            return Response(set_installment_override(
+                txn_id, eff, request.profile, request.data.get('note', '')))
+        except Transaction.DoesNotExist:
+            return Response({'error': 'Parcela não encontrada'}, status=status.HTTP_404_NOT_FOUND)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.exception('InstallmentOverrideView POST error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request):
+        txn_id = request.data.get('transaction_id') or request.query_params.get('transaction_id')
+        if not txn_id:
+            return Response({'error': 'transaction_id obrigatório'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            return Response(delete_installment_override(txn_id, request.profile))
+        except Transaction.DoesNotExist:
+            return Response({'error': 'Parcela não encontrada'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.exception('InstallmentOverrideView DELETE error')
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
 class SmartCategorizeView(APIView):
     """
     POST /api/analytics/smart-categorize/ — Apply smart categorization
@@ -1596,6 +1700,11 @@ class RecurringTemplatesView(APIView):
                 contract_start=request.data.get('contract_start', ''),
                 contract_term_months=request.data.get('contract_term_months'),
                 end_month=request.data.get('end_month', ''),
+                match_mode=request.data.get('match_mode', 'manual'),
+                category_id=request.data.get('category_id'),
+                expected_source=request.data.get('expected_source', 'manual'),
+                expected_floor_amount=request.data.get('expected_floor_amount'),
+                expected_lookback_months=request.data.get('expected_lookback_months', 3),
             )
             return Response(result, status=status.HTTP_201_CREATED)
         except Exception as e:
@@ -1609,6 +1718,8 @@ class RecurringTemplatesView(APIView):
         for field in (
             'name', 'template_type', 'default_limit', 'due_day',
             'contract_start', 'contract_term_months', 'end_month', 'display_order',
+            'match_mode', 'category_id', 'expected_source',
+            'expected_floor_amount', 'expected_lookback_months',
         ):
             if field in request.data:
                 kwargs[field] = request.data[field]
@@ -3105,3 +3216,27 @@ class PrenatalConsultationViewSet(viewsets.ModelViewSet):
         if preg:
             qs = qs.filter(pregnancy_id=preg)
         return qs
+
+
+# ── Saúde: per-profile content blobs ──────────────────────────
+
+class HealthContentView(APIView):
+    """GET /api/saude/content/?profile_id=<uuid> -> {slug: payload}
+
+    Serves the health content that used to be hardcoded into the frontend
+    bundle (and therefore readable without auth). Keyed by slug so a card can
+    do content.glucose_log without another round trip.
+    """
+
+    def get(self, request):
+        profile = request.profile
+        override = request.query_params.get('profile_id')
+        if override:
+            try:
+                profile = Profile.objects.get(id=override)
+            except (Profile.DoesNotExist, ValueError):
+                profile = request.profile
+        if profile is None:
+            return Response({})
+        rows = HealthContent.objects.filter(profile=profile)
+        return Response({row.slug: row.payload for row in rows})

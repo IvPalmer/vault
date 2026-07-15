@@ -808,6 +808,41 @@
   font-style: italic;
 }
 
+.scopePicker {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--color-bg);
+  flex-shrink: 0;
+}
+
+.scopeBtn {
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 4px 9px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  border-right: 1px solid var(--color-border);
+  transition: background 0.12s, color 0.12s;
+}
+
+.scopeBtn:last-child {
+  border-right: none;
+}
+
+.scopeBtn:hover:not(.scopeBtnActive) {
+  background: rgba(79, 143, 247, 0.06);
+  color: var(--color-text);
+}
+
+.scopeBtnActive {
+  background: var(--color-accent);
+  color: white;
+}
+
 /* ── All Transactions Table ── */
 .allTxnSection {
   margin-top: var(--space-lg);

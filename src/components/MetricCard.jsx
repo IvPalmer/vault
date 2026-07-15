@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import styles from './MetricCard.module.css'
 
-function MetricCard({ label, value, subtitle, color = 'var(--color-text)', tooltip, progress }) {
+function MetricCard({ label, value, subtitle, color = 'var(--color-text)', tooltip, progress, size = 'md', icon = null }) {
   const [showTip, setShowTip] = useState(false)
   const tipRef = useRef(null)
   const btnRef = useRef(null)
@@ -20,7 +20,7 @@ function MetricCard({ label, value, subtitle, color = 'var(--color-text)', toolt
   }, [showTip])
 
   return (
-    <div className={styles.card}>
+    <div className={`${styles.card} ${size === 'lg' ? styles.cardHero : ''}`}>
       {tooltip && (
         <button
           ref={btnRef}
@@ -40,7 +40,10 @@ function MetricCard({ label, value, subtitle, color = 'var(--color-text)', toolt
           {tooltip}
         </div>
       )}
-      <div className={styles.value} style={{ color }}>{value}</div>
+      <div className={styles.value} style={{ color }}>
+        {icon && <span className={styles.valueIcon} aria-hidden="true">{icon}</span>}
+        {value}
+      </div>
       <div className={styles.label}>{label}</div>
       {subtitle && <div className={styles.subtitle}>{subtitle}</div>}
       {progress != null && (

@@ -9,8 +9,14 @@ function fmt(n) {
   return Math.abs(n).toLocaleString('pt-BR', { maximumFractionDigits: 0 })
 }
 
-function OrcamentoSection() {
+function fmtSigned(n) {
+  const sign = n >= 0 ? '+' : '−'
+  return `${sign}R$ ${fmt(n)}`
+}
+
+function GastosPorCategoria() {
   const { selectedMonth } = useMonth()
+  const [showAll, setShowAll] = useState(false)
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['analytics-orcamento', selectedMonth],
@@ -20,58 +26,64 @@ function OrcamentoSection() {
 
   if (isLoading) return (
     <section className={styles.section}>
-      <h3 className={styles.title}>ORÇAMENTO VARIÁVEL</h3>
+      <h3 className={styles.title}>GASTOS POR CATEGORIA</h3>
       <Skeleton variant="card" count={8} />
     </section>
   )
-  if (error) return <div className={styles.error}>Erro ao carregar orçamento</div>
+  if (error) return <div className={styles.error}>Erro ao carregar gastos</div>
   if (!data) return null
 
-  const noBudget = data.total_available <= 0
-  const totalStatus = noBudget ? 'over' : data.total_pct > 100 ? 'over' : data.total_pct > 80 ? 'warning' : 'ok'
+  const hideableCount = data.categories.filter(c => !c.has_current_spend).length
+  const visibleCats = showAll
+    ? data.categories
+    : data.categories.filter(c => c.has_current_spend)
 
   return (
     <section className={styles.section}>
       <div className={styles.header}>
-        <h3 className={styles.title}>ORÇAMENTO VARIÁVEL</h3>
-        <span className={`${styles.headerTotal} ${styles[totalStatus]}`}>
-          R$ {fmt(data.total_spent)} / {data.total_available < 0 ? '−' : ''}R$ {fmt(data.total_available)}
-          {data.total_available > 0 && (
-            <span className={styles.headerPct}>({data.total_pct.toFixed(0)}%)</span>
-          )}
-        </span>
-      </div>
-
-      {noBudget && (
-        <div className={styles.noBudgetBanner}>
-          Sem orçamento disponível — despesas comprometidas excedem a receita projetada.
-          {data.total_available < 0 && ` Déficit: R$ ${fmt(data.total_available)}`}
-        </div>
-      )}
-
-      {data.total_available > 0 && (
-        <div className={styles.availableBanner}>
-          Disponível: R$ {fmt(data.total_available)}
-          <span className={styles.availableDetail}>
-            (receita − fixo − investimentos − cartão)
+        <h3 className={styles.title}>GASTOS POR CATEGORIA</h3>
+        <div className={styles.headerRight}>
+          <span className={styles.headerSpent}>
+            Total: R$ {fmt(data.total_spent)}
           </span>
+          {data.has_envelope ? (
+            <span className={styles.headerEnvelope}>
+              Disponível: R$ {fmt(data.total_available)}
+            </span>
+          ) : data.deficit > 0 ? (
+            <span className={styles.headerDeficit}>
+              Déficit: R$ {fmt(data.deficit)}
+            </span>
+          ) : null}
         </div>
-      )}
+      </div>
 
       <div className={styles.grid}>
-        {data.categories.map(cat => (
-          <BudgetCard key={cat.id} cat={cat} />
+        {visibleCats.map(cat => (
+          <CategoryCard key={cat.id} cat={cat} />
         ))}
       </div>
+
+      {hideableCount > 0 && (
+        <button
+          className={styles.toggleHidden}
+          onClick={() => setShowAll(s => !s)}
+        >
+          {showAll
+            ? `Ocultar ${hideableCount} categoria${hideableCount > 1 ? 's' : ''} sem gasto`
+            : `Mostrar ${hideableCount} categoria${hideableCount > 1 ? 's' : ''} sem gasto`}
+        </button>
+      )}
     </section>
   )
 }
 
-function BudgetCard({ cat }) {
+function CategoryCard({ cat }) {
   const [expanded, setExpanded] = useState(false)
   const hasSubs = cat.subcategories && cat.subcategories.length > 0
+  const hasReference = cat.reference_amount > 0
 
-  const pctClamped = Math.min(cat.pct, 100)
+  const pctClamped = hasReference ? Math.min(cat.pct_of_reference, 100) : 0
   const barColor =
     cat.status === 'over' ? 'var(--color-red)' :
     cat.status === 'warning' ? 'var(--color-orange)' :
@@ -95,28 +107,31 @@ function BudgetCard({ cat }) {
           {cat.name}
         </span>
         <span className={styles.catMeta}>
-          {cat.share_pct > 0 && (
-            <span className={styles.sharePct}>{cat.share_pct.toFixed(0)}%</span>
+          {cat.current_share_pct > 0 && (
+            <span className={styles.sharePct}>{cat.current_share_pct.toFixed(0)}%</span>
           )}
-          <span className={`${styles.catPct} ${styles[cat.status]}`}>
-            {cat.pct.toFixed(0)}%
-          </span>
+          {hasReference && cat.has_current_spend && (
+            <span className={`${styles.catPct} ${styles[cat.status]}`}>
+              {cat.pct_of_reference.toFixed(0)}%
+            </span>
+          )}
         </span>
       </div>
 
-      {/* Progress bar */}
-      <div className={styles.barTrack}>
-        <div
-          className={styles.barFill}
-          style={{ width: `${pctClamped}%`, background: barColor }}
-        />
-        {cat.pct > 100 && (
+      {hasReference && (
+        <div className={styles.barTrack}>
           <div
-            className={styles.barOverflow}
-            style={{ width: `${Math.min(cat.pct - 100, 100)}%` }}
+            className={styles.barFill}
+            style={{ width: `${pctClamped}%`, background: barColor }}
           />
-        )}
-      </div>
+          {cat.pct_of_reference > 100 && (
+            <div
+              className={styles.barOverflow}
+              style={{ width: `${Math.min(cat.pct_of_reference - 100, 100)}%` }}
+            />
+          )}
+        </div>
+      )}
 
       <div className={styles.cardBody}>
         <div className={styles.cardRow}>
@@ -126,24 +141,23 @@ function BudgetCard({ cat }) {
           </span>
         </div>
         <div className={styles.cardRow}>
-          <span className={styles.cardLabel}>Limite</span>
-          <span className={styles.cardValue}>R$ {fmt(cat.limit)}</span>
-        </div>
-        <div className={styles.cardRow}>
-          <span className={styles.cardLabel}>Restante</span>
-          <span className={styles.cardValue}>
-            {cat.remaining > 0 ? `R$ ${fmt(cat.remaining)}` : '—'}
+          <span className={styles.cardLabel}>Média 6m</span>
+          <span className={styles.cardValueDim}>
+            {cat.avg_6m > 0 ? `R$ ${fmt(cat.avg_6m)}` : '—'}
           </span>
         </div>
-        {cat.avg_6m > 0 && (
+        {cat.has_current_spend && cat.reference_amount > 0 && (
           <div className={styles.cardRow}>
-            <span className={styles.cardLabel}>Média 6m</span>
-            <span className={styles.cardValueDim}>R$ {fmt(cat.avg_6m)}</span>
+            <span className={styles.cardLabel}>
+              Δ vs {cat.reference_source === 'manual' ? 'meta' : 'média'}
+            </span>
+            <span className={`${styles.cardValue} ${styles[cat.delta_vs_reference > 0 ? 'over' : 'ok']}`}>
+              {fmtSigned(cat.delta_vs_reference)}
+            </span>
           </div>
         )}
       </div>
 
-      {/* Subcategory breakdown */}
       {expanded && hasSubs && (
         <div className={styles.subBreakdown}>
           {cat.subcategories.map(sub => (
@@ -168,4 +182,4 @@ function BudgetCard({ cat }) {
   )
 }
 
-export default OrcamentoSection
+export default GastosPorCategoria

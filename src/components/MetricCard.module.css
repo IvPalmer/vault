@@ -15,10 +15,40 @@
   position: relative;
 }
 
+.cardHero {
+  padding: 20px 22px;
+  min-height: 116px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-md);
+}
+
+.cardHero .value {
+  font-size: clamp(1.85rem, 3vw, 2.4rem);
+  letter-spacing: -0.025em;
+}
+
+.cardHero .label {
+  font-size: 0.7rem;
+  letter-spacing: 1.5px;
+}
+
+.cardHero .subtitle {
+  font-size: 0.72rem;
+  margin-top: 4px;
+}
+
 .value {
   font-size: 1.5rem;
   font-weight: 700;
   line-height: 1.2;
+}
+
+.valueIcon {
+  display: inline-flex;
+  vertical-align: -3px;
+  margin-right: 6px;
+  opacity: 0.85;
 }
 
 .label {

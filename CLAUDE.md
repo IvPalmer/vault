@@ -1,3 +1,5 @@
+> ⚠️ **VPS-only runtime — see [RUNTIME.md](./RUNTIME.md).** Do not `docker compose up` in this dir.
+
 # Vault — Project Rules
 
 ## Idioma / Language
@@ -51,7 +53,12 @@ Creating and editing widgets is a core capability. When a user needs functionali
 The `create_custom_widget` tool generates HTML/CSS/JS widgets running in iframes with Vault API access (vaultGet, vaultPost, saveState, loadState).
 
 ## Internal APIs (Pessoal module)
-All endpoints require `X-Profile-ID` header. Base URL: `http://localhost:8001`
+Base URL: `http://localhost:8001`. **Auth required** (ProfileMiddleware): a request
+must carry a valid JWT (`Authorization: Bearer`) OR the internal service token
+(`X-Internal-Token: $VAULT_INTERNAL_TOKEN`). `X-Profile-ID` selects which profile's
+data to serve but is only honored once authenticated — it is no longer a credential
+on its own. Public (no auth): `/api/auth/*`, the OAuth callbacks, `/api/home/*`
+(reminders bridge), `/api/google/drive/stream/*` (native video), `/admin`, `/static`.
 
 - **Tasks**: `/api/pessoal/tasks/` — CRUD, filters, priority, project assignment
 - **Projects**: `/api/pessoal/projects/` — CRUD, status (active/completed)

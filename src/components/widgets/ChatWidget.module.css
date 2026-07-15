@@ -16,7 +16,16 @@
   align-items: center;
   justify-content: center;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition: transform 0.15s, box-shadow 0.15s, opacity 0.2s;
+}
+
+@media (max-width: 768px) {
+  .chatBubble {
+    bottom: 16px;
+    right: 16px;
+    width: 44px;
+    height: 44px;
+  }
 }
 
 .chatBubble:hover {
@@ -45,6 +54,18 @@
   flex-direction: column;
   overflow: hidden;
   animation: chatSlideUp 0.2s ease-out;
+}
+
+@media (max-width: 768px) {
+  .panel {
+    bottom: 0;
+    right: 0;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100dvh;
+    border-radius: 0;
+  }
 }
 
 @keyframes chatSlideUp {

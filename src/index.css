@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
 
 *,
 *::before,
@@ -9,23 +9,41 @@
 }
 
 :root {
-  /* Colors — warm light theme */
+  /* Colors — warm light theme.
+     Semantic palette intentionally narrow: positive (green) for gains/income,
+     negative (red) for losses/risk, neutral (accent) for action. Orange/blue
+     are kept for legacy callers but should not be used for new work. */
   --color-bg: #f7f4f0;
   --color-surface: #ffffff;
   --color-surface-hover: #f0ebe5;
   --color-border: #e2d9d0;
   --color-text: #2c2420;
-  --color-text-secondary: #8c7e74;
+  --color-text-secondary: #756a60;          /* contrast: ~4.7:1 on bg (was 3.5:1) */
+  --color-text-muted: #9a8d82;              /* for tertiary text where 3:1 is acceptable */
   --color-accent: #b86530;
+  --color-accent-hover: #a35829;
   --color-accent-light: rgba(184, 101, 48, 0.08);
-  --color-green: #3a8a5c;
-  --color-red: #c0392b;
-  --color-orange: #c87a2a;
-  --color-blue: #4a7fb5;
+  --color-accent-strong: rgba(184, 101, 48, 0.18);
+
+  /* Semantic — 3 hues only */
+  --color-positive: #3a8a5c;                /* gains, income, healthy */
+  --color-positive-light: rgba(58, 138, 92, 0.10);
+  --color-negative: #b8392b;                /* losses, alerts, over-budget */
+  --color-negative-light: rgba(184, 57, 43, 0.10);
+  --color-warning: #c08930;                 /* caution — used sparingly */
+  --color-warning-light: rgba(192, 137, 48, 0.10);
+
+  /* Legacy aliases — kept so existing components don't regress.
+     Prefer --color-positive / --color-negative for new work. */
+  --color-green: var(--color-positive);
+  --color-red: var(--color-negative);
+  --color-orange: var(--color-warning);
+  --color-blue: #6b7d9a;                    /* desaturated (was #4a7fb5) — RESUMO usages */
 
   /* Typography */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: 'SF Mono', 'Fira Code', monospace;
+  --font-display: 'Inter Tight', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans: 'Inter Tight', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
 
   /* Spacing */
   --space-xs: 4px;
@@ -53,9 +71,18 @@ body {
   font-family: var(--font-sans);
   background-color: var(--color-bg);
   color: var(--color-text);
-  line-height: 1.5;
+  line-height: 1.55;
+  font-feature-settings: 'ss01', 'cv11';
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Tight, modern sans-serif everywhere. Headings get negative letter-spacing
+   for that editorial feel without going serif. */
+h1, h2 {
+  font-family: var(--font-display);
+  letter-spacing: -0.025em;
+  font-weight: 700;
 }
 
 a {
@@ -74,4 +101,33 @@ button {
 
 input, select, textarea {
   font-family: var(--font-sans);
+}
+
+/* Global focus ring — applies anywhere a component hasn't overridden it. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Subtle entrance for page main content — slides up 8px with a short fade.
+   Animation is on the route container, not individual items, to keep
+   GridStack/recharts measurements stable. */
+main {
+  animation: pageEnter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Respect reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

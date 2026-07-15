@@ -411,6 +411,7 @@ function TaskList({ activeProject, config, onConfigChange }) {
     const data = { title: newTitle.trim() }
     if (newProject) data.project = newProject
     if (activeProject) data.project = activeProject
+    if (effectiveProject) data.project = effectiveProject
     addMutation.mutate(data)
   }
 
@@ -950,7 +951,7 @@ function UpcomingEvents({ config, onConfigChange }) {
   const timeMax = `${future.getFullYear()}-${String(future.getMonth() + 1).padStart(2, '0')}-${String(future.getDate()).padStart(2, '0')}`
 
   const { data, isLoading } = useQuery({
-    queryKey: ['pessoal-calendar', timeMin],
+    queryKey: ['pessoal-calendar', timeMin, timeMax],
     queryFn: () => api.get(`/calendar/events/?context=personal&time_min=${timeMin}&time_max=${timeMax}`),
     staleTime: 60000,
   })
@@ -988,7 +989,7 @@ function UpcomingEvents({ config, onConfigChange }) {
       groups[key].push(evt)
     })
     return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b))
-  }, [events])
+  }, [events, maxEvents])
 
   const calendarLabel = (cal) => {
     if (!cal) return ''
@@ -1992,7 +1993,8 @@ function PersonalOrganizerInner({ profileId }) {
   if (dashLoading) return <div className={styles.emptyState}>Carregando dashboard...</div>
 
   // KPI computations
-  const todayStr = new Date().toISOString().slice(0, 10)
+  const _now = new Date()
+  const todayStr = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`
   const activeTasks = tasks.filter((t) => t.status !== 'done')
   const todayCount = activeTasks.filter((t) => t.due_date === todayStr).length
   const overdueCount = activeTasks.filter((t) => t.due_date && t.due_date < todayStr).length
@@ -2148,6 +2150,15 @@ function DashboardGrid({ widgets, profileId, tabId, renderWidgetContent, removeW
       animate: true,
       draggable: { handle: `.${styles.widgetHeader}, .${styles.catalogDragHandle}` },
       resizable: { handles: 'se' },
+      // Mobile: collapse to a single column under 768px
+      columnOpts: {
+        breakpointForWindow: true,
+        breakpoints: [
+          { w: 768, c: 1 },
+          { w: 1100, c: 6 },
+        ],
+        layout: 'moveScale',
+      },
     }, gridRef.current)
 
     // Positions come from the widgets prop (canonical source = tabs state)
@@ -2179,6 +2190,10 @@ function DashboardGrid({ widgets, profileId, tabId, renderWidgetContent, removeW
     grid.on('change', () => {
       if (!userInteracting) return
       userInteracting = false
+      // Do not persist layout when we're in mobile/tablet collapsed columns —
+      // saving 1- or 6-column positions would clobber the canonical 12-column
+      // desktop layout stored in dashboard_state.
+      if (grid.getColumn() < 12) return
       if (onLayoutChangeRef.current) onLayoutChangeRef.current(readLayout())
     })
 

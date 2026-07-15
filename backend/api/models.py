@@ -16,6 +16,19 @@ TEMPLATE_TYPE_CHOICES = (
     ('Cartao', 'Cartao'),
 )
 
+# Module-level so RecurringTemplate (defined before RecurringMapping) can reference it.
+MATCH_MODE_CHOICES = (
+    ('manual', 'Manual'),       # Explicitly linked transaction(s)
+    ('category', 'Category'),   # Auto-match all txns in a category
+)
+
+EXPECTED_SOURCE_CHOICES = (
+    ('manual', 'Manual'),                    # default_limit / BudgetConfig override
+    ('prev_month', 'Mês anterior'),          # previous closed month's actual
+    ('avg_3m', 'Média (N meses)'),           # trailing N-month average of actuals
+    ('max_floor_avg', 'Max(piso, média)'),   # max(floor, trailing average)
+)
+
 
 class Profile(models.Model):
     """
@@ -243,6 +256,25 @@ class RecurringTemplate(models.Model):
     template_type = models.CharField(max_length=20, choices=TEMPLATE_TYPE_CHOICES)
     default_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     due_day = models.IntegerField(null=True, blank=True)
+    # --- Category-based recurring (e.g. Assinaturas): match a whole category,
+    #     auto-fill "real" from its transactions, derive "expected" from history. ---
+    match_mode = models.CharField(max_length=20, choices=MATCH_MODE_CHOICES, default='manual')
+    category = models.ForeignKey(
+        Category, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='recurring_templates',
+        help_text='For match_mode=category: the category whose txns auto-fill this item.',
+    )
+    expected_source = models.CharField(
+        max_length=20, choices=EXPECTED_SOURCE_CHOICES, default='manual',
+        help_text='How the monthly expected amount is derived.',
+    )
+    expected_floor_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text='Floor for max_floor_avg expected_source.',
+    )
+    expected_lookback_months = models.IntegerField(
+        default=3, help_text='Trailing window (closed months) for avg-based expected_source.',
+    )
     contract_start = models.CharField(max_length=7, blank=True, default='')
     contract_term_months = models.IntegerField(null=True, blank=True)
     end_month = models.CharField(max_length=7, blank=True, default='')
@@ -305,6 +337,10 @@ class Transaction(models.Model):
     is_manually_categorized = models.BooleanField(default=False)
     card_last4 = models.CharField(max_length=4, blank=True, default='',
                                    help_text='Last 4 digits of credit card (from Pluggy creditCardMetadata)')
+    pluggy_purchase_date = models.DateField(null=True, blank=True,
+                                            help_text='Original purchase date of an installment plan '
+                                                      '(Pluggy creditCardMetadata.purchaseDate); stable '
+                                                      'anchor for installment de-duplication')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -969,3 +1005,67 @@ class PrenatalConsultation(models.Model):
 
     def __str__(self):
         return f'Consulta {self.data} ({self.ig_semanas})'
+
+
+class InstallmentSeriesOverride(models.Model):
+    """Operator-marked cancellation/shortening of an installment series.
+
+    Identifies a series by the SAME canonical key the projection groups on
+    (_extract_base_desc + account + rounded amount + original total). When set,
+    the projection (_compute_installment_schedule, _project_installment_complement,
+    get_last_installment_month) stops forecasting positions beyond
+    effective_total. Real already-billed rows are never removed — effective_total
+    is clamped on read to at least the highest real position seen.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='installment_overrides')
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='installment_overrides')
+    base_desc = models.CharField(max_length=255)
+    amount_group = models.IntegerField(help_text='round(abs(per-installment amount)) — matches projection dedup')
+    total_inst = models.IntegerField(help_text='original N in k/N')
+    effective_total = models.IntegerField(help_text='series stops here; projection forecasts no further')
+    note = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('profile', 'account', 'base_desc', 'amount_group', 'total_inst')
+
+    def __str__(self):
+        return f'{self.base_desc} {self.amount_group} {self.effective_total}/{self.total_inst}'
+
+
+class HealthContent(models.Model):
+    """Per-profile health content blobs (clinical report, glucose log, meal plan…).
+
+    These are real medical records. They used to be hardcoded as JS constants in
+    src/components/saude/, which compiled them into the public SPA bundle — the
+    bundle is served before any app-level auth runs, so they were readable by
+    anyone. They live here instead, served through the authenticated API.
+
+    Load with: manage.py load_health_content --profile <name> --slug <slug>
+               --file <path>   (real payloads live in gitignored private-data/)
+    """
+    SLUG_CHOICES = (
+        ('clinical_report', 'Clinical / pregnancy report'),
+        ('observations', 'Clinical observations'),
+        ('hip_imaging', 'Hip imaging'),
+        ('glucose_log', 'Capillary glucose log'),
+        ('meal_plan', 'Meal plan'),
+        ('shopping_list', 'Shopping list'),
+        ('baby_implications', 'Lab findings -> baby implications'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(
+        Profile, on_delete=models.CASCADE, related_name='health_content',
+    )
+    slug = models.CharField(max_length=50, choices=SLUG_CHOICES)
+    payload = models.JSONField(help_text='Shape is per-slug; consumed by the matching card.')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['profile', 'slug']
+        unique_together = ('profile', 'slug')
+
+    def __str__(self):
+        return f'{self.profile.name} | {self.slug}'

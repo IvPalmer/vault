@@ -55,19 +55,22 @@ PALMER_EXAMS = [
     },
     {
         'tipo': 'bioquimica',
-        'nome': 'Follow-up PCR + VHS',
+        'nome': 'Follow-up PCR + VHS + HLA-B27',
         'data': date(2026, 4, 28),
-        'arquivo_path': 'Downloads/Laudo Completo 28_04_2026.pdf',
+        'arquivo_path': 'Downloads/Laudo Completo 28_04_2026.pdf · PCHL Composto 04_05_2026.pdf',
         'laboratorio': 'DASA',
         'medico': 'Dra. Valeria Nogueira Naves',
-        'notes': 'Normalização — PCR 3.24 → 0.25 mg/dL (13× redução), VHS 17 → 14 mm/h. Processo inflamatório sistêmico resolvido em ~11 meses.',
+        'notes': 'Investigação inflamatória/genética encerrada. PCR 3.24 → 0.25 mg/dL (13× redução), VHS 17 → 14 mm/h, HLA-B27 NÃO DETECTADO. Espondiloartropatia descartada. Foco agora em manejo ortopédico (FAI/CAM) + medicina da dor.',
         'valores': {
             'pcr_mg_dl': 0.25,
             'pcr_status': 'normal',
             'vhs_mm_h': 14,
             'vhs_status': 'normal',
+            'hla_b27': 'nao_detectado',
+            'hla_b27_liberado': '2026-05-04',
             'vs_anterior_pcr': '3.24 (mai/2025)',
             'vs_anterior_vhs': '17 (mai/2025)',
+            'conclusao': 'EpA descartada · investigacao reumatologica encerrada',
         },
     },
 ]
@@ -122,11 +125,12 @@ RAFA_EXAMS = [
         'medico': 'Dra. Nahara Alves Gomes Torres',
         'laboratorio': 'DASA / Lab Exame Asa Sul',
         'checkpoint_id': 'lab-1tri',
-        'notes': 'Coleta em 06/05 com jejum 12h. 13 exames coletados; vitamina D aguardando autorização. Aguardando resultados.',
+        'notes': 'Coleta em 06/05 com jejum 12h. 21/22 exames neste laudo; Vit D coletada avulsa em 13/05 (laudo separado, ver 25-OH Vitamina D follow-up).',
         'valores': {
-            'status': 'coletado_aguardando_resultado',
+            'status': 'resultados_recebidos',
             'jejum_horas': 12,
-            'pendente_autorizacao': ['vitamina_d'],
+            'painel_completo': True,
+            'vit_d_coleta_avulsa': '2026-05-13',
             'painel': [
                 'Tipagem sanguínea + Fator Rh + Coombs indireto',
                 'Hemograma completo + Ferro + Ferritina',
@@ -143,18 +147,63 @@ RAFA_EXAMS = [
             ],
         },
     },
-    # ─── USG transvaginal datação agendada (2026-05-18) ───
+    # ─── Vitamina D (25-OH) — coleta avulsa pós-autorização Amil ───
+    {
+        'tipo': 'bioquimica',
+        'nome': '25-OH Vitamina D (coleta avulsa)',
+        'data': date(2026, 5, 13),
+        'medico': 'Dra. Nahara Alves Gomes Torres',
+        'laboratorio': 'DASA / Lab Exame Asa Sul',
+        'checkpoint_id': 'lab-1tri',
+        'arquivo_path': 'https://drive.google.com/file/d/1qXPcfX1hTCjVu7HICqHPqFzZ57rZxikf/view',
+        'notes': 'Resultado 19 ng/mL — INSUFICIÊNCIA (ref grupo risco 30-60). Histórico: 41 (mai/2025) → 19 (mai/2026). Discutir suplementação D3 próxima consulta Dra. Nahara. Recoletar em 8-12 semanas.',
+        'valores': {
+            'status': 'resultado_recebido',
+            'resultado_ng_ml': 19,
+            'status_clinico': 'insuficiencia',
+            'token_dasa': 'J0P-nqibb',
+            'acoes': [
+                'Discutir D3 com Dra. Nahara',
+                'Recoletar 25-OH em julho-agosto/2026',
+                'Buscar nutricionista (Amil ou Proasa)',
+            ],
+        },
+    },
+    # ─── USG transvaginal datação — realizada 2026-05-20 (agendada 18/05) ───
     {
         'tipo': 'imagem_us',
         'nome': 'USG transvaginal gestacional (datação)',
-        'data': date(2026, 5, 18),
-        'medico': 'Dra. Nahara Alves Gomes Torres (solicitante)',
-        'laboratorio': 'A confirmar',
+        'data': date(2026, 5, 20),
+        'medico': 'Dra. Alexandra Paula de Oliveira (CRM-DF 13135) · solicitante Dra. Nahara Torres',
+        'laboratorio': 'Mega Asa Norte (Biosphere)',
         'checkpoint_id': 'usg-datacao',
-        'notes': 'Agendada 18/05/2026 (~IG 7+4). Coberta pela Proasa (carências aproveitadas) desde adesão 06/05. Amil USG libera apenas 28/05.',
+        # Pasta Drive vinculada contém laudo.pdf + imagens.pdf + filmagem.mp4 (vídeo)
+        'arquivo_path': 'https://drive.google.com/drive/folders/1yJxF3YgU-sCR8jsdb6Ej6GFbBolm4yVg',
+        'notes': ('Realizada 20/05/2026 (IG 9s1d, datação por CCN 24,5mm). Gestação tópica e única, '
+                  'implantação fúndica, BCF 168 bpm, vesícula vitelínica 3,7mm, colo 35,7mm com orifícios '
+                  'fechados, corpo lúteo bem vascularizado (OD). DPP 22/12/2026. Sem anormalidades. '
+                  'Laudo + imagens + filmagem (vídeo) na pasta Drive vinculada. Coberta Proasa ADV 300. '
+                  '(Agendada originalmente 18/05.)'),
         'valores': {
-            'status': 'agendado',
+            'ig': '9s1d',
+            'bcf_bpm': 168,
+            'ccn_mm': 24.5,
+            'dpp': '2026-12-22',
+            'status': 'realizado',
+            'embriao': 'único',
+            'implantacao': 'fúndica',
+            'saco_gestacional_mm': '48,3 × 17,6 × 50,2',
+            'vesicula_vitelinica_mm': 3.7,
+            'colo_mm': 35.7,
+            'corpo_luteo': 'OD, boa vascularização',
             'cobertura': 'Proasa ADV 300 DF',
+            'protocolo': '7667707288',
+            'data_agendada': '2026-05-18',
+            'video_drive_id': '1iLps4sjiVwwtOtpdjEJ-CYNMUbJMRK6-',
+            # Served as a static file by nginx (host-mounted, outside git) for
+            # reliable byte-range <video> playback. Takes precedence over the
+            # Drive stream proxy in the frontend.
+            'video_url': '/exam-media/usg-20-05-163037bafc.mp4',
         },
     },
 ]
@@ -191,28 +240,28 @@ class Command(BaseCommand):
             defaults={
                 'status': 'ativa',
                 'notes': 'Primeira gestação. Detalhes operacionais em health/family/.',
-                'plano_nome': 'Amil 702 PME (PRC 609)',
+                'plano_nome': 'Amil 702 PME (PRC 609) + Proasa ADV 300 DF',
                 'plano_vigencia_inicio': date(2026, 4, 28),  # confirmar dia exato
-                'carencia_obstetrica_dias': 300,
-                # Estimativa provisória — substituir quando USG datação confirmar.
-                # IG estimada ~5 sem em 2026-05-02 → DUM ~28/03/2026, DPP ~02/01/2027
-                'dum': date(2026, 3, 28),
-                'dpp': date(2027, 1, 2),
+                'carencia_obstetrica_dias': 0,  # Proasa ADV 300 cobre parto integralmente (carências aproveitadas)
+                # Confirmado por USG datação 20/05/2026 (9s1d, CCN 24,5mm).
+                # DUM USG-derivada ~17/03/2026. DPP oficial 22/12/2026.
+                'dum': date(2026, 3, 17),
+                'dpp': date(2026, 12, 22),
             },
         )
         if not created:
             updated = False
             if not pregnancy.plano_nome:
-                pregnancy.plano_nome = 'Amil 702 PME (PRC 609)'
+                pregnancy.plano_nome = 'Amil 702 PME (PRC 609) + Proasa ADV 300 DF'
                 updated = True
             if not pregnancy.plano_vigencia_inicio:
                 pregnancy.plano_vigencia_inicio = date(2026, 4, 28)
                 updated = True
             if not pregnancy.dum:
-                pregnancy.dum = date(2026, 3, 28)
+                pregnancy.dum = date(2026, 3, 17)
                 updated = True
             if not pregnancy.dpp:
-                pregnancy.dpp = date(2027, 1, 2)
+                pregnancy.dpp = date(2026, 12, 22)
                 updated = True
             if updated:
                 pregnancy.save()

@@ -15,6 +15,8 @@ import {
   MonthlyCategoryChart,
   CategoryDescBreakdownChart,
   SpendingInsights,
+  SubscriptionsControlCard,
+  CashflowDiarioChart,
 } from './charts'
 import Skeleton from './Skeleton'
 import styles from './Analytics.module.css'
@@ -125,6 +127,14 @@ function Analytics() {
         </div>
       ) : data && (
         <div className={styles.grid}>
+          {/* Row 0: Intra-month daily cash-flow ("vale") — full width */}
+          {data.cashflow && (
+            <div className={`${styles.card} ${styles.spanFull}`}>
+              <h3 className={styles.cardTitle}>FLUXO DE CAIXA DIÁRIO (VALE DO MÊS)</h3>
+              <CashflowDiarioChart data={data.cashflow} />
+            </div>
+          )}
+
           {/* Row 1: Spending Trends — full width */}
           <div className={`${styles.card} ${styles.spanFull}`}>
             <h3 className={styles.cardTitle}>TENDÊNCIA DE GASTOS</h3>
@@ -173,6 +183,12 @@ function Analytics() {
           <div className={`${styles.card} ${styles.spanFull}`}>
             <h3 className={styles.cardTitle}>MAIORES GASTOS DO PERÍODO</h3>
             <TopExpensesTable data={data.top_expenses} />
+          </div>
+
+          {/* Row 8: Subscriptions Control — full width */}
+          <div className={`${styles.card} ${styles.spanFull}`}>
+            <h3 className={styles.cardTitle}>CONTROLE DE ASSINATURAS</h3>
+            <SubscriptionsControlCard />
           </div>
         </div>
       )}

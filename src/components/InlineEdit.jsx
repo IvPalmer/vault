@@ -7,7 +7,10 @@ import styles from './InlineEdit.module.css'
  * Returns the result or NaN if invalid.
  */
 function evalFormula(expr) {
-  const cleaned = expr.replace(/\s/g, '').replace(/,/g, '.')
+  // pt-BR numbers: '.' is the thousands separator (drop it), ',' is the
+  // decimal separator (convert to '.'). Order matters — strip dots before
+  // turning commas into dots so "12.345,67" becomes "12345.67".
+  const cleaned = expr.replace(/\s/g, '').replace(/\./g, '').replace(/,/g, '.')
   if (!/^[\d.+\-*/()]+$/.test(cleaned)) return NaN
   try {
     let pos = 0

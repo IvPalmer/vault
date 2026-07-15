@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
 // Token management
 let accessToken = localStorage.getItem('vaultAccessToken')
@@ -67,11 +67,12 @@ async function request(endpoint, options = {}) {
       'Content-Type': 'application/json',
       ...optionHeaders,
     }
-    if (accessToken) {
-      h['Authorization'] = `Bearer ${accessToken}`
-    } else if (currentProfileId) {
-      h['X-Profile-ID'] = currentProfileId
-    }
+    // Send both: the Bearer token authenticates the request, while X-Profile-ID
+    // targets which profile's data to serve (shared app — either signed-in user
+    // may switch to the other profile). The backend only honors the header target
+    // once the JWT is valid, so this is safe.
+    if (accessToken) h['Authorization'] = `Bearer ${accessToken}`
+    if (currentProfileId) h['X-Profile-ID'] = currentProfileId
     return h
   }
 

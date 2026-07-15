@@ -26,6 +26,7 @@ function getGreeting() {
 }
 
 function formatDate() {
+  // Returns lowercase weekday/month for clean editorial casing in pt-BR
   return new Date().toLocaleDateString('pt-BR', {
     weekday: 'long',
     day: 'numeric',
@@ -84,55 +85,23 @@ const MODULES = [
     ),
     active: true,
   },
-  {
-    key: 'viagens',
-    label: 'Viagens',
-    desc: 'Planejamento de viagens',
-    icon: (
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M17.8 19.2L16 11L12 2L8 11L6.2 19.2" /><path d="M1 16L12 22L23 16" /><path d="M12 22V12" />
-      </svg>
-    ),
-    active: false,
-  },
-  {
-    key: 'documentos',
-    label: 'Documentos',
-    desc: 'Documentos importantes',
-    icon: (
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M14 2H6A2 2 0 004 4V20A2 2 0 006 22H18A2 2 0 0020 20V8Z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" />
-      </svg>
-    ),
-    active: false,
-  },
 ]
 
 function ModuleCards({ profileSlug }) {
   return (
     <section className={styles.modules}>
-      {MODULES.map((m) =>
-        m.active ? (
-          <Link key={m.key} to={`/${profileSlug}/${m.key === 'financeiro' ? 'overview' : m.key}`} className={styles.moduleCard}>
-            <div className={styles.moduleIconWrap}>{m.icon}</div>
-            <div className={styles.moduleInfo}>
-              <span className={styles.moduleLabel}>{m.label}</span>
-              <span className={styles.moduleDesc}>{m.desc}</span>
-            </div>
-            <svg className={styles.moduleArrow} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="9 18 15 12 9 6" />
-            </svg>
-          </Link>
-        ) : (
-          <div key={m.key} className={`${styles.moduleCard} ${styles.moduleDisabled}`}>
-            <div className={styles.moduleIconWrap}>{m.icon}</div>
-            <div className={styles.moduleInfo}>
-              <span className={styles.moduleLabel}>{m.label}</span>
-              <span className={styles.moduleDesc}>Em breve</span>
-            </div>
+      {MODULES.map((m) => (
+        <Link key={m.key} to={`/${profileSlug}/${m.key === 'financeiro' ? 'overview' : m.key}`} className={styles.moduleCard}>
+          <div className={styles.moduleIconWrap}>{m.icon}</div>
+          <div className={styles.moduleInfo}>
+            <span className={styles.moduleLabel}>{m.label}</span>
+            <span className={styles.moduleDesc}>{m.desc}</span>
           </div>
-        )
-      )}
+          <svg className={styles.moduleArrow} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+        </Link>
+      ))}
     </section>
   )
 }

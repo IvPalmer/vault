@@ -64,6 +64,45 @@
   margin-bottom: 24px;
 }
 
+.gridOneCol {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.timelineAccordion {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 0;
+  margin: 0;
+}
+.timelineAccordion > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 14px 22px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #6b6660);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.timelineAccordion > summary::-webkit-details-marker { display: none; }
+.timelineAccordion > summary::after {
+  content: '+';
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--text-secondary, #6b6660);
+}
+.timelineAccordion[open] > summary::after { content: '−'; }
+.timelineAccordion[open] > summary {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
 @media (max-width: 800px) {
   .gridTwoCol { grid-template-columns: 1fr; }
 }
@@ -119,6 +158,68 @@
   display: flex;
   flex-direction: column;
   gap: 32px;
+}
+
+/* Sub-tabs inside a profile view (Resumo / Painel / Histórico) — quieter
+   than the profile-level tabs above. Underline style, not pill. */
+.subTabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--color-border, rgba(0,0,0,0.1));
+  margin: -8px 0 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* Trailing space so the last tab can scroll fully into view, plus a fade
+     hint on the right edge in mobile. */
+  padding-right: 16px;
+}
+.subTabs::-webkit-scrollbar { display: none; }
+
+@media (max-width: 768px) {
+  .subTabs {
+    margin-left: calc(-1 * var(--space-md));
+    margin-right: calc(-1 * var(--space-md));
+    padding-left: var(--space-md);
+    padding-right: var(--space-md);
+  }
+}
+
+.subTab,
+.subTabActive {
+  padding: 10px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--text-secondary, #6b6660);
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  margin-bottom: -1px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.subTab:hover {
+  color: var(--text-primary, #2a2724);
+}
+.subTabActive {
+  color: var(--color-accent, #b86530);
+  border-bottom-color: var(--color-accent, #b86530);
+  font-weight: 600;
+}
+.subTabCount {
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-secondary, #6b6660);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+.subTabActive .subTabCount {
+  background: var(--color-accent-light, rgba(184, 101, 48, 0.12));
+  color: var(--color-accent, #b86530);
 }
 
 .section {
@@ -273,6 +374,15 @@
 
 .examFile:hover {
   background: rgba(0, 0, 0, 0.06);
+}
+
+.examFileDisabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: auto;
+}
+.examFileDisabled:hover {
+  background: transparent;
 }
 
 /* ── Vitals ──────────────────────────────────────── */

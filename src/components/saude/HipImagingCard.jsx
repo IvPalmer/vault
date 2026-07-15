@@ -1,9 +1,12 @@
 /**
- * HipImagingCard — bilateral hip measurements (Palmer's CT 2025-09-12).
+ * HipImagingCard — bilateral hip measurements from a CT.
  * Side-by-side comparison left vs right with status indicators.
+ *
+ * `data` comes from /saude/content/ (slug: hip_imaging). It used to be imported
+ * from a JS constant, which compiled the real measurements into the public bundle.
  */
 import styles from './saude-widgets.module.css'
-import { PALMER_HIP_IMAGING } from './palmerHealthData'
+import HipModel3D from './HipModel3D'
 
 const STATUS_COLOR = {
   alto: '#b43c3c',
@@ -11,8 +14,8 @@ const STATUS_COLOR = {
   normal: '#468c5a',
 }
 
-export default function HipImagingCard() {
-  const data = PALMER_HIP_IMAGING
+export default function HipImagingCard({ data }) {
+  if (!data) return null
   const dataFmt = data.data.split('-').reverse().join('/')
 
   return (
@@ -50,6 +53,9 @@ export default function HipImagingCard() {
           </div>
         ))}
       </div>
+
+      <div className={styles.widgetLabel} style={{ marginTop: 16 }}>Modelo 3D · TC segmentada</div>
+      <HipModel3D />
     </div>
   )
 }

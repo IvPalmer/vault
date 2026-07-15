@@ -21,6 +21,7 @@ export default function useDashboardState(profileId) {
   const profileIdRef = useRef(profileId)
   profileIdRef.current = profileId
   const savedTimer = useRef(null)
+  const settleTimer = useRef(null)
 
   // Load state from server (or migrate from localStorage)
   useEffect(() => {
@@ -105,6 +106,7 @@ export default function useDashboardState(profileId) {
   // Cleanup timer on unmount
   useEffect(() => {
     return () => {
+      if (settleTimer.current) clearTimeout(settleTimer.current)
       if (saveTimer.current) {
         clearTimeout(saveTimer.current)
         // Flush pending save

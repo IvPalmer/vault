@@ -1620,7 +1620,10 @@
   gap: 0;
   padding: 0 var(--space-lg);
   flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.tabBar::-webkit-scrollbar { display: none; }
 
 .saveIndicator {
   font-size: 0.7rem;
@@ -1669,13 +1672,20 @@
   transition: opacity 0.15s, color 0.15s;
 }
 
-.tab:hover .tabClose {
+.tab:hover .tabClose,
+.tabClose:focus-visible {
   opacity: 0.6;
 }
 
 .tabClose:hover {
   opacity: 1 !important;
   color: var(--color-red);
+}
+.tabClose:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  border-radius: 3px;
 }
 
 .tab:hover {
@@ -1909,6 +1919,16 @@
 
 /* ─── Responsive (dashboard cards only — grid layout handles widget breakpoints) ─── */
 
+@media (max-width: 768px) {
+  .tabBarRow {
+    padding-right: var(--space-md);
+  }
+  .tabBar {
+    padding: 0 var(--space-md);
+    flex-wrap: nowrap;
+  }
+}
+
 @media (max-width: 500px) {
   .dashboardCards {
     grid-template-columns: repeat(2, 1fr);
@@ -1943,11 +1963,14 @@
 .kanbanBoard {
   display: flex;
   flex: 1;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   min-height: 0;
+  scrollbar-width: thin;
 }
 .kanbanCol {
-  flex: 1;
+  flex: 1 0 160px;
+  min-width: 160px;
   display: flex;
   flex-direction: column;
   overflow: hidden;

@@ -191,7 +191,8 @@ function ProjectionSection() {
           <thead>
             <tr>
               <th>MES</th>
-              <th className={styles.numCol}>ENTRADAS</th>
+              <th className={styles.numCol}>SALÁRIO</th>
+              <th className={styles.numCol} title="Empréstimo, reembolsos e outras entradas não-salário">OUTRAS ENTRADAS</th>
               <th className={styles.numCol}>FIXOS</th>
               <th className={styles.numCol}>INVEST.</th>
               <th className={styles.numCol}>CARTAO</th>
@@ -205,6 +206,7 @@ function ProjectionSection() {
               <tr key={row.month} style={{ opacity: 0.6 }}>
                 <td className={styles.monthCell}>{shortMonth(row.month)}</td>
                 <td className={`${styles.numCol} ${styles.green}`}>R$ {fmt(row.income)}</td>
+                <td className={`${styles.numCol} ${styles.green}`}>{row.outras_entradas ? `R$ ${fmt(row.outras_entradas)}` : '—'}</td>
                 <td className={`${styles.numCol} ${styles.red}`}>R$ {fmt(row.fixo)}</td>
                 <td className={`${styles.numCol} ${styles.purple}`}>R$ {fmt(row.investimento)}</td>
                 <td className={`${styles.numCol} ${styles.orange}`}>R$ {fmt(row.installments)}</td>
@@ -226,7 +228,7 @@ function ProjectionSection() {
                 <td className={styles.monthCell}>
                   <span className={styles.balanceLabel}>Saldo Anterior</span>
                 </td>
-                <td colSpan={5}></td>
+                <td colSpan={6}></td>
                 <td className={`${styles.numCol} ${styles.saldoCol} ${bal >= 0 ? styles.green : styles.red}`}>
                   <strong>{bal < 0 ? '-' : ''}R$ {fmt(bal)}</strong>
                 </td>
@@ -245,22 +247,21 @@ function ProjectionSection() {
                   <td className={`${styles.numCol} ${styles.green}`}>
                     R$ {fmt(row.income)}
                   </td>
+                  <td className={`${styles.numCol} ${styles.green}`}>
+                    {row.outras_entradas ? `R$ ${fmt(row.outras_entradas)}` : '—'}
+                  </td>
                   <td className={`${styles.numCol} ${styles.red}`}>
                     R$ {fmt(row.fixo)}
                   </td>
                   <td className={`${styles.numCol} ${styles.purple}`} title={
-                    row.investimento === 0 && row.savings_target_amount > 0
-                      ? `Sem margem para investir (meta: R$ ${fmt(row.savings_target_amount)})`
-                      : row.investimento < row.savings_target_amount
-                        ? `Parcial: R$ ${fmt(row.investimento)} de R$ ${fmt(row.savings_target_amount)}`
-                        : `Meta ${Math.round(row.investimento / row.income * 100)}% atingida`
+                    row.income > 0
+                      ? `Consórcio + amortização + reserva comprometidos (${Math.round(row.investimento / row.income * 100)}% da renda)`
+                      : 'Consórcio + amortização + reserva comprometidos'
                   }>
-                    {row.investimento === 0 && row.savings_target_amount > 0 ? (
-                      <span style={{ color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>-</span>
-                    ) : row.investimento < row.savings_target_amount * 0.99 ? (
-                      <span style={{ opacity: 0.7 }}>R$ {fmt(row.investimento)} <span style={{ fontSize: '0.7em' }}>parcial</span></span>
-                    ) : (
+                    {row.investimento > 0 ? (
                       <>R$ {fmt(row.investimento)}</>
+                    ) : (
+                      <span style={{ color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>—</span>
                     )}
                   </td>
                   <td className={`${styles.numCol} ${styles.orange}`}>

@@ -13,6 +13,22 @@ function fmt(n) {
   return Math.abs(n).toLocaleString('pt-BR', { maximumFractionDigits: 2, minimumFractionDigits: 2 })
 }
 
+
+/** "2026-07" → "julho/26" (pt-BR). */
+function monthLabel(monthStr) {
+  if (!monthStr) return ''
+  const d = new Date(monthStr + '-01T00:00:00')
+  return d.toLocaleDateString('pt-BR', { month: 'long', year: '2-digit' })
+}
+
+/** Add n months to "YYYY-MM". */
+function addMonths(monthStr, n) {
+  if (!monthStr) return ''
+  const [y, m] = monthStr.split('-').map(Number)
+  const idx = (y * 12 + (m - 1)) + n
+  return `${String(Math.floor(idx / 12)).padStart(4, '0')}-${String((idx % 12) + 1).padStart(2, '0')}`
+}
+
 /** Amount cell with semantic color */
 function AmountCell({ value }) {
   const cls = value > 0 ? tableStyles.positive : tableStyles.negative
@@ -83,6 +99,32 @@ function CardsSection() {
     queryClient.invalidateQueries({ queryKey: ['analytics-metricas', selectedMonth] })
     queryClient.invalidateQueries({ queryKey: ['analytics-variable', selectedMonth] })
   }, [queryClient, selectedMonth])
+
+  // Cancelling/shortening a series affects every future month → invalidate broadly.
+  const invalidateSeries = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['analytics-installments'] })
+    queryClient.invalidateQueries({ queryKey: ['analytics-metricas'] })
+    queryClient.invalidateQueries({ queryKey: ['analytics-projection'] })
+    queryClient.invalidateQueries({ queryKey: ['analytics-cards'] })
+  }, [queryClient])
+
+  const capSeries = useCallback(async (r) => {
+    const pos = parseInt(String(r.parcela || '').split('/')[0], 10)
+    if (!r.id || !pos) return
+    if (!window.confirm(`Encerrar esta série na parcela ${r.parcela}? A projeção para de prever as próximas parcelas.`)) return
+    try {
+      await api.post('/installment-overrides/', { transaction_id: r.id, effective_total: pos })
+      invalidateSeries()
+    } catch (e) { window.alert(e?.message || 'Erro ao encerrar série') }
+  }, [invalidateSeries])
+
+  const uncapSeries = useCallback(async (r) => {
+    if (!r.id) return
+    try {
+      await api.delete('/installment-overrides/', { transaction_id: r.id })
+      invalidateSeries()
+    } catch (e) { window.alert(e?.message || 'Erro ao reativar série') }
+  }, [invalidateSeries])
 
   // Build columns with inline category editing
   const cardColumns = useMemo(() => [
@@ -251,9 +293,30 @@ function CardsSection() {
       size: 90,
       cell: ({ getValue }) => <ParcelaCell value={getValue()} />,
     },
-  ], [invalidate])
+    {
+      accessorKey: 'cap',
+      header: '',
+      size: 120,
+      cell: ({ row }) => {
+        const r = row.original
+        if (r.projected || !r.id) return null
+        if (r.capped) {
+          return (
+            <button className={styles.capBtn} title="Série encerrada — reativar projeção"
+              onClick={() => uncapSeries(r)}>encerrada · reativar</button>
+          )
+        }
+        return (
+          <button className={styles.capBtn} title="Encerrar série nesta parcela (para a projeção)"
+            onClick={() => capSeries(r)}>encerrar série</button>
+        )
+      },
+    },
+  ], [invalidate, capSeries, uncapSeries])
 
-  // Filter transactions by active tab, excluding installments (shown in Parcelas)
+  // COMPRAS = à vista (non-installment) purchases of the month. Every installment
+  // — including the first (1/N) — lives in the PARCELAS table (the bill that
+  // closes with this month's purchases).
   const filteredData = useMemo(() => {
     if (!data?.transactions) return []
     const currentTab = TABS.find(t => t.key === effectiveTab)
@@ -297,6 +360,20 @@ function CardsSection() {
   return (
     <div className={styles.section}>
       <h3 className={styles.title}>CONTROLE CARTÕES</h3>
+      {data?.cc_display_mode === 'transaction' ? (
+        <>
+          <div className={styles.subtitle}>
+            Compras e parcelas de {monthLabel(selectedMonth)} — entram na fatura paga em {monthLabel(data?.bill_month || addMonths(selectedMonth, 1))}: <strong>R$ {fmt(data?.bill_total || 0)}</strong> (CARTÃO na projeção)
+          </div>
+          <div className={styles.subtitleHint}>
+            Visão por mês da compra. O total abaixo pode diferir da fatura (compras de outro mês, estornos e projeção).
+          </div>
+        </>
+      ) : (
+        <div className={styles.subtitle}>
+          Fatura de {monthLabel(selectedMonth)}: <strong>R$ {fmt(data?.bill_total || 0)}</strong>
+        </div>
+      )}
 
       {/* Tab bar — hidden when only 1 card */}
       {TABS.length > 1 && (
@@ -322,7 +399,7 @@ function CardsSection() {
           Compras: <span className={tableStyles.negative}>R$ {fmt(variableTotal)}</span>
         </span>
         <span>
-          Total: <span className={tableStyles.negative}>R$ {fmt(instTotal + variableTotal)}</span>
+          Controle do mês: <span className={tableStyles.negative}>R$ {fmt(instTotal + variableTotal)}</span>
         </span>
       </div>
 
@@ -341,6 +418,7 @@ function CardsSection() {
               <span className={styles.summaryCount}>
                 {effectiveTab === 'all' && instData?.count != null ? instData.count : filteredInstallments.length} parcelas
               </span>
+              <span className={tableStyles.negative}>R$ {fmt(instTotal)}</span>
             </span>
             <span className={styles.chevron}>{showInstallments ? '▾' : '▸'}</span>
           </button>
@@ -362,6 +440,7 @@ function CardsSection() {
           <span className={styles.installmentTitle}>
             COMPRAS
             <span className={styles.summaryCount}>{filteredData.length} transações</span>
+            <span className={tableStyles.negative}>R$ {fmt(variableTotal)}</span>
           </span>
         </div>
         <VaultTable

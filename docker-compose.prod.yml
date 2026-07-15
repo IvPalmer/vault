@@ -28,6 +28,9 @@ services:
       PLUGGY_CLIENT_ID: ${PLUGGY_CLIENT_ID}
       PLUGGY_CLIENT_SECRET: ${PLUGGY_CLIENT_SECRET}
       PLUGGY_PROFILES: ${PLUGGY_PROFILES:-}
+      # Shared secret authorizing the chat-sidecar's server-to-server calls
+      # (X-Internal-Token). The API requires auth (JWT) for everyone else.
+      VAULT_INTERNAL_TOKEN: ${VAULT_INTERNAL_TOKEN:-}
     volumes:
       - vault_static:/app/staticfiles
       - vault_secrets:/app/secrets
@@ -45,6 +48,9 @@ services:
       CHAT_PROFILE_META: ${CHAT_PROFILE_META:-}
       CHAT_DEFAULT_HINT: ${CHAT_DEFAULT_HINT:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Must match the backend's VAULT_INTERNAL_TOKEN so server-to-server
+      # API calls authenticate (X-Internal-Token).
+      VAULT_INTERNAL_TOKEN: ${VAULT_INTERNAL_TOKEN:-}
     volumes:
       - vault_chat_memory:/app/memory
       # Subscription auth: bind-mount Claude Code OAuth credentials from host.
@@ -63,6 +69,12 @@ services:
     depends_on:
       - backend
       - chat-sidecar
+    volumes:
+      # Exam media (e.g. the ultrasound video) served as static files with
+      # native nginx byte-range support — reliable <video> playback without the
+      # streaming proxy. Host path lives outside the git checkout, so the media
+      # is not baked into the image/history and survives deploys.
+      - ${EXAM_MEDIA_PATH:-/home/ubuntu/vault-exam-media}:/usr/share/nginx/exam-media:ro
 
   cron:
     build: ./backend
@@ -95,6 +107,13 @@ services:
         chmod 600 /etc/cron_env
         echo "$$SYNC_SCHEDULE . /etc/cron_env && cd /app && python manage.py sync_pluggy --profile Palmer --save-balance >> /proc/1/fd/1 2>&1" > /tmp/crontab
         echo "$$SYNC_SCHEDULE . /etc/cron_env && cd /app && python manage.py sync_pluggy --profile Rafa --save-balance >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        # Reconcile Pluggy installments after each sync: correct invoice_month
+        # from the authoritative billId, then remove re-listed duplicates.
+        echo "15 8 * * * . /etc/cron_env && cd /app && python manage.py rebucket_invoice_month --apply >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        echo "20 8 * * * . /etc/cron_env && cd /app && python manage.py dedup_installments --apply >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        # Phantom-duplicate sentinel: runs 30 minutes after each Pluggy sync.
+        # Logs counts; exits 1 if rows > 5 OR value > R$500 so cron logs flag regressions.
+        echo "30 8 * * * . /etc/cron_env && cd /app && python manage.py check_phantom_duplicates --max-rows 5 --max-value 500 >> /proc/1/fd/1 2>&1" >> /tmp/crontab
         crontab /tmp/crontab
         echo "cron started: $$SYNC_SCHEDULE"
         cron -f

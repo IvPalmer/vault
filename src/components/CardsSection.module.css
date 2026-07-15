@@ -15,6 +15,37 @@
   border-left: 3px solid var(--color-accent);
 }
 
+.subtitle {
+  margin-top: calc(-1 * var(--space-xs));
+  padding-left: var(--space-md);
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+}
+
+.subtitleHint {
+  padding-left: var(--space-md);
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+  opacity: 0.75;
+}
+
+.capBtn {
+  background: transparent;
+  border: 1px solid var(--color-border, rgba(0,0,0,0.15));
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-secondary);
+  font-size: 0.68rem;
+  padding: 2px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.capBtn:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
 .loading {
   text-align: center;
   color: var(--color-text-secondary);

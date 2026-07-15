@@ -8,6 +8,7 @@ Two types of memory per profile:
 Stored as JSON files in chat-sidecar/memory/{profile_id}.json
 """
 import json
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -19,6 +20,13 @@ MAX_CONVERSATIONS = 50
 
 
 def _memory_path(profile_id: str) -> Path:
+    # Validate profile_id is a well-formed UUID before building the path.
+    # Without this, a crafted value (e.g. "../../../tmp/x") enables path
+    # traversal in save/recall.
+    try:
+        uuid.UUID(str(profile_id))
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError(f"Invalid profile_id: {profile_id!r}")
     return MEMORY_DIR / f"{profile_id}.json"
 
 

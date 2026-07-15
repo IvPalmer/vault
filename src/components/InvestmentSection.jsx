@@ -268,7 +268,7 @@ function InvestmentSection() {
   return (
     <div className={styles.section}>
       <div className={styles.header}>
-        <h3 className={styles.title}>INVESTIMENTOS</h3>
+        <h3 className={styles.title}>INVESTIMENTOS E EMPRÉSTIMOS</h3>
         <div className={styles.targetInfo}>
           {paused ? (
             <span className={styles.paused}>PAUSADO</span>

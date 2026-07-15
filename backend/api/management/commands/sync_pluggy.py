@@ -65,6 +65,8 @@ def _detect_internal_transfer(description, amount, raw_description=''):
     combined = desc_lower + ' ' + raw_lower
     patterns = [
         'pagamento de fatura',
+        'fatura paga',  # CC bill payment (legacy Itaú description) — settles the
+                        # already-counted fatura, so it's an internal transfer
         'pgto debito conta',
         'transf entre contas',
         'resgate',
@@ -81,6 +83,45 @@ def _extract_base_desc(description):
     """Remove installment suffix and clean up description."""
     desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', description).strip()
     return desc
+
+
+def _merchant_base(description):
+    """First merchant token (split on whitespace/'*', letters only). Collapses
+    the position-bearing suffix Pluggy varies between a purchase's billed and
+    account-level copies (MLJOI09/12 vs MLJOIE08/12 -> MERCADOLIVRE) while
+    keeping different merchants apart (ATEC vs GLEIDSON)."""
+    parts = (description or '').upper().split('*')[0].split()
+    if not parts:
+        return ''
+    tok = re.sub(r'[^A-Z]', '', parts[0])
+    if len(tok) < 3 and len(parts) > 1:
+        tok += re.sub(r'[^A-Z]', '', parts[1])
+    return tok[:12]
+
+
+def _installment_identity(cc_meta, description, brl_amount):
+    """Stable identity of a multi-installment CC charge, or None.
+
+    (cardNumber, purchaseDate, installmentNumber, totalInstallments,
+     merchant_base, brl_amount). Pluggy stamps the ORIGINAL purchaseDate
+     (full timestamp) on every position and re-lists the same position across
+     bill snapshots with shifting posting dates / billIds; keying on this
+     identity matches the same real charge across those shifts. Merchant +
+     amount are included as extra guards. Requires totalInstallments > 1 so
+     ordinary one-off purchases (totalInstallments == 1) are never matched.
+    """
+    if not cc_meta:
+        return None
+    total = cc_meta.get('totalInstallments')
+    # FULL purchaseDate timestamp: copies of one purchase share a byte-identical
+    # timestamp, but two distinct same-day purchases differ by seconds — so
+    # day-truncation could wrongly collapse them.
+    pdate = cc_meta.get('purchaseDate') or ''
+    if not (total and total > 1 and pdate):
+        return None
+    return (cc_meta.get('cardNumber', '') or '', pdate,
+            cc_meta.get('installmentNumber', 1), total,
+            _merchant_base(description), brl_amount)
 
 
 def _compute_invoice_month(txn_date, closing_day, due_offset=1):
@@ -107,6 +148,19 @@ def _compute_invoice_month(txn_date, closing_day, due_offset=1):
 
     payment = cycle + relativedelta(months=due_offset)
     return payment.strftime('%Y-%m')
+
+
+def _pluggy_brl_amount(ptxn):
+    """BRL magnitude of a Pluggy txn as Decimal.
+
+    Foreign-currency CC purchases report the original currency in `amount`
+    and BRL in `amountInAccountCurrency` — always use the BRL value so dedup
+    keys are computed identically everywhere.
+    """
+    brl_amount = ptxn.get('amountInAccountCurrency')
+    if brl_amount is not None and ptxn.get('currencyCode') not in (None, '', 'BRL'):
+        return Decimal(str(brl_amount))
+    return Decimal(str(ptxn['amount']))
 
 
 class Command(BaseCommand):
@@ -197,6 +251,7 @@ class Command(BaseCommand):
         total_new = 0
         total_skipped = 0
         total_updated = 0
+        synced_account_ids = set()
 
         # Process each Pluggy item
         for item_id in item_ids:
@@ -252,6 +307,7 @@ class Command(BaseCommand):
                     continue
 
                 vault_acct = vault_accounts[vault_name]
+                synced_account_ids.add(vault_acct.id)
                 self.stdout.write(f'\n--- {vault_name} ({pluggy_acct_id[:8]}...) ---')
 
                 txns = client.get_transactions(pluggy_acct_id, from_date, to_date)
@@ -274,6 +330,20 @@ class Command(BaseCommand):
                 ).update(expected_amount=bill_total)
                 if updated and self.verbosity >= 2:
                     self.stdout.write(f'  Updated {card_name} {inv_month} fatura = R$ {bill_total}')
+
+        # Reconcile installment-series categorization so forward/later positions
+        # inherit the category+subcategory of their earlier siblings (Pluggy
+        # categorizes each position independently and drops the subcategory on
+        # forward-listed positions).
+        if not self.dry_run:
+            from api.services import reconcile_installment_series_categories
+            # Scope to the accounts actually synced (honours --accounts; a series
+            # never spans accounts, so this loses nothing on a full sync).
+            rec = reconcile_installment_series_categories(
+                self.profile, account_ids=(synced_account_ids or None))
+            if rec['updated']:
+                self.stdout.write(
+                    f'  Reconciled {rec["updated"]} installment categorizations')
 
         # Save checking balance as BalanceAnchor
         if options['save_balance'] and not self.dry_run:
@@ -306,6 +376,10 @@ class Command(BaseCommand):
             self.card_account_map['5780'] = rafa_acc
         except Account.DoesNotExist:
             pass
+        # Apple subscriptions arrive brandless ("APPLECOMBILL"); learn the
+        # amount -> service classifier from this profile's reconciled history.
+        from api.services import build_apple_amount_map
+        self.apple_amount_map = build_apple_amount_map(profile)
 
     def _apply_rename(self, description):
         """Apply rename rules to a description."""
@@ -381,33 +455,23 @@ class Command(BaseCommand):
             return re.sub(r'\s+', ' ', s.strip().lower())
 
         existing_pluggy_by_content = {}  # (amount, norm_desc) -> set of dates
+        existing_content_exact = {}      # (amount, norm_desc, date) -> count
         for t in Transaction.objects.filter(
             account_id__in=acct_ids, profile=self.profile
         ).exclude(external_id='').values_list('date', 'amount', 'description'):
             ckey = (t[1], _content_norm(t[2]))
             existing_pluggy_by_content.setdefault(ckey, set()).add(t[0])
+            ekey = (t[1], _content_norm(t[2]), t[0])
+            existing_content_exact[ekey] = existing_content_exact.get(ekey, 0) + 1
 
-        # Load existing transactions for fuzzy dedup against legacy imports.
-        # Legacy data has different casing, punctuation, accents, and sometimes
-        # dates off by 1 day, so we normalize aggressively.
-        def _norm(s):
-            nfkd = unicodedata.normalize('NFKD', s)
-            ascii_only = nfkd.encode('ASCII', 'ignore').decode()
-            return re.sub(r'[^a-z0-9]', '', ascii_only.lower())
-
-        def _dedup_norm(s):
-            norm_desc = _norm(s)
-            if 'sispagpixraphaelazevedo' in norm_desc or norm_desc == 'raphaelazevedop':
-                return 'salary_raphael_azevedo'
-            if 'juroslimitedaconta' in norm_desc:
-                return 'juros_limite_da_conta'
-            if 'easyplan' in norm_desc:
-                return 'easyplan'
-            if 'ramiro' in norm_desc:
-                return 'ramiro'
-            if 'gsoensino' in norm_desc:
-                return 'gso_ensino'
-            return norm_desc
+        # Use the central normalization helper from services.py so all dedup paths
+        # (sync, get_metricas aggregation, dedup_phantom_transactions command)
+        # apply identical rules. This strips Pluggy verbose prefixes
+        # ("PIX TRANSF ", "PAG BOLETO ", etc.) so legacy CSV format
+        # ("Claudia28 01") and Pluggy verbose format ("PIX TRANSF Claudia28/01")
+        # collapse to the same key.
+        from api.services import _normalize_transaction_description as _dedup_norm
+        _norm = _dedup_norm  # backward-compat alias for code below
 
         existing_synced_by_amt = {}  # (abs_amt, norm_desc) -> set(date)
         for t in Transaction.objects.filter(
@@ -440,7 +504,12 @@ class Command(BaseCommand):
 
         batch_create = []
         is_cc = vault_acct.account_type == 'credit_card'
-        closing_day = vault_acct.closing_day or 30  # Itau default
+        # Fallback only — used when a transaction has no Pluggy billId yet (very
+        # recent, unbilled). Itaú's real closing drifts ~27-29 (≈ N business days
+        # before the day-05 due date), so no fixed value is exact; 28 is a safe
+        # middle. Billed transactions use the authoritative billId month, and
+        # rebucket_invoice_month corrects any heuristic guess once the bill closes.
+        closing_day = vault_acct.closing_day or 28
         due_day = vault_acct.due_day
         # due_offset: 0 if payment is same month as closing (due > close),
         # 1 if payment is next month (due < close, e.g. Itaú close=25, due=5)
@@ -449,11 +518,69 @@ class Command(BaseCommand):
         else:
             due_offset = 1  # Default: payment next month
 
-        # Track which invoice months are covered by Pluggy bills.
-        # Unbilled account-level transactions for these months are duplicates.
-        billed_months = set()
+        # Dates of purchases Pluggy itemized under a bill (carry a billId),
+        # indexed by (signed_amount, norm_desc). A no-billId account-level copy
+        # is a duplicate ONLY if a billed twin of the SAME purchase exists —
+        # same SIGNED amount and description within ±1 day. Three deliberate
+        # choices:
+        #   - Identity, NOT invoice_month: invoice_month is derived two
+        #     different ways on the two sides (Pluggy billId vs heuristic) so it
+        #     doesn't align. A recurring charge (ICATU/Apple/iFood — same
+        #     amount+desc monthly) would collide with a prior month's billed
+        #     instance and be wrongly suppressed.
+        #   - Date separates the months, and keeps real charges on an open bill
+        #     whose recent purchases have no billId yet.
+        #   - SIGNED amount (raw Pluggy value, before the Vault CC sign flip):
+        #     a refund/reversal (-X) must not be collapsed onto a same-merchant
+        #     purchase (+X) — only true bill/account twins share the same sign.
+        billed_dates_by_key = {}  # (signed_amount, norm_desc) -> set of dates
         if is_cc:
-            billed_months = set(self.bill_map.values())
+            for _ptxn in pluggy_txns:
+                _meta = _ptxn.get('creditCardMetadata') or {}
+                _bill_id = _meta.get('billId', '')
+                if not (_bill_id and _bill_id in self.bill_map):
+                    continue
+                _raw = _ptxn.get('descriptionRaw') or _ptxn.get('description', '')
+                _desc = _ptxn.get('description', _raw)
+                _key = (_pluggy_brl_amount(_ptxn), _dedup_norm(_desc))
+                billed_dates_by_key.setdefault(_key, set()).add(
+                    date.fromisoformat(_ptxn['date'][:10]))
+
+        # Installment de-duplication by purchase identity. Pluggy re-lists the
+        # same installment position across monthly bill snapshots (and as a
+        # no-billId account-level copy), each time with a different posting
+        # date / billId — producing within-month duplicates. Pick ONE winner
+        # per (card, purchaseDate, position): prefer the copy whose billId maps
+        # to a known invoice month (authoritative); fall back to the first seen.
+        # purchaseDate keeps genuinely repeated purchases (same merchant/amount/
+        # plan, different purchase date) apart, so no legitimate charge is lost.
+        inst_winner = {}  # identity -> (ext_id, has_billId)
+        if is_cc:
+            for _ptxn in pluggy_txns:
+                _desc = _ptxn.get('description') or _ptxn.get('descriptionRaw', '')
+                _ident = _installment_identity(
+                    _ptxn.get('creditCardMetadata'), _desc, _pluggy_brl_amount(_ptxn))
+                if _ident is None:
+                    continue
+                _bid = (_ptxn.get('creditCardMetadata') or {}).get('billId', '')
+                _has_bill = bool(_bid and _bid in self.bill_map)
+                _cur = inst_winner.get(_ident)
+                if _cur is None or (_has_bill and not _cur[1]):
+                    inst_winner[_ident] = (_ptxn['id'], _has_bill)
+
+        # How many charges Pluggy presents per (amount, desc, date). The number of
+        # DISTINCT external_ids Pluggy returns for an identical-content same-day
+        # key IS the real count — so the content dedup below may collapse copies
+        # only down to that count, never below it. This keeps genuinely repeated
+        # identical charges (e.g. three R$18 purchases at one merchant on one day)
+        # while still suppressing refresh re-imports (same charge, new ext_id).
+        incoming_content_exact = {}
+        for _ptxn in pluggy_txns:
+            _amt = -_pluggy_brl_amount(_ptxn) if is_cc else _pluggy_brl_amount(_ptxn)
+            _dsc = _ptxn.get('description') or _ptxn.get('descriptionRaw', '')
+            _ek = (_amt, _content_norm(_dsc), date.fromisoformat(_ptxn['date'][:10]))
+            incoming_content_exact[_ek] = incoming_content_exact.get(_ek, 0) + 1
+        created_content_exact = {}
 
         for ptxn in pluggy_txns:
             ext_id = ptxn['id']
@@ -463,17 +590,27 @@ class Command(BaseCommand):
                 skipped_count += 1
                 continue
 
+            # Installment duplicate: a re-listing of an installment position we
+            # picked a different winner for. Skip every copy that is not the
+            # chosen one (keeps the billId-backed copy, drops the rest).
+            _idesc = ptxn.get('description') or ptxn.get('descriptionRaw', '')
+            _ident = _installment_identity(
+                ptxn.get('creditCardMetadata'), _idesc, _pluggy_brl_amount(ptxn))
+            if _ident is not None and inst_winner.get(_ident, (ext_id,))[0] != ext_id:
+                skipped_count += 1
+                existing_ext_ids.add(ext_id)
+                if self.verbosity >= 2:
+                    self.stdout.write(
+                        f'  Installment dup skip: "{ptxn.get("description","")}" '
+                        f'{ptxn["date"][:10]} {_ident[2]}/{_ident[3]} purchase={_ident[1]}')
+                continue
+
             # Parse transaction data
             raw_desc = ptxn.get('descriptionRaw') or ptxn.get('description', '')
             description = ptxn.get('description', raw_desc)
-            # For foreign-currency CC transactions, Pluggy returns the
-            # original currency in `amount` and BRL in `amountInAccountCurrency`.
-            # Always use the BRL value for Vault.
-            brl_amount = ptxn.get('amountInAccountCurrency')
-            if brl_amount is not None and ptxn.get('currencyCode') not in (None, '', 'BRL'):
-                raw_amount = Decimal(str(brl_amount))
-            else:
-                raw_amount = Decimal(str(ptxn['amount']))
+            # Foreign-currency CC purchases report original currency in
+            # `amount` and BRL in `amountInAccountCurrency` — use BRL.
+            raw_amount = _pluggy_brl_amount(ptxn)
             txn_date = date.fromisoformat(ptxn['date'][:10])
             month_str = txn_date.strftime('%Y-%m')
 
@@ -486,22 +623,68 @@ class Command(BaseCommand):
             else:
                 amount = raw_amount
 
+            # Resolve invoice month and drop billed duplicates UP FRONT — before
+            # this row touches any dedup index. A skipped no-billId copy must not
+            # poison the in-batch content index, or its billId twin gets dropped
+            # too (losing both copies).
+            cc_meta = ptxn.get('creditCardMetadata')
+            norm_desc = _dedup_norm(description)
+            invoice_month = ''
+            if is_cc:
+                bill_id = (cc_meta or {}).get('billId', '')
+                if bill_id and bill_id in self.bill_map:
+                    # Exact invoice month from Pluggy bill itemization.
+                    invoice_month = self.bill_map[bill_id]
+                else:
+                    invoice_month = _compute_invoice_month(txn_date, closing_day, due_offset)
+                    # NuBank double-lists purchases: once via the bills API
+                    # (with billId) and once at the account level (no billId).
+                    # Drop the account-level copy ONLY when a billed twin of THIS
+                    # purchase exists (same signed amount + description within
+                    # ±1 day). Real charges on an open bill whose recent
+                    # purchases have no billId yet — and recurring charges from
+                    # other months, and refunds of a same-merchant purchase —
+                    # are KEPT. raw_amount is the signed Pluggy value (matches
+                    # the billed_dates_by_key key built above).
+                    billed_dates = billed_dates_by_key.get((raw_amount, norm_desc), set())
+                    if any(abs((txn_date - d).days) <= 1 for d in billed_dates):
+                        skipped_count += 1
+                        existing_ext_ids.add(ext_id)
+                        if self.verbosity >= 2:
+                            self.stdout.write(
+                                f'  Billed dup skip: "{description}" {txn_date} R${amount}')
+                        continue
+
             # Content-based dedup: skip if same (amount, normalized description) with
             # date ±1 day already exists. Handles MeuPluggy external_id changes AND
             # bill-vs-account description case differences.
             content_key = (amount, _content_norm(description))
             existing_dates = existing_pluggy_by_content.get(content_key, set())
             if any(abs((txn_date - d).days) <= 1 for d in existing_dates):
-                skipped_count += 1
-                continue
+                # ...unless Pluggy presents MORE identical copies than we already
+                # hold: those are genuinely distinct repeated charges, not a
+                # re-import. Allow up to the count Pluggy returns for this content,
+                # counted over the SAME ±1-day window as the presence check (so a
+                # date-shifted re-import still nets to zero and is skipped).
+                _cn = _content_norm(description)
+                allowance = sum(
+                    incoming_content_exact.get((amount, _cn, txn_date + timedelta(days=k)), 0)
+                    - existing_content_exact.get((amount, _cn, txn_date + timedelta(days=k)), 0)
+                    - created_content_exact.get((amount, _cn, txn_date + timedelta(days=k)), 0)
+                    for k in (-1, 0, 1))
+                if allowance <= 0:
+                    skipped_count += 1
+                    continue
+                created_content_exact[(amount, _cn, txn_date)] = \
+                    created_content_exact.get((amount, _cn, txn_date), 0) + 1
 
             # Track for future iterations in this batch
             existing_pluggy_by_content.setdefault(content_key, set()).add(txn_date)
 
             # Fuzzy dedup: match on (date, abs_amount, normalized_description)
             # Handles legacy data with different casing, punctuation, accents
+            # (norm_desc already computed above for the invoice-month resolution)
             raw_norm_desc = _norm(description)
-            norm_desc = _dedup_norm(description)
             synced_dates = existing_synced_by_amt.get((abs(amount), norm_desc), set())
             if any(abs((txn_date - d).days) <= 1 for d in synced_dates):
                 skipped_count += 1
@@ -580,7 +763,6 @@ class Command(BaseCommand):
             is_installment, installment_info = _detect_installment(description)
 
             # CC installment metadata from Pluggy (more reliable than regex)
-            cc_meta = ptxn.get('creditCardMetadata')
             if cc_meta and cc_meta.get('totalInstallments'):
                 is_installment = True
                 inst_num = cc_meta.get('installmentNumber', 1)
@@ -589,30 +771,6 @@ class Command(BaseCommand):
                 # Include installment info in display description if not already there
                 if not re.search(r'\d+/\d+', display_desc):
                     display_desc = f'{display_desc} {installment_info}'
-
-            # Compute invoice_month for CC transactions
-            invoice_month = ''
-            if is_cc:
-                # Use Pluggy billId if available (exact), else fall back to heuristic
-                bill_id = (cc_meta or {}).get('billId', '')
-                if bill_id and bill_id in self.bill_map:
-                    invoice_month = self.bill_map[bill_id]
-                else:
-                    invoice_month = _compute_invoice_month(txn_date, closing_day, due_offset)
-
-                    # Skip unbilled CC transactions ONLY when bills data
-                    # covers this invoice period.  Some banks (NuBank) return
-                    # the same purchase from both the bills API (with billId)
-                    # and account transactions (without billId).  Skip the
-                    # account-level duplicate, but KEEP recent purchases whose
-                    # invoice period has no bill yet (still open).
-                    if invoice_month in billed_months:
-                        skipped_count += 1
-                        existing_ext_ids.add(ext_id)
-                        if self.verbosity >= 2:
-                            self.stdout.write(
-                                f'  Unbilled dup skip: "{description}" {txn_date} R${amount}')
-                        continue
 
             # Detect internal transfers
             is_transfer = _detect_internal_transfer(description, amount, raw_desc)
@@ -624,10 +782,32 @@ class Command(BaseCommand):
             # Card last 4 digits from creditCardMetadata
             card_last4 = (cc_meta or {}).get('cardNumber', '') or ''
 
-            # Categorization: Pluggy category mapping + description refinement + rules
-            category, subcategory = self._apply_pluggy_categorization(
-                pluggy_category_id, description=display_desc
-            )
+            # Original purchase date (installments): stable anchor for dedup.
+            purchase_date = None
+            _pd = (cc_meta or {}).get('purchaseDate') or ''
+            if _pd:
+                try:
+                    purchase_date = date.fromisoformat(_pd[:10])
+                except ValueError:
+                    purchase_date = None
+
+            # Apple subscriptions: the bank gives no brand, so resolve the
+            # specific service by amount from reconciled history BEFORE the
+            # generic "apple services -> Apple One" rule would fire.
+            apple_hit = None
+            if self.apple_amount_map:
+                from api.services import _is_generic_apple, resolve_apple_subscription
+                if _is_generic_apple(display_desc):
+                    apple_hit = resolve_apple_subscription(
+                        self.profile, amount, self.apple_amount_map)
+            if apple_hit:
+                display_desc = apple_hit['description']
+                category, subcategory = apple_hit['category'], apple_hit['subcategory']
+            else:
+                # Categorization: Pluggy category mapping + description refinement + rules
+                category, subcategory = self._apply_pluggy_categorization(
+                    pluggy_category_id, description=display_desc
+                )
 
             # Route additional card purchases to their own account
             target_account = vault_acct
@@ -655,6 +835,7 @@ class Command(BaseCommand):
                 pluggy_category=pluggy_category,
                 pluggy_category_id=pluggy_category_id,
                 card_last4=card_last4,
+                pluggy_purchase_date=purchase_date,
             )
             batch_create.append(txn)
             new_count += 1
