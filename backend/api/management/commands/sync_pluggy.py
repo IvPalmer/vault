@@ -727,9 +727,13 @@ class Command(BaseCommand):
                             first.pluggy_category = p_cat
                             first.pluggy_category_id = p_cat_id
                             update_fields += ['pluggy_category', 'pluggy_category_id']
-                            # Also apply Pluggy category if uncategorized
+                            # Also apply Pluggy category if uncategorized. Pass the
+                            # description or the keyword rules are skipped and the
+                            # row lands on Pluggy's raw guess.
                             if not first.category and not first.is_manually_categorized:
-                                cat, sub = self._apply_pluggy_categorization(p_cat_id)
+                                cat, sub = self._apply_pluggy_categorization(
+                                    p_cat_id, description=first.description
+                                )
                                 if cat:
                                     first.category = cat
                                     first.subcategory = sub

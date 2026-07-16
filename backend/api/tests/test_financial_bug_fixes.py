@@ -581,6 +581,97 @@ class SaudeDoMesTests(TestCase):
         self.assertEqual(result['saude'], 'SAUDÁVEL')
 
 
+class ManualLinkCategoryFlagTests(TestCase):
+    """Linking a transaction to a recurring item is not a categorization choice.
+    Flagging it as one while assigning nothing strands the row: every automatic
+    path (sync_pluggy, backfill_pluggy_categories) skips rows that have no
+    category but claim to be manually categorized."""
+
+    def setUp(self):
+        self.profile = Profile.objects.create(name='Tester')
+        self.account = Account.objects.create(
+            profile=self.profile, name='Checking', account_type='checking',
+        )
+        self.txn = Transaction.objects.create(
+            profile=self.profile, account=self.account, date=date(2026, 3, 11),
+            description='Pagamento de Pix QR Code AMIL', amount=Decimal('-1003.46'),
+            month_str='2026-03',
+        )
+
+    def _mapping(self, category=None):
+        from api.models import RecurringMapping
+        tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name='PLANO DE SAUDE AMIL', template_type='Fixo',
+            default_limit=Decimal('1003.46'),
+        )
+        return RecurringMapping.objects.create(
+            profile=self.profile, template=tpl, category=category,
+            month_str='2026-03', expected_amount=Decimal('1003.46'),
+        )
+
+    def test_link_without_category_leaves_the_row_auto_categorizable(self):
+        from api.services import map_transaction_to_category
+        mapping = self._mapping(category=None)
+        map_transaction_to_category(self.txn.id, mapping_id=mapping.id, profile=self.profile)
+
+        self.txn.refresh_from_db()
+        self.assertTrue(mapping.transactions.filter(id=self.txn.id).exists())
+        self.assertIsNone(self.txn.category)
+        self.assertFalse(self.txn.is_manually_categorized)
+
+    def test_link_with_category_still_assigns_and_flags_manual(self):
+        from api.services import map_transaction_to_category
+        from api.models import Category
+        cat = Category.objects.create(profile=self.profile, name='Seguros')
+        mapping = self._mapping(category=cat)
+        map_transaction_to_category(self.txn.id, mapping_id=mapping.id, profile=self.profile)
+
+        self.txn.refresh_from_db()
+        self.assertEqual(self.txn.category, cat)
+        self.assertTrue(self.txn.is_manually_categorized)
+
+
+class CategorizationRuleOverridesPluggyTests(TestCase):
+    """A keyword rule is the operator stating a fact about a payee; Pluggy's ML
+    guess is a guess. The rule wins — sync_pluggy already works this way, and
+    smart_categorize's own docstring promises it."""
+
+    def test_rule_beats_pluggy_classification(self):
+        from api.services import smart_categorize
+        from api.models import Category, PluggyCategoryMapping, Subcategory, CategorizationRule
+
+        profile = Profile.objects.create(name='Tester')
+        account = Account.objects.create(
+            profile=profile, name='Checking', account_type='checking',
+        )
+        transfers = Category.objects.create(profile=profile, name='Transferencias')
+        moradia = Category.objects.create(profile=profile, name='Moradia')
+        limpeza = Subcategory.objects.create(
+            profile=profile, category=moradia, name='Limpeza e Manutenção',
+        )
+        # Pluggy classifies the cleaner's PIX as a plain transfer.
+        PluggyCategoryMapping.objects.create(
+            profile=profile, pluggy_category_id='10000000',
+            pluggy_category_name='Transfers', category=transfers,
+        )
+        CategorizationRule.objects.create(
+            profile=profile, keyword='ROSILDA', category=moradia,
+            subcategory=limpeza, priority=10,
+        )
+        txn = Transaction.objects.create(
+            profile=profile, account=account, date=date(2026, 3, 11),
+            description='Pix enviado ROSILDA MARIA PEREIRA',
+            amount=Decimal('-220.00'), month_str='2026-03',
+            pluggy_category_id='10000000',
+        )
+
+        smart_categorize(month_str='2026-03', profile=profile)
+
+        txn.refresh_from_db()
+        self.assertEqual(txn.category, moradia)
+        self.assertEqual(txn.subcategory, limpeza)
+
+
 class SalaryBudgetSyncTests(TestCase):
     @patch('api.services._get_wise_fees', return_value=None)
     @patch('api.services._get_usd_brl_rate', return_value=5.0)

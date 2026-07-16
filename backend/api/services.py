@@ -3929,7 +3929,11 @@ def map_transaction_to_category(transaction_id, category_id=None, mapping_id=Non
         mapping = RecurringMapping.objects.select_related('template', 'category').get(id=mapping_id, profile=profile)
         if mapping.category:
             txn.category = mapping.category
-        txn.is_manually_categorized = True
+            # Only an actual category choice counts as manual. Flagging a link to
+            # a category-less mapping strands the row forever: it stays
+            # uncategorized while sync_pluggy and backfill_pluggy_categories both
+            # skip anything that has no category but claims to be manual.
+            txn.is_manually_categorized = True
         txn.save()
         _update_mapping(mapping)
         cat_name = mapping.custom_name if mapping.is_custom else (
@@ -5517,7 +5521,10 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
         # ── Strategy 1c: CategorizationRule Override (confidence: 0.98) ──
         # User-defined keyword rules can override Pluggy or assign from scratch.
         # Rules can also refine subcategory when Pluggy only gave category.
-        if not matched_category:
+        # A rule states a fact about a payee; Pluggy's classification is a guess,
+        # so the rule wins over it (but not over the more specific apple_amount
+        # match). sync_pluggy resolves it the same way.
+        if not matched_category or match_method == 'pluggy':
             rule_cat, rule_sub = _apply_categorization_rules(txn.description, profile)
             if rule_cat:
                 matched_category = rule_cat
