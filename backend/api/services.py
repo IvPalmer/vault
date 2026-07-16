@@ -2207,10 +2207,33 @@ def get_metricas(month_str, profile=None):
     # =====================================================================
     # 15. SAÚDE DO MÊS
     # =====================================================================
+    # Orçamento variável — the envelope, i.e. what is left for discretionary
+    # spending once income covers the month's commitments. Same formula as the
+    # card below and RecurringTotalsBar; computed here because SAÚDE measures
+    # against it. (The last fallback matches _starting: with no previous EOM
+    # balance, _get_checking_balance_eom returns None there too.)
+    if is_future and projected_balance is not None:
+        _orc_starting = float(projected_balance)
+    elif prev_month_saldo_float is not None:
+        _orc_starting = prev_month_saldo_float
+    else:
+        _orc_starting = float(balance_override) if balance_override is not None else 0.0
+    _orc_starting -= float(carryover_debt)
+    orcamento_variavel = round(
+        _orc_starting + float(entradas_projetadas) - float(fixo_for_budget)
+        - float(invest_expected_total) - float(fatura_total or 0), 2
+    )
+
+    # Health compares discretionary spending against the discretionary envelope —
+    # both sides are the same money. It cannot compare gastos_atuais (spending as
+    # incurred: card purchases count on purchase, the bill payment doesn't) with
+    # gastos_projetados (cash leaving checking: fixo + the bill + investments):
+    # those are different bases, so the ratio was meaningless. Fixo, fatura and
+    # investments are commitments, not overspending.
     if saldo_projetado is not None and float(saldo_projetado) <= 0:
         saude = 'CRÍTICO'
         saude_level = 'danger'
-    elif float(gastos_atuais) > float(gastos_projetados) * 0.9:
+    elif orcamento_variavel <= 0 or float(gastos_variaveis) > orcamento_variavel * 0.9:
         saude = 'ATENÇÃO'
         saude_level = 'warning'
     else:
@@ -2313,20 +2336,8 @@ def get_metricas(month_str, profile=None):
     else:
         result_dict['juros_estimate'] = 0.0
 
-    # Orçamento variável: same formula as RecurringTotalsBar.
-    # Uses prev_month_saldo (current month) or projected_balance (future) minus
-    # carryover_debt — matching the frontend's starting balance calculation.
-    if is_future and projected_balance is not None:
-        _orc_starting = float(projected_balance)
-    elif prev_month_saldo_float is not None:
-        _orc_starting = prev_month_saldo_float
-    else:
-        _orc_starting = _starting
-    _orc_starting -= float(carryover_debt)
-    result_dict['orcamento_variavel'] = round(
-        _orc_starting + float(entradas_projetadas) - float(fixo_for_budget)
-        - float(invest_expected_total) - float(fatura_total or 0), 2
-    )
+    # Orçamento variável: computed above, where SAÚDE measures against it.
+    result_dict['orcamento_variavel'] = orcamento_variavel
 
     # --- Meta Poupança: investment achievement vs dynamic target ---
     income_ref = float(entradas_atuais) if (not is_current and float(entradas_atuais) > 0) else float(entradas_projetadas)

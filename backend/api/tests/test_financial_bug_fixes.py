@@ -509,6 +509,78 @@ class CardBillPaymentNotSpendingTests(TestCase):
         self.assertAlmostEqual(float(expense), metricas['gastos_atuais'], places=2)
 
 
+class SaudeDoMesTests(TestCase):
+    """Health measures discretionary spending against the discretionary envelope.
+    Commitments (fixo, the card bill, investments) are not overspending."""
+
+    def setUp(self):
+        from api.models import BalanceAnchor, Category, RecurringMapping
+        self.profile = Profile.objects.create(name='Tester')
+        self.account = Account.objects.create(
+            profile=self.profile, name='Checking', account_type='checking',
+        )
+        # Real prior balance — the envelope starts from it.
+        BalanceAnchor.objects.create(
+            profile=self.profile, date=date(2026, 2, 28),
+            balance=Decimal('10000.00'),
+        )
+        self.cat = Category.objects.create(profile=self.profile, name='Mercado')
+        income_tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name='SALARIO', template_type='Income',
+            default_limit=Decimal('10000.00'),
+        )
+        RecurringMapping.objects.create(
+            profile=self.profile, template=income_tpl, month_str='2026-03',
+            expected_amount=Decimal('10000.00'),
+        )
+
+    def _spend(self, amount):
+        Transaction.objects.create(
+            profile=self.profile, account=self.account, date=date(2026, 3, 10),
+            description='MERCADO', amount=-Decimal(amount), month_str='2026-03',
+            category=self.cat,
+        )
+
+    def test_spending_inside_the_envelope_is_healthy(self):
+        self._spend('1000.00')
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertEqual(result['saude'], 'SAUDÁVEL')
+
+    def test_spending_past_the_envelope_warns(self):
+        self._spend('19500.00')
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertEqual(result['saude_level'], 'warning')
+
+    def test_committed_fixo_alone_is_not_overspending(self):
+        """Rent eats 9.000 of a 10.000 income and only 1.500 is discretionary,
+        well inside the 9.000 envelope. The old ratio counted the rent as
+        spending and called this ATENÇÃO — commitment is not overspending."""
+        from api.models import RecurringMapping
+        tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name='ALUGUEL', template_type='Fixo',
+            default_limit=Decimal('9000.00'),
+        )
+        mapping = RecurringMapping.objects.create(
+            profile=self.profile, template=tpl, month_str='2026-03',
+            expected_amount=Decimal('9000.00'), match_mode='manual',
+        )
+        txn = Transaction.objects.create(
+            profile=self.profile, account=self.account, date=date(2026, 3, 5),
+            description='ALUGUEL', amount=Decimal('-9000.00'), month_str='2026-03',
+        )
+        mapping.transactions.add(txn)
+        self._spend('1500.00')
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertEqual(result['saude'], 'SAUDÁVEL')
+
+    def test_envelope_matches_the_card(self):
+        """SAÚDE and the ORÇAMENTO VARIÁVEL card must read the same envelope."""
+        self._spend('1000.00')
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertGreater(result['orcamento_variavel'], 0)
+        self.assertEqual(result['saude'], 'SAUDÁVEL')
+
+
 class SalaryBudgetSyncTests(TestCase):
     @patch('api.services._get_wise_fees', return_value=None)
     @patch('api.services._get_usd_brl_rate', return_value=5.0)
