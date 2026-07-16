@@ -231,7 +231,7 @@ class CrossMonthLinkedActualTests(TestCase):
         summing the two sets counts it twice and can mark a partially-received
         income as fully received, zeroing a_entrar."""
         from api.services import get_metricas, map_transaction_to_category
-        from api.models import RecurringMapping
+        from api.models import RecurringMapping, SalaryConfig
 
         profile = Profile.objects.create(name='Tester')
         account = Account.objects.create(
@@ -240,6 +240,10 @@ class CrossMonthLinkedActualTests(TestCase):
         tpl = RecurringTemplate.objects.create(
             profile=profile, name='FS', template_type='Income',
             default_limit=Decimal('44417.30'),
+        )
+        SalaryConfig.objects.create(
+            profile=profile, hourly_rate_usd=Decimal('52.00'),
+            income_template=tpl, is_active=True,
         )
         mapping = RecurringMapping.objects.create(
             profile=profile, template=tpl, month_str='2026-03',
@@ -259,7 +263,7 @@ class CrossMonthLinkedActualTests(TestCase):
         self.assertTrue(mapping.cross_month_transactions.filter(id=txn.id).exists())
 
         result = get_metricas('2026-03', profile=profile)
-        # R$ 22.000 of R$ 44.417,30 received → R$ 22.417,30 still pending.
+        # One of the two salary transfers is in → the other is still pending.
         self.assertAlmostEqual(result['a_entrar'], 22417.30, places=2)
         self.assertAlmostEqual(result['entradas_atuais'], 22000.00, places=2)
 
@@ -315,17 +319,65 @@ class PendingSettlementTests(TestCase):
         result = get_metricas('2026-03', profile=self.profile)
         self.assertAlmostEqual(result['a_pagar'], 5273.71, places=2)
 
-    def test_income_short_of_projection_keeps_remainder_pending(self):
-        """40000 of 42398.12 sits in the old 90% blind spot — the 2398.12 must
-        NOT be silently dropped."""
-        self._mapping('FS', 'Income', '42398.12', actual='40000.00')
-        result = get_metricas('2026-03', profile=self.profile)
-        self.assertAlmostEqual(result['a_entrar'], 2398.12, places=2)
-
     def test_income_overpaid_never_goes_negative(self):
         self._mapping('FS', 'Income', '40000.00', actual='42000.00')
         result = get_metricas('2026-03', profile=self.profile)
         self.assertAlmostEqual(result['a_entrar'], 0.0, places=2)
+
+    def _salary_mapping(self, expected, payments):
+        from api.models import RecurringMapping, SalaryConfig
+        tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name='FS', template_type='Income',
+            default_limit=Decimal(expected),
+        )
+        SalaryConfig.objects.create(
+            profile=self.profile, hourly_rate_usd=Decimal('52.00'),
+            income_template=tpl, is_active=True,
+        )
+        mapping = RecurringMapping.objects.create(
+            profile=self.profile, template=tpl, month_str='2026-03',
+            expected_amount=Decimal(expected), match_mode='manual',
+        )
+        for i, amount in enumerate(payments):
+            txn = Transaction.objects.create(
+                profile=self.profile, account=self.account,
+                date=date(2026, 3, 1 + i), description='Pix recebido',
+                amount=Decimal(amount), month_str='2026-03',
+            )
+            mapping.transactions.add(txn)
+        return mapping
+
+    def test_both_salary_payments_in_leave_no_residue(self):
+        """The projection is a placeholder converted at a live FX rate: once both
+        transfers land, the gap to `expected` is drift, not pending money."""
+        self._salary_mapping('42398.12', ['20000.00', '20000.00'])
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertAlmostEqual(result['a_entrar'], 0.0, places=2)
+
+    def test_one_of_two_salary_payments_keeps_the_other_pending(self):
+        self._salary_mapping('44417.30', ['22000.00'])
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertAlmostEqual(result['a_entrar'], 22417.30, places=2)
+
+    def test_salary_wrongly_split_into_three_still_settles(self):
+        """Some months a transfer lands in the wrong month and gets linked back,
+        leaving three payments — still fully received."""
+        self._salary_mapping('42398.12', ['20000.00', '15000.00', '5000.00'])
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertAlmostEqual(result['a_entrar'], 0.0, places=2)
+
+    def test_non_salary_income_settles_on_one_payment(self):
+        """Rafa's SALARIO BOX has no SalaryConfig — one transfer is the whole
+        thing, however far from the estimate."""
+        self._mapping('SALARIO BOX', 'Income', '5500.00', actual='5200.00')
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertAlmostEqual(result['a_entrar'], 0.0, places=2)
+
+    def test_status_salary_partial_until_both_payments_land(self):
+        from api.services import get_recurring_data
+        self._salary_mapping('44417.30', ['22000.00'])
+        items = {i['name']: i for i in get_recurring_data('2026-03', profile=self.profile)['all']}
+        self.assertEqual(items['FS']['status'], 'Parcial')
 
     def test_category_matched_bill_accumulates_instead_of_settling(self):
         """Assinaturas bundles every subscription charge into one category-mode
@@ -354,13 +406,30 @@ class PendingSettlementTests(TestCase):
         items = {i['name']: i for i in get_recurring_data('2026-03', profile=self.profile)['all']}
         self.assertEqual(items['CONSORCIO']['status'], 'Parcial')
 
-    def test_status_bill_under_projection_reads_paid_income_reads_partial(self):
+    def test_legacy_fk_only_bill_settles(self):
+        """Pre-M2M rows carry only the `transaction` FK. The count must follow the
+        same fallback as the amount, or a paid bill reads as still owing."""
+        from api.models import RecurringMapping
+        tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name='ALUGUEL', template_type='Fixo',
+            default_limit=Decimal('5273.71'),
+        )
+        txn = Transaction.objects.create(
+            profile=self.profile, account=self.account, date=date(2026, 3, 10),
+            description='ALUGUEL', amount=Decimal('-5015.85'), month_str='2026-03',
+        )
+        RecurringMapping.objects.create(
+            profile=self.profile, template=tpl, month_str='2026-03',
+            expected_amount=Decimal('5273.71'), transaction=txn, match_mode='manual',
+        )
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertAlmostEqual(result['a_pagar'], 0.0, places=2)
+
+    def test_status_bill_under_projection_reads_paid(self):
         from api.services import get_recurring_data
         self._mapping('ACADEMIA', 'Fixo', '630.00', actual='400.00')
-        self._mapping('FS', 'Income', '44417.30', actual='22000.00')
         items = {i['name']: i for i in get_recurring_data('2026-03', profile=self.profile)['all']}
         self.assertEqual(items['ACADEMIA']['status'], 'Pago')
-        self.assertEqual(items['FS']['status'], 'Parcial')
 
 
 class SalaryBudgetSyncTests(TestCase):

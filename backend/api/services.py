@@ -18,6 +18,11 @@ from .models import (
 )
 
 
+# The salary is transferred once per half of the work month. _weekdays_in_half
+# splits the month in two, so this is 2 by construction, not a preference.
+SALARY_PAYMENTS_PER_MONTH = 2
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -220,26 +225,53 @@ def _linked_transactions(mapping):
     return list({t.id: t for t in linked}.values())
 
 
-def _is_settled(expected, actual, cat_type, match_mode='manual'):
+def _received_count(mapping):
+    """How many payments are linked, following the same fallback chain as
+    _get_actual_for_mapping so the count and the amount never disagree."""
+    linked = _linked_transactions(mapping)
+    if linked:
+        return len(linked)
+    return 1 if mapping.transaction_id else 0
+
+
+def _expected_income_payments(mapping, salary_template_id=None):
+    """How many transfers an income item arrives in.
+
+    The salary is paid in halves (SalaryConfig, see compute_salary_projection);
+    any other income lands in one payment.
+    """
+    if salary_template_id and mapping.template_id == salary_template_id:
+        return SALARY_PAYMENTS_PER_MONTH
+    return 1
+
+
+def _is_settled(expected, actual, cat_type, match_mode='manual',
+                received_count=0, expected_count=1):
     """Whether a recurring item has no cash movement left this month.
 
-    A manually-matched bill is a single debit whose `expected` is only a
-    projection that drifts month to month, so the real debit settles it however
-    far off the estimate was. Everything else accumulates toward `expected`:
-    income and investments arrive in several payments, a card bill is an
-    authoritative total, and a category match aggregates many transactions
-    (Assinaturas bundles every subscription charge).
+    Bills and income settle on payment COUNT, never on amount: `expected` is
+    only a projected placeholder that drifts month to month — the salary's is
+    even converted at a live FX rate — so the real transfers settle the item
+    however far off the estimate was. A bill arrives in one debit, the salary in
+    SALARY_PAYMENTS_PER_MONTH.
+
+    Investments, card bills and category matches accumulate toward `expected`
+    instead: an investment target is real money still owed, a card bill total is
+    authoritative rather than projected, and a category match bundles an
+    open-ended number of charges (Assinaturas holds every subscription).
     """
     if actual <= 0:
         return False
-    if cat_type == 'Fixo' and match_mode != 'category':
-        return True
-    return actual >= expected
+    if match_mode == 'category' or cat_type in ('Investimento', 'Cartao'):
+        return actual >= expected
+    return received_count >= expected_count
 
 
-def _pending_amount(expected, actual, cat_type, match_mode='manual'):
+def _pending_amount(expected, actual, cat_type, match_mode='manual',
+                    received_count=0, expected_count=1):
     """Cash still expected to move for a recurring item this month."""
-    if _is_settled(expected, actual, cat_type, match_mode):
+    if _is_settled(expected, actual, cat_type, match_mode,
+                   received_count, expected_count):
         return Decimal('0.00')
     if actual <= 0:
         return expected
@@ -489,6 +521,10 @@ def get_recurring_data(month_str, profile=None):
     all_expense_descs = list(expense_pool.values_list('description', flat=True).distinct())
     all_income_descs = list(income_pool.values_list('description', flat=True).distinct())
 
+    salary_template_id = SalaryConfig.objects.filter(
+        profile=profile, is_active=True
+    ).values_list('income_template_id', flat=True).first()
+
     def _get_type(mapping):
         """Get the template type for a mapping (handles custom items)."""
         if mapping.is_custom:
@@ -537,7 +573,10 @@ def get_recurring_data(month_str, profile=None):
         linked = list(mapping.transactions.all())
         if linked:
             total = sum(float(abs(t.amount)) if cat_type != 'Income' else float(t.amount) for t in linked)
-            if expected == 0 or _is_settled(expected, total, cat_type):
+            if expected == 0 or _is_settled(
+                expected, total, cat_type, received_count=len(linked),
+                expected_count=_expected_income_payments(mapping, salary_template_id),
+            ):
                 return 'Pago', total
             elif total > 0:
                 return 'Parcial', total
@@ -547,7 +586,10 @@ def get_recurring_data(month_str, profile=None):
         # Legacy fallback: single transaction FK
         if mapping.transaction:
             actual = float(abs(mapping.transaction.amount)) if cat_type != 'Income' else float(mapping.transaction.amount)
-            if expected == 0 or _is_settled(expected, actual, cat_type):
+            if expected == 0 or _is_settled(
+                expected, actual, cat_type, received_count=1,
+                expected_count=_expected_income_payments(mapping, salary_template_id),
+            ):
                 return 'Pago', actual
             elif actual > 0:
                 return 'Parcial', actual
@@ -1632,7 +1674,7 @@ def get_metricas(month_str, profile=None):
         profile=profile,
     ).filter(
         Q(template__template_type='Income') | Q(is_custom=True, custom_type='Income')
-    ).exclude(status='skipped').select_related('template', 'category', 'transaction').prefetch_related('transactions')
+    ).exclude(status='skipped').select_related('template', 'category', 'transaction').prefetch_related('transactions', 'cross_month_transactions')
 
     entradas_projetadas = Decimal('0.00')
     for m in income_mappings:
@@ -1659,7 +1701,7 @@ def get_metricas(month_str, profile=None):
         profile=profile,
     ).filter(
         Q(template__template_type='Fixo') | Q(is_custom=True, custom_type='Fixo')
-    ).exclude(status='skipped').select_related('template', 'category', 'transaction').prefetch_related('transactions')
+    ).exclude(status='skipped').select_related('template', 'category', 'transaction').prefetch_related('transactions', 'cross_month_transactions')
 
     fixo_expected_total = Decimal('0.00')
     for m in fixo_mappings_all:
@@ -1684,7 +1726,7 @@ def get_metricas(month_str, profile=None):
         profile=profile,
     ).filter(
         Q(template__template_type='Investimento') | Q(is_custom=True, custom_type='Investimento')
-    ).exclude(status='skipped').select_related('template', 'category', 'transaction').prefetch_related('transactions')
+    ).exclude(status='skipped').select_related('template', 'category', 'transaction').prefetch_related('transactions', 'cross_month_transactions')
 
     invest_template_total = Decimal('0.00')
     for m in invest_mappings_all:
@@ -1848,11 +1890,19 @@ def get_metricas(month_str, profile=None):
     #     Uses match_mode to determine how to compute actual received.
     #     Salary lands in two payments, so whatever is short is still pending.
     # =====================================================================
+    _salary_template_id = SalaryConfig.objects.filter(
+        profile=profile, is_active=True
+    ).values_list('income_template_id', flat=True).first()
+
     a_entrar = Decimal('0.00')
     for mapping in income_mappings:
         expected = _mapping_expected_amount(mapping)
         actual = _get_actual_for_mapping(mapping, is_income=True)
-        a_entrar += _pending_amount(expected, actual, 'Income', mapping.match_mode)
+        a_entrar += _pending_amount(
+            expected, actual, 'Income', mapping.match_mode,
+            received_count=_received_count(mapping),
+            expected_count=_expected_income_payments(mapping, _salary_template_id),
+        )
 
     # =====================================================================
     # 11. A PAGAR — all pending expenses that will hit checking.
@@ -1866,7 +1916,10 @@ def get_metricas(month_str, profile=None):
             continue
         expected = _mapping_expected_amount(mapping)
         actual = _get_actual_for_mapping(mapping, is_income=False)
-        a_pagar_fixo += _pending_amount(expected, actual, 'Fixo', mapping.match_mode)
+        a_pagar_fixo += _pending_amount(
+            expected, actual, 'Fixo', mapping.match_mode,
+            received_count=_received_count(mapping),
+        )
 
     # a_pagar_invest: pending investment = dynamic target - what's been invested
     _invest_actual_total = Decimal('0.00')
@@ -1883,7 +1936,7 @@ def get_metricas(month_str, profile=None):
             month_str=month_str, profile=profile,
         ).filter(
             Q(template__template_type='Cartao') | Q(is_custom=True, custom_type='Cartao')
-        ).prefetch_related('transactions')
+        ).prefetch_related('transactions', 'cross_month_transactions')
         if cartao_mappings.exists():
             for cm in cartao_mappings:
                 cm_actual = _get_actual_for_mapping(cm, is_income=False)
@@ -7582,7 +7635,7 @@ def compute_salary_projection(profile, num_months=12, start_month_str=None):
         payments = []
         month_total_brl = 0
 
-        for pay_num in [1, 2]:
+        for pay_num in range(1, SALARY_PAYMENTS_PER_MONTH + 1):
             # Count actual weekdays in this half of the WORK month
             half_wdays = _weekdays_in_half(work_year, work_mon, pay_num)
             half_gross = rate * hours * half_wdays
