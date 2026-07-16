@@ -1,6 +1,5 @@
 from django.db import migrations, models
 from django.db.models import Count
-from django.core.management import call_command
 
 
 PALMER_PROFILE_ID = 'a29184ea-9d4d-4c65-8300-386ed5b07fca'
@@ -52,13 +51,14 @@ def noop(apps, schema_editor):
     pass
 
 
-def run_phantom_dedup(apps, schema_editor):
-    call_command(
-        'dedup_phantom_transactions',
-        apply=True,
-        database=schema_editor.connection.alias,
-        verbosity=1,
-    )
+# The phantom dedup used to run here via call_command. It cannot: the command
+# works off the CURRENT Transaction model, whose columns are added by LATER
+# migrations (0044's pluggy_purchase_date), so at 0042 it selects columns that do
+# not exist yet — no fresh database can migrate past this point, which also
+# blocks the whole test suite. It already ran on the only database that had data
+# to clean, and a fresh one has nothing to dedup. After restoring an old dump,
+# run it once the schema is current — the only point where it works at all:
+#     python manage.py dedup_phantom_transactions --apply
 
 
 class Migration(migrations.Migration):
@@ -89,7 +89,7 @@ class Migration(migrations.Migration):
             field=models.SmallIntegerField(default=0),
         ),
         migrations.RunPython(set_car_financing_end, unset_car_financing_end),
-        migrations.RunPython(run_phantom_dedup, noop),
+        migrations.RunPython(noop, noop),  # was: run_phantom_dedup — see above
         migrations.RunPython(coalesce_budget_config_duplicates, noop),
         migrations.AddConstraint(
             model_name='budgetconfig',
