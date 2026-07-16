@@ -225,6 +225,40 @@ def _linked_transactions(mapping):
     return list({t.id: t for t in linked}.values())
 
 
+def _cartao_paid_txn_ids(month_str, profile):
+    """Transactions that pay off a card bill in this month.
+
+    The bill settles purchases that are already counted as spending, so paying it
+    is a transfer, not new spending — counting both doubles the card. The Cartao
+    mapping link is the signal: Pluggy words a bill payment ("Pagamento de boleto
+    ITAU UNIBANCO HOLDING") almost exactly like the consórcio and car-financing
+    boletos, which are real spending and carry no Cartao link, so matching on the
+    description would hide them.
+    """
+    mappings = RecurringMapping.objects.filter(
+        month_str=month_str, profile=profile,
+    ).filter(
+        Q(template__template_type='Cartao') | Q(is_custom=True, custom_type='Cartao')
+    ).prefetch_related('transactions', 'cross_month_transactions')
+    ids = set()
+    for mapping in mappings:
+        # Mirror _get_actual_for_mapping: a category-matched mapping counts every
+        # transaction in its category as the payment, so the two must agree on
+        # what "paid" means or the payment lands back in spending.
+        if mapping.match_mode == 'category' and mapping.category_id:
+            ids.update(
+                Transaction.objects.filter(
+                    month_str=month_str, profile=profile,
+                    category_id=mapping.category_id, amount__lt=0,
+                ).values_list('id', flat=True)
+            )
+            continue
+        ids.update(t.id for t in _linked_transactions(mapping))
+        if mapping.transaction_id:
+            ids.add(mapping.transaction_id)
+    return ids
+
+
 def _received_count(mapping):
     """How many payments are linked, following the same fallback chain as
     _get_actual_for_mapping so the count and the amount never disagree."""
@@ -1544,11 +1578,13 @@ def _month_actual_income_expense(month_str, profile):
     ).exclude(id__in=cross_exclude_ids)
 
     # CC refunds/estornos are not income — net them against spending, mirroring
-    # get_metricas (KEEP IN SYNC). Genuine bill payments are is_internal_transfer.
+    # get_metricas (KEEP IN SYNC). Card bill payments settle already-counted
+    # purchases, so they are transfers rather than spending.
     _cc_acct_ids = set(
         Account.objects.filter(profile=profile, account_type='credit_card')
         .values_list('id', flat=True)
     )
+    cartao_paid_ids = _cartao_paid_txn_ids(month_str, profile)
 
     # Transactions from OTHER months linked TO this month's mappings → include.
     # A positive credit-card cross-month txn is a refund, so it nets against
@@ -1561,6 +1597,8 @@ def _month_actual_income_expense(month_str, profile):
         'cross_month_transactions'
     ):
         for t in m.cross_month_transactions.all():
+            if t.id in cartao_paid_ids:
+                continue
             if t.amount > 0 and t.account_id not in _cc_acct_ids:
                 cross_inc += t.amount
             else:
@@ -1569,7 +1607,7 @@ def _month_actual_income_expense(month_str, profile):
     entradas = _deduped_transaction_sum(
         txns.filter(amount__gt=0).exclude(account_id__in=_cc_acct_ids)) + cross_inc
     gastos = max(Decimal('0.00'), -(
-        _deduped_transaction_sum(txns.filter(amount__lt=0))
+        _deduped_transaction_sum(txns.filter(amount__lt=0).exclude(id__in=cartao_paid_ids))
         + _deduped_transaction_sum(txns.filter(amount__gt=0, account_id__in=_cc_acct_ids))
         + cross_exp))
     return entradas, gastos
@@ -1626,7 +1664,10 @@ def get_metricas(month_str, profile=None):
     )
     income_txns = txns.filter(amount__gt=0).exclude(account_id__in=_cc_acct_ids)
     cc_credit_txns = txns.filter(amount__gt=0, account_id__in=_cc_acct_ids)
-    expense_txns = txns.filter(amount__lt=0)
+    # Paying the card bill settles purchases already counted above — it is a
+    # transfer, not spending (KEEP IN SYNC with _month_actual_income_expense).
+    _cartao_paid_ids = _cartao_paid_txn_ids(month_str, profile)
+    expense_txns = txns.filter(amount__lt=0).exclude(id__in=_cartao_paid_ids)
 
     # Unfiltered pools for recurring matching (includes internal transfers,
     # but still excludes cross-month moved transactions)
@@ -1654,6 +1695,10 @@ def get_metricas(month_str, profile=None):
     ).prefetch_related('cross_month_transactions')
     for m in this_month_mappings_cm:
         for t in m.cross_month_transactions.all():
+            # A bill payment linked in from a neighbouring month is still a
+            # transfer, not spending.
+            if t.id in _cartao_paid_ids:
+                continue
             # Positive CC cross-month txn = refund → nets against spending.
             if t.amount > 0 and t.account_id not in _cc_acct_ids:
                 cross_month_include_income += t.amount

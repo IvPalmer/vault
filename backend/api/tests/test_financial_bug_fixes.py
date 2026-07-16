@@ -432,6 +432,83 @@ class PendingSettlementTests(TestCase):
         self.assertEqual(items['ACADEMIA']['status'], 'Pago')
 
 
+class CardBillPaymentNotSpendingTests(TestCase):
+    """Paying the card bill moves money to settle purchases that were already
+    counted. Counting the payment too doubles the card's spending."""
+
+    def setUp(self):
+        from api.models import RecurringMapping
+        self.profile = Profile.objects.create(name='Tester')
+        self.checking = Account.objects.create(
+            profile=self.profile, name='Checking', account_type='checking',
+        )
+        self.card = Account.objects.create(
+            profile=self.profile, name='Visa Infinite', account_type='credit_card',
+        )
+        # Purchases on the card, billed this month.
+        for i, amount in enumerate(['-600.00', '-400.00']):
+            Transaction.objects.create(
+                profile=self.profile, account=self.card, date=date(2026, 3, 3 + i),
+                description='STORE', amount=Decimal(amount), month_str='2026-03',
+                invoice_month='2026-03',
+            )
+        # The bill payment, debited from checking. Pluggy words it exactly like a
+        # consórcio/financing boleto, so only the Cartao link identifies it.
+        self.payment = Transaction.objects.create(
+            profile=self.profile, account=self.checking, date=date(2026, 3, 5),
+            description='Pagamento de boleto ITAU UNIBANCO HOLDING S.',
+            amount=Decimal('-1000.00'), month_str='2026-03',
+        )
+        tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name='Visa Infinite', template_type='Cartao',
+            default_limit=Decimal('1000.00'),
+        )
+        mapping = RecurringMapping.objects.create(
+            profile=self.profile, template=tpl, month_str='2026-03',
+            expected_amount=Decimal('1000.00'), match_mode='manual',
+        )
+        mapping.transactions.add(self.payment)
+
+    def test_bill_payment_is_not_counted_on_top_of_the_purchases(self):
+        result = get_metricas('2026-03', profile=self.profile)
+        # R$1.000 of purchases — NOT 2.000 (purchases + the payment settling them).
+        self.assertAlmostEqual(result['gastos_atuais'], 1000.00, places=2)
+
+    def test_real_boleto_with_a_lookalike_description_still_counts(self):
+        """The consórcio boleto reads almost identically but is real spending —
+        it has no Cartao link, so it must survive."""
+        Transaction.objects.create(
+            profile=self.profile, account=self.checking, date=date(2026, 3, 6),
+            description='Pagamento de boleto BANCO ITAU UNIBANCO HOLD',
+            amount=Decimal('-1633.31'), month_str='2026-03',
+        )
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertAlmostEqual(result['gastos_atuais'], 2633.31, places=2)
+
+    def test_category_matched_card_mapping_also_excludes_the_payment(self):
+        """A Cartao mapping switched to category mode counts every transaction in
+        its category as the payment — this must agree, or the double count is
+        silently back."""
+        from api.models import Category, RecurringMapping
+        cat = Category.objects.create(profile=self.profile, name='Transferencias')
+        self.payment.category = cat
+        self.payment.save()
+        mapping = RecurringMapping.objects.get(month_str='2026-03', template__name='Visa Infinite')
+        mapping.transactions.clear()
+        mapping.match_mode = 'category'
+        mapping.category = cat
+        mapping.save()
+
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertAlmostEqual(result['gastos_atuais'], 1000.00, places=2)
+
+    def test_analytics_mirror_agrees_with_metricas(self):
+        from api.services import _month_actual_income_expense
+        metricas = get_metricas('2026-03', profile=self.profile)
+        _income, expense = _month_actual_income_expense('2026-03', self.profile)
+        self.assertAlmostEqual(float(expense), metricas['gastos_atuais'], places=2)
+
+
 class SalaryBudgetSyncTests(TestCase):
     @patch('api.services._get_wise_fees', return_value=None)
     @patch('api.services._get_usd_brl_rate', return_value=5.0)
