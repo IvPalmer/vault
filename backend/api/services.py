@@ -209,6 +209,43 @@ def _mapping_expected_amount(mapping):
     return mapping.expected_amount or Decimal('0.00')
 
 
+def _linked_transactions(mapping):
+    """Transactions linked to a mapping, each counted once.
+
+    map_transaction_to_category puts a cross-month txn in BOTH `transactions`
+    and `cross_month_transactions` (the latter is a marker subset), so the two
+    sets must be unioned by id, not concatenated.
+    """
+    linked = list(mapping.transactions.all()) + list(mapping.cross_month_transactions.all())
+    return list({t.id: t for t in linked}.values())
+
+
+def _is_settled(expected, actual, cat_type, match_mode='manual'):
+    """Whether a recurring item has no cash movement left this month.
+
+    A manually-matched bill is a single debit whose `expected` is only a
+    projection that drifts month to month, so the real debit settles it however
+    far off the estimate was. Everything else accumulates toward `expected`:
+    income and investments arrive in several payments, a card bill is an
+    authoritative total, and a category match aggregates many transactions
+    (Assinaturas bundles every subscription charge).
+    """
+    if actual <= 0:
+        return False
+    if cat_type == 'Fixo' and match_mode != 'category':
+        return True
+    return actual >= expected
+
+
+def _pending_amount(expected, actual, cat_type, match_mode='manual'):
+    """Cash still expected to move for a recurring item this month."""
+    if _is_settled(expected, actual, cat_type, match_mode):
+        return Decimal('0.00')
+    if actual <= 0:
+        return expected
+    return max(Decimal('0.00'), expected - actual)
+
+
 def _cc_month_field(profile):
     """Return DB field name for CC month filtering based on profile preference."""
     if profile and hasattr(profile, 'cc_display_mode') and profile.cc_display_mode == 'transaction':
@@ -490,16 +527,17 @@ def get_recurring_data(month_str, profile=None):
 
             if actual == 0:
                 return 'Faltando', 0
-            elif expected == 0 or actual >= expected * 0.9:
+            elif expected == 0 or _is_settled(expected, actual, cat_type, 'category'):
                 return 'Pago', actual
             else:
                 return 'Parcial', actual
 
-        # Manual mode: use M2M linked transactions
+        # Manual mode: use M2M linked transactions (cross-month links are a
+        # subset of this set, so it already covers them)
         linked = list(mapping.transactions.all())
         if linked:
             total = sum(float(abs(t.amount)) if cat_type != 'Income' else float(t.amount) for t in linked)
-            if expected == 0 or total >= expected * 0.9:
+            if expected == 0 or _is_settled(expected, total, cat_type):
                 return 'Pago', total
             elif total > 0:
                 return 'Parcial', total
@@ -509,7 +547,7 @@ def get_recurring_data(month_str, profile=None):
         # Legacy fallback: single transaction FK
         if mapping.transaction:
             actual = float(abs(mapping.transaction.amount)) if cat_type != 'Income' else float(mapping.transaction.amount)
-            if expected == 0 or actual >= expected * 0.9:
+            if expected == 0 or _is_settled(expected, actual, cat_type):
                 return 'Pago', actual
             elif actual > 0:
                 return 'Parcial', actual
@@ -723,7 +761,7 @@ def get_recurring_data(month_str, profile=None):
                 card_parcelas = float(_parcelas_by_card.get(cc_acct.name, 0))
                 fatura = max(purchases, card_parcelas)
                 item['expected'] = fatura
-            if fatura > 0 and item['actual'] >= fatura * 0.9:
+            if fatura > 0 and item['actual'] >= fatura:
                 item['status'] = 'Pago'
             elif item['actual'] > 0:
                 item['status'] = 'Parcial'
@@ -1705,7 +1743,7 @@ def get_metricas(month_str, profile=None):
             return combined if is_income else abs(combined)
         else:
             # Manual mode: use M2M linked transactions + cross-month
-            linked = list(mapping.transactions.all()) + list(mapping.cross_month_transactions.all())
+            linked = _linked_transactions(mapping)
             if linked:
                 total = sum(t.amount for t in linked)
                 return total if is_income else abs(total)
@@ -1808,19 +1846,13 @@ def get_metricas(month_str, profile=None):
     # =====================================================================
     # 10. A ENTRAR — pending income (from unlinked/unmatched recurring items)
     #     Uses match_mode to determine how to compute actual received.
-    #     Considers an item fully received if actual >= 90% of expected
-    #     (same threshold used by _compute_status_and_actual for "Pago").
+    #     Salary lands in two payments, so whatever is short is still pending.
     # =====================================================================
     a_entrar = Decimal('0.00')
     for mapping in income_mappings:
         expected = _mapping_expected_amount(mapping)
         actual = _get_actual_for_mapping(mapping, is_income=True)
-        if expected == 0 or actual >= expected * Decimal('0.9'):
-            continue  # Fully received (or within tolerance)
-        elif actual > 0:
-            a_entrar += expected - actual  # Partial
-        else:
-            a_entrar += expected  # Nothing received
+        a_entrar += _pending_amount(expected, actual, 'Income', mapping.match_mode)
 
     # =====================================================================
     # 11. A PAGAR — all pending expenses that will hit checking.
@@ -1834,12 +1866,7 @@ def get_metricas(month_str, profile=None):
             continue
         expected = _mapping_expected_amount(mapping)
         actual = _get_actual_for_mapping(mapping, is_income=False)
-        if expected == 0 or actual >= expected * Decimal('0.9'):
-            continue  # Fully paid (or within tolerance)
-        elif actual > 0:
-            a_pagar_fixo += expected - actual  # Partial
-        else:
-            a_pagar_fixo += expected  # Not paid
+        a_pagar_fixo += _pending_amount(expected, actual, 'Fixo', mapping.match_mode)
 
     # a_pagar_invest: pending investment = dynamic target - what's been invested
     _invest_actual_total = Decimal('0.00')
@@ -2346,7 +2373,7 @@ def _compute_custom_metrics(month_str, metricas_data, profile=None):
         total = Decimal('0.00')
         count = 0
         for mapping in mappings:
-            linked = list(mapping.transactions.all()) + list(mapping.cross_month_transactions.all())
+            linked = _linked_transactions(mapping)
             if linked:
                 amt = sum(t.amount for t in linked)
                 total += abs(amt) if not is_income else amt
@@ -2461,7 +2488,7 @@ def _compute_custom_metrics(month_str, metricas_data, profile=None):
             if template_id:
                 mapping = item_mappings_by_template.get(str(template_id))
                 if mapping:
-                    linked = list(mapping.transactions.all()) + list(mapping.cross_month_transactions.all())
+                    linked = _linked_transactions(mapping)
                     actual = Decimal('0.00')
                     if linked:
                         actual = abs(sum(t.amount for t in linked))
