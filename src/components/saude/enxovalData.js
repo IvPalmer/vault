@@ -8,7 +8,7 @@
  * Conteúdo apoiado em SBP, Ministério da Saúde, NHS, ANS, CONTRAN e guias
  * brasileiros de enxoval; onde as fontes divergiam, adotamos o limite inferior.
  *
- * 11 módulos · 108 itens · 77 ilustrações
+ * 11 módulos · 104 itens · 77 ilustrações
  */
 
 export const MODULES = [
@@ -38,12 +38,12 @@ export const MODULES = [
           {
             "when": "24 a 32",
             "hot": true,
-            "what": "<b>Janela principal.</b> Roupas, quarto e banho, com tempo de pesquisar preço."
+            "what": "<b>Janela principal.</b> Roupas e quarto, com tempo de pesquisar preço."
           },
           {
-            "when": "28 a 34",
+            "when": "28 a 36",
             "hot": true,
-            "what": "<b>Reta final.</b> Fraldas, farmacinha, amamentação, e a mala pronta na porta."
+            "what": "<b>Reta final.</b> Banho, fraldas e amamentação a partir da 28; farmacinha a partir da 30; mala pronta na porta até a 34."
           },
           {
             "when": "até a 36",
@@ -59,7 +59,7 @@ export const MODULES = [
       {
         "kind": "tip",
         "title": "três regras que valem para o mapa inteiro",
-        "body": "<b>1.</b> Tamanho é peso, não idade — dois bebês da mesma idade podem ter 2 kg de diferença. <b>2.</b> A quantidade depende do seu ciclo de lavagem, não da lista. <b>3.</b> Na dúvida, compre menos: falta se resolve em uma tarde, sobra vira armário cheio de coisa que ela nunca usou."
+        "body": "<b>1.</b> Tamanho é peso, não idade — dois bebês da mesma idade podem ter 2 kg de diferença. <b>2.</b> A quantidade depende do seu ciclo de lavagem, não da lista. <b>3.</b> Na dúvida, comprem menos: falta se resolve em uma tarde, sobra vira armário cheio de coisa que ela nunca usou."
       }
     ]
   },
@@ -130,7 +130,7 @@ export const MODULES = [
       {
         "kind": "tip",
         "title": "a conta que define a quantidade",
-        "body": "Recém-nascido troca de roupa <b>3 a 4 vezes por dia</b>. A fórmula é <b>(trocas por dia) × (dias entre lavagens) + 2 de folga</b>. Lavando dia sim dia não: 4 × 2 + 2 = 10 bodies no P. Jan/fev é estação chuvosa em Brasília e roupa demora a secar — sem secadora, some 2 a 3 peças por item em RN e P."
+        "body": "Recém-nascido troca de roupa <b>3 a 4 vezes por dia</b>. A fórmula é <b>(trocas por dia) × (dias entre lavagens) + 2 de folga</b>. Lavando dia sim dia não: 4 × 2 + 2 = 10 bodies no P. Jan/fev é estação chuvosa em Brasília e roupa demora a secar — sem secadora, somem 2 a 3 peças por item em RN e P."
       },
       {
         "kind": "groups",
@@ -324,33 +324,11 @@ export const MODULES = [
                 "note": "Sobe para 6–8 na introdução alimentar (~6 meses)."
               },
               {
-                "id": "01-sem-tamanho-compra-unica-toalha-com-capuz",
-                "label": "Toalha com capuz",
-                "icon": "toalha",
-                "qty": "2–3"
-              },
-              {
                 "id": "01-sem-tamanho-compra-unica-cueiro",
                 "label": "Cueiro",
                 "icon": "cueiro",
                 "qty": "2",
                 "note": "Uso decrescente — muitas famílias abandonam em semanas."
-              },
-              {
-                "id": "01-sem-tamanho-compra-unica-saco-de-dormir-tog-0-5",
-                "label": "Saco de dormir TOG 0,5",
-                "icon": "saco-dormir",
-                "qty": "1",
-                "ess": true,
-                "note": "Para quarto acima de 24 °C."
-              },
-              {
-                "id": "01-sem-tamanho-compra-unica-saco-de-dormir-tog-1-0",
-                "label": "Saco de dormir TOG 1,0",
-                "icon": "saco-dormir",
-                "qty": "1",
-                "ess": true,
-                "note": "O mais versátil para quarto com ar-condicionado no verão."
               },
               {
                 "id": "01-sem-tamanho-compra-unica-lavar-tudo-antes-do-primeiro-uso",
@@ -461,7 +439,7 @@ export const MODULES = [
             "padrão de berço certificado"
           ]
         ],
-        "note": "Berço padrão usa colchão de 130×60 cm; mini-berço, 86×38 cm; berço acoplado (co-sleeper), ~75×67 cm e suporta até 9 kg. Exija selo do Inmetro e tinta atóxica. A NBR 15860 foi revisada e o espaçamento máximo caiu de 6,5 para 6 cm — berço antigo ou de segunda mão pode estar na norma velha. Teste prático da folga: não deve caber mais que dois dedos entre o colchão e a grade."
+        "note": "Berço padrão usa colchão de 130×60 cm; mini-berço, 86×38 cm; berço acoplado (co-sleeper), ~75×67 cm e suporta até 9 kg. Exijam selo do Inmetro e tinta atóxica. A NBR 15860 foi revisada e o espaçamento máximo caiu de 6,5 para 6 cm — berço antigo ou de segunda mão pode estar na norma velha. Teste prático da folga: não deve caber mais que dois dedos entre o colchão e a grade."
       },
       {
         "kind": "items",
@@ -501,9 +479,9 @@ export const MODULES = [
             "id": "02-saco-de-dormir",
             "label": "Saco de dormir",
             "icon": "saco-dormir",
-            "qty": "2–3",
+            "qty": "1 de TOG 0,5 + 1 de TOG 1,0",
             "ess": true,
-            "note": "TOG 0,5 e 1,0 para o verão; TOG 2,5 só em maio, para a seca."
+            "note": "Os dois cobrem o verão; o TOG 2,5 só faz sentido comprar em maio, para a seca. Ver a tabela de temperatura no módulo 01."
           },
           {
             "id": "02-manta-leve-respiravel",
@@ -532,7 +510,7 @@ export const MODULES = [
             "label": "Poltrona de amamentação",
             "icon": "poltrona",
             "qty": "1",
-            "note": "Vai ser usada 10 a 15 vezes por dia nos primeiros meses — não economize no conforto."
+            "note": "Vai ser usada 10 a 15 vezes por dia nos primeiros meses — vale investir no conforto."
           },
           {
             "id": "02-baba-eletronica",
@@ -633,12 +611,6 @@ export const MODULES = [
             "note": "Item que todo mundo subestima: usa-se a cada troca de fralda. Compre por peso — as embalagens variam de 25 g a 500 g e comparar \"pacotes\" engana."
           },
           {
-            "id": "03-gaze-esteril",
-            "label": "Gaze estéril",
-            "icon": "gaze",
-            "qty": "2–3 pacotes"
-          },
-          {
             "id": "03-pente-ou-escova-macia",
             "label": "Pente ou escova macia",
             "icon": "pente",
@@ -663,7 +635,7 @@ export const MODULES = [
       {
         "kind": "tip",
         "title": "coto umbilical — a recomendação mudou",
-        "body": "O padrão atual da OMS para parto hospitalar é manter o coto <b>limpo e seco</b>, sem antisséptico. Álcool 70% de rotina <b>não é mais recomendado</b> nesse cenário: não reduz infecção onde o risco já é baixo e ainda atrasa a queda em cerca de um dia. Na prática: lave com água e sabão no banho, <b>seque bem</b>, e dobre a fralda para baixo do coto para deixá-lo arejado. Cai sozinho entre <b>7 e 14 dias</b> — nunca puxe. Procure o pediatra se houver odor forte, secreção com pus, vermelhidão ao redor ou febre acima de 38 °C."
+        "body": "O padrão atual da OMS para parto hospitalar é manter o coto <b>limpo e seco</b>, sem antisséptico. Álcool 70% de rotina <b>não é mais recomendado</b> nesse cenário: não reduz infecção onde o risco já é baixo e ainda atrasa a queda em cerca de um dia. Na prática: lave com água e sabão no banho, <b>sequem bem</b>, e dobrem a fralda para baixo do coto para deixá-lo arejado. Cai sozinho entre <b>7 e 14 dias</b> — nunca puxe. Procurem o pediatra se houver odor forte, secreção com pus, vermelhidão ao redor ou febre acima de 38 °C."
       },
       {
         "kind": "table",
@@ -758,7 +730,7 @@ export const MODULES = [
             "9 a 13 meses"
           ]
         ],
-        "note": "A fase RN consome entre 110 e 210 fraldas no total. Um pacote traz de 20 a 40 unidades, dependendo da marca — compre pensando em unidades, não em pacotes."
+        "note": "A fase RN consome de 110 a 210 fraldas, conforme ela nasça grande ou pequena; 120–180 cobre a maioria dos casos sem sobrar caixa fechada. Um pacote traz de 20 a 40 unidades, dependendo da marca — compre pensando em unidades, não em pacotes."
       },
       {
         "kind": "items",
@@ -819,7 +791,7 @@ export const MODULES = [
       {
         "kind": "tip",
         "title": "água e algodão × lenço umedecido",
-        "body": "Para recém-nascido em casa, a recomendação é <b>algodão com água morna</b> — o lenço umedecido é conveniência de rua, não rotina. Para xixi, algodão basta; para cocô, água corrente limpa melhor e machuca menos. Nunca esfregue: limpe com toques."
+        "body": "Para recém-nascido em casa, a recomendação é <b>algodão com água morna</b> — o lenço umedecido é conveniência de rua, não rotina. Para xixi, algodão basta; para cocô, água corrente limpa melhor e machuca menos. Nunca esfreguem: limpem com toques."
       },
       {
         "kind": "avoid",
@@ -890,7 +862,7 @@ export const MODULES = [
             "label": "Antitérmico prescrito pelo pediatra",
             "icon": "receita",
             "ess": true,
-            "note": "Peça a receita com a dose por peso ANTES de precisar, na consulta pré-natal pediátrica. Às 3 da manhã não dá para improvisar."
+            "note": "Peçam a receita com a dose por peso ANTES de precisar, na consulta pré-natal pediátrica. Às 3 da manhã não dá para improvisar."
           },
           {
             "id": "05-lista-de-contatos-na-geladeira",
@@ -971,7 +943,8 @@ export const MODULES = [
             "id": "06-camisola-com-abertura-frontal",
             "label": "Camisola com abertura frontal",
             "icon": "camisola",
-            "qty": "2–3"
+            "qty": "3–4",
+            "note": "A mala da maternidade sozinha já leva de 3 a 4 — ver módulo 08."
           },
           {
             "id": "06-almofada-de-amamentacao",
@@ -1021,7 +994,7 @@ export const MODULES = [
             "12 horas na geladeira"
           ]
         ],
-        "note": "Descongele em banho-maria, nunca no micro-ondas — o calor irregular destrói as imunoglobulinas. Leite descongelado não volta ao freezer."
+        "note": "Descongelem em banho-maria, nunca no micro-ondas — o calor irregular destrói as imunoglobulinas. Leite descongelado não volta ao freezer."
       },
       {
         "kind": "table",
@@ -1110,7 +1083,7 @@ export const MODULES = [
             "banco traseiro, com cinto"
           ]
         ],
-        "note": "A obrigação vale até 10 anos ou 1,45 m de altura. Exija selo do Inmetro. A validade vem gravada no plástico — o polímero degrada e perde capacidade de absorver impacto."
+        "note": "A obrigação vale até 10 anos ou 1,45 m de altura. Exijam o selo do Inmetro. A validade vem gravada no plástico — o polímero degrada e perde capacidade de absorver impacto."
       },
       {
         "kind": "items",
@@ -1157,7 +1130,7 @@ export const MODULES = [
       {
         "kind": "tip",
         "title": "regra TICKS — o sling seguro em 5 checagens",
-        "body": "<b>T</b>enso o suficiente para ela ficar colada em você · <b>I</b> sempre à vista, rosto descoberto · <b>C</b>lose: perto o bastante para você beijar a cabeça dela · <b>K</b>eep o queixo longe do peito, cabendo um dedo sob o queixo · <b>S</b>uporte nas costas, coluna acompanhada em C. Sling mal posicionado compromete a respiração — é o único risco real dele."
+        "body": "O acróstico é inglês, mas a checagem é simples. <b>T</b>ight: tenso, ela colada em quem carrega · <b>I</b>n view: rosto sempre à vista, descoberto · <b>C</b>lose enough to kiss: perto o bastante para beijar a cabeça dela · <b>K</b>eep chin off chest: queixo longe do peito, cabendo um dedo embaixo · <b>S</b>upported back: costas apoiadas, coluna em C. Sling mal posicionado compromete a respiração — é o único risco real dele."
       },
       {
         "kind": "tip",
@@ -1380,7 +1353,7 @@ export const MODULES = [
       {
         "kind": "tip",
         "title": "perguntas para levar na visita à maternidade",
-        "body": "Faça a visita entre as semanas 28 e 32 e pergunte: quantas fraldas por dia eles fornecem? Fornecem camisola, kit de higiene e absorvente? A Rafaella pode usar roupa própria durante o trabalho de parto? Tem banheira ou chuveiro disponível? Tem posto de cartório para registro dentro do hospital? A resposta muda o tamanho da mala."
+        "body": "Façam a visita entre as semanas 28 e 32 e perguntem: quantas fraldas por dia eles fornecem? Fornecem camisola, kit de higiene e absorvente? A Rafaella pode usar roupa própria durante o trabalho de parto? Tem banheira ou chuveiro disponível? Tem posto de cartório para registro dentro do hospital? A resposta muda o tamanho da mala."
       },
       {
         "kind": "tip",
