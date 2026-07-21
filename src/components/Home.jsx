@@ -247,7 +247,9 @@ function NotesBoard() {
     queryFn: () => api.get('/home/notes/'),
   })
 
-  const notesList = notes.results || notes
+  // "__"-prefixed titles are app-state blobs (e.g. o mapa do enxoval em
+  // Saúde › Família guarda seus checks numa FamilyNote) — not board notes.
+  const notesList = (notes.results || notes).filter(n => !(n.title || '').startsWith('__'))
 
   const createMutation = useMutation({
     mutationFn: (d) => api.post('/home/notes/', d),

@@ -41,6 +41,7 @@ import MealPlanCard from './saude/MealPlanCard'
 import GlucoseLogCard from './saude/GlucoseLogCard'
 import ShoppingListCard from './saude/ShoppingListCard'
 import CursosView from './saude/CursosView'
+import EnxovalView from './saude/EnxovalView'
 // Health content (clinical report, glucose log, meal plan, shopping list, hip
 // imaging) is fetched from /saude/content/ — see HealthContent in models.py.
 // It used to be hardcoded here, which compiled real medical records into the
@@ -419,6 +420,17 @@ function FamiliaView() {
           Acompanhamento
         </button>
         <button
+          id="fam-subtab-enxoval"
+          role="tab"
+          aria-selected={famTab === 'enxoval'}
+          aria-controls="fam-subpanel-enxoval"
+          tabIndex={famTab === 'enxoval' ? 0 : -1}
+          className={famTab === 'enxoval' ? styles.subTabActive : styles.subTab}
+          onClick={() => setFamTab('enxoval')}
+        >
+          Enxoval
+        </button>
+        <button
           id="fam-subtab-cursos"
           role="tab"
           aria-selected={famTab === 'cursos'}
@@ -430,6 +442,12 @@ function FamiliaView() {
           Cursos
         </button>
       </div>
+
+      {famTab === 'enxoval' && (
+        <div id="fam-subpanel-enxoval" role="tabpanel" aria-labelledby="fam-subtab-enxoval">
+          <EnxovalView pregnancy={ativa} />
+        </div>
+      )}
 
       {famTab === 'cursos' && (
         <div id="fam-subpanel-cursos" role="tabpanel" aria-labelledby="fam-subtab-cursos">
