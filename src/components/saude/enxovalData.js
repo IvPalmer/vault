@@ -42,6 +42,10 @@ export const SOURCES = {
     label: 'Resolução CONTRAN 819/2021 — dispositivo de retenção infantil',
     url: 'https://www.gov.br/transportes/pt-br/assuntos/transito/conteudo-contran/resolucoes/Resolucao8192021.pdf',
   },
+  'guias-quantidades': {
+    label: 'Guias BR de quantidades (Sou Mãe, Vestindo Crianças, Huggies) — consumo real de fralda/algodão',
+    url: 'https://www.soumae.org/lista-completa-de-enxoval-para-bebe/',
+  },
   'anoreg-registro': {
     label: 'ANOREG — Registro civil de nascimento',
     url: 'https://www.anoreg.org.br/site/atos-extrajudiciais/registro-civil/nascimento/',
@@ -58,17 +62,17 @@ export const ENXOVAL_CATEGORIES = [
     intro: 'Bebê de janeiro/fevereiro em Brasília = calor. Priorize algodão leve. '
       + 'RN dura semanas — compre pouco RN e mais P/M.',
     items: [
-      { id: 'body-mc', label: 'Body manga curta (RN + P)', qty: '6–8 de cada', critical: true,
-        note: 'Algodão. NHS sugere 6+ — trocas frequentes por golfada/vazamento.' },
-      { id: 'macacao', label: 'Macacão/sleepsuit leve', qty: '6 (RN/P)', critical: true,
+      { id: 'body-mc', label: 'Body manga curta', qty: 'RN: 4–6 · P: 6–8', critical: true,
+        note: 'Algodão. RN suja 2–3 trocas de roupa por dia — e o tamanho RN dura só 2–3 semanas.' },
+      { id: 'macacao', label: 'Macacão/sleepsuit leve', qty: 'RN: 3–4 · P: 5–6', critical: true,
         note: 'Abertura frontal facilita troca noturna.' },
-      { id: 'mijao', label: 'Mijão/culote', qty: '4–6' },
+      { id: 'mijao', label: 'Mijão/culote', qty: '4–6 por tamanho' },
       { id: 'casaquinho', label: 'Casaquinho leve de algodão', qty: '2',
         note: 'Ar-condicionado / noites mais frescas.' },
       { id: 'meias', label: 'Meias', qty: '4–6 pares' },
       { id: 'luva-touca-rn', label: 'Touca de saída da maternidade', qty: '1–2' },
-      { id: 'panos-boca', label: 'Panos de boca / fraldas de pano', qty: '8–10', critical: true,
-        note: 'Multiuso: golfada, apoio, sombra. NHS: 6+ muslins.' },
+      { id: 'panos-boca', label: 'Panos de boca / fraldas de pano', qty: '10–12', critical: true,
+        note: 'Multiuso: golfada, apoio, sombra. É dos itens mais usados do enxoval.' },
       { id: 'babador', label: 'Babadores', qty: '3–4' },
       { id: 'manta-leve', label: 'Manta leve de algodão', qty: '2' },
       { id: 'saida-maternidade', label: 'Saída de maternidade', qty: '1' },
@@ -80,7 +84,7 @@ export const ENXOVAL_CATEGORIES = [
       'Tecidos sintéticos que abafam (bebê de verão).',
       'Roupas com laços/cordões soltos perto do pescoço.',
     ],
-    sourceIds: ['nhs-buy'],
+    sourceIds: ['nhs-buy', 'guias-quantidades'],
   },
 
   // ── Quarto & sono seguro ─────────────────────────────────
@@ -123,10 +127,11 @@ export const ENXOVAL_CATEGORIES = [
     buyWindow: [28, 34],
     items: [
       { id: 'banheira', label: 'Banheira (com ou sem suporte)', qty: '1', critical: true },
-      { id: 'toalha-capuz', label: 'Toalha com capuz macia', qty: '2–3' },
+      { id: 'toalha-capuz', label: 'Toalha com capuz macia', qty: '3–4' },
       { id: 'sabonete-liquido', label: 'Sabonete líquido neutro de glicerina', qty: '1',
         note: 'Primeiras semanas: água já basta na maior parte do corpo.' },
-      { id: 'algodao', label: 'Algodão', qty: '1 pacote' },
+      { id: 'algodao', label: 'Algodão (bolas/discos)', qty: '3–4 pacotes grandes', critical: true,
+        note: 'Limpeza padrão-ouro é água morna + algodão A CADA troca de fralda — gasta muito rápido.' },
       { id: 'alcool-70', label: 'Álcool 70% (coto umbilical)', qty: '1', critical: true,
         note: 'Orientação MS: limpar o coto a cada troca até cair.' },
       { id: 'pente-escova', label: 'Pente/escova macia', qty: '1' },
@@ -149,11 +154,12 @@ export const ENXOVAL_CATEGORIES = [
     icon: '🧷',
     buyWindow: [28, 36],
     items: [
-      { id: 'fralda-rn', label: 'Fralda descartável RN', qty: '2–3 pacotes', critical: true,
-        note: 'NÃO estocar demais: RN dura pouco e a marca pode não adaptar.' },
-      { id: 'fralda-p', label: 'Fralda descartável P', qty: '3–4 pacotes' },
+      { id: 'fralda-rn', label: 'Fralda descartável RN', qty: '3–5 pacotes (120–180 un)', critical: true,
+        note: 'RN usa 8–12 fraldas/DIA (~240 no 1º mês), mas a fase RN dura 2–3 semanas — 120–180 un cobre sem sobrar.' },
+      { id: 'fralda-p', label: 'Fralda descartável P', qty: '3–4 pacotes', 
+        note: 'O grosso do estoque vai ser P/M — bom pedido de chá de bebê.' },
       { id: 'trocador-portatil', label: 'Trocador (fixo + portátil p/ bolsa)', qty: '1+1', critical: true },
-      { id: 'pomada-assadura', label: 'Pomada de prevenção de assaduras', qty: '2', critical: true },
+      { id: 'pomada-assadura', label: 'Pomada de prevenção de assaduras', qty: '2–3', critical: true },
       { id: 'lencos-agua', label: 'Lenços umedecidos SEM perfume (ou algodão + água)', qty: '2–3 pacotes',
         note: 'Primeiras semanas: algodão com água morna é o padrão-ouro.' },
       { id: 'lixeira-tampa', label: 'Lixeira com tampa p/ fraldas', qty: '1' },
@@ -161,7 +167,7 @@ export const ENXOVAL_CATEGORIES = [
     avoid: [
       'Comprar caixas e caixas da mesma marca antes de testar na pele do bebê.',
     ],
-    sourceIds: ['nhs-buy'],
+    sourceIds: ['nhs-buy', 'guias-quantidades'],
   },
 
   // ── Farmacinha ───────────────────────────────────────────
