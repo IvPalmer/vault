@@ -45,8 +45,10 @@ function customId() {
 }
 
 function moduleStatus(mod, currentWeek, done, total, pregnancyStatus) {
+  // Módulo-guia (inIndex false) vale a gestação inteira, não é pós-parto.
+  if (mod.inIndex === false) return 'current'
   if (total > 0 && done === total) return 'completed'
-  // Módulos sem janela (prazos, como usar) só ficam "agora" depois do parto.
+  // Sem janela de compra = prazos, que só ficam "agora" depois do parto.
   if (!mod.buyWindow) return pregnancyStatus === 'finalizada' ? 'current' : 'posparto'
   if (currentWeek == null) return 'upcoming'
   const [start, end] = mod.buyWindow
@@ -86,7 +88,7 @@ export default function EnxovalView({ pregnancy }) {
   const dirtyRef = useRef(false)
   useEffect(() => {
     if (isLoading || dirtyRef.current) return
-    if (stateNote) noteIdRef.current = stateNote.id
+    noteIdRef.current = stateNote ? stateNote.id : null
     setState(prev => {
       const server = parseState(stateNote)
       if (prev !== null && JSON.stringify(prev) === JSON.stringify(server)) return prev
@@ -121,7 +123,14 @@ export default function EnxovalView({ pregnancy }) {
         }
         queryClient.invalidateQueries({ queryKey: ['home-notes'] })
       } catch (e) {
+        // Sem retry automático, mas destravamos a re-hidratação: manter
+        // dirtyRef em true cegaria esta aba para as edições do outro perfil
+        // pelo resto da sessão.
         console.error('enxoval: falha ao salvar estado', e)
+        if (pendingRef.current === blob) {
+          pendingRef.current = null
+          dirtyRef.current = false
+        }
       }
     })
   }, [queryClient])
@@ -141,7 +150,8 @@ export default function EnxovalView({ pregnancy }) {
   const update = useCallback((updater) => {
     setState(prev => {
       const next = updater(prev || EMPTY_STATE)
-      saveSoon(next)
+      // agenda fora do updater: o React pode reexecutá-lo
+      queueMicrotask(() => saveSoon(next))
       return next
     })
   }, [saveSoon])
@@ -360,6 +370,9 @@ export default function EnxovalView({ pregnancy }) {
               <div className={styles.cardBody}>
                 {mod.intro && <p className={styles.catIntro}>{mod.intro}</p>}
                 {mod.blocks.map((b, k) => renderBlock(b, k, pal))}
+                {mod.total > 0 && mod.done === mod.total && filter === 'pendentes' && (
+                  <div className={styles.emptyFilter}>Tudo marcado neste módulo. 🎉</div>
+                )}
                 {mod.extra.length > 0 && (
                   <div className={styles.itemList}>{mod.extra.filter(keep).map(it => renderItem(it, pal))}</div>
                 )}

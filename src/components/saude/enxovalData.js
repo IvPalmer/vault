@@ -139,7 +139,7 @@ export const MODULES = [
             "name": "Tamanho RN · deliberadamente enxuto",
             "items": [
               {
-                "id": "01-body-manga-curta",
+                "id": "01-tamanho-rn-deliberadamente-enxuto-body-manga-curta",
                 "label": "Body manga curta",
                 "icon": "body-mc",
                 "qty": "5",
@@ -147,21 +147,21 @@ export const MODULES = [
                 "note": "Peça mais usada de todas. Dura só 2–4 semanas neste tamanho."
               },
               {
-                "id": "01-body-manga-longa-de-algodao-fino",
+                "id": "01-tamanho-rn-deliberadamente-enxuto-body-manga-longa-de-algodao-fino",
                 "label": "Body manga longa de algodão fino",
                 "icon": "body-ml",
-                "qty": "2",
+                "qty": "3",
                 "note": "Não é para frio — é para o ar-condicionado."
               },
               {
-                "id": "01-mijao-culote",
+                "id": "01-tamanho-rn-deliberadamente-enxuto-mijao-culote",
                 "label": "Mijão / culote",
                 "icon": "mijao",
                 "qty": "4",
                 "note": "Cós largo, sem elástico apertado."
               },
               {
-                "id": "01-macacao-manga-longa-com-pe",
+                "id": "01-tamanho-rn-deliberadamente-enxuto-macacao-manga-longa-com-pe",
                 "label": "Macacão manga longa com pé",
                 "icon": "macacao",
                 "qty": "3",
@@ -169,52 +169,52 @@ export const MODULES = [
                 "note": "Peça de dormir. Abertura frontal facilita a troca da madrugada."
               },
               {
-                "id": "01-macaquinho-macacao-manga-curta",
+                "id": "01-tamanho-rn-deliberadamente-enxuto-macaquinho-macacao-manga-curta",
                 "label": "Macaquinho / macacão manga curta",
                 "icon": "macaquinho",
                 "qty": "2"
               },
               {
-                "id": "01-pagao",
+                "id": "01-tamanho-rn-deliberadamente-enxuto-pagao",
                 "label": "Pagão",
                 "icon": "pagao",
                 "qty": "1"
               },
               {
-                "id": "01-meias",
+                "id": "01-tamanho-rn-deliberadamente-enxuto-meias",
                 "label": "Meias",
                 "icon": "meias",
                 "qty": "3 pares"
               },
               {
-                "id": "01-casaquinho-de-algodao",
+                "id": "01-tamanho-rn-deliberadamente-enxuto-casaquinho-de-algodao",
                 "label": "Casaquinho de algodão",
                 "icon": "casaquinho",
                 "qty": "2"
               },
               {
-                "id": "01-touca-de-maternidade",
+                "id": "01-tamanho-rn-deliberadamente-enxuto-touca-de-maternidade",
                 "label": "Touca de maternidade",
                 "icon": "touca",
                 "qty": "1",
                 "note": "Para a saída e o ar-condicionado. Nunca para dormir."
               },
               {
-                "id": "01-saida-de-maternidade",
+                "id": "01-tamanho-rn-deliberadamente-enxuto-saida-de-maternidade",
                 "label": "Saída de maternidade",
                 "icon": "saida",
                 "qty": "1",
                 "note": "De algodão, não tricô nem plush — bebê de janeiro."
               },
               {
-                "id": "01-manta-leve-de-musselina",
+                "id": "01-tamanho-rn-deliberadamente-enxuto-manta-leve-de-musselina",
                 "label": "Manta leve de musselina",
                 "icon": "manta-leve",
                 "qty": "2",
                 "ess": true
               },
               {
-                "id": "01-manta-media-soft-fino",
+                "id": "01-tamanho-rn-deliberadamente-enxuto-manta-media-soft-fino",
                 "label": "Manta média (soft fino)",
                 "icon": "manta-media",
                 "qty": "1"
@@ -225,7 +225,7 @@ export const MODULES = [
             "name": "Tamanho P · o investimento principal",
             "items": [
               {
-                "id": "01-body-manga-curta",
+                "id": "01-tamanho-p-o-investimento-principal-body-manga-curta",
                 "label": "Body manga curta",
                 "icon": "body-mc",
                 "qty": "8",
@@ -233,32 +233,32 @@ export const MODULES = [
                 "note": "É a base de tudo no verão."
               },
               {
-                "id": "01-body-manga-longa-fino",
+                "id": "01-tamanho-p-o-investimento-principal-body-manga-longa-fino",
                 "label": "Body manga longa fino",
                 "icon": "body-ml",
                 "qty": "4"
               },
               {
-                "id": "01-body-regata",
+                "id": "01-tamanho-p-o-investimento-principal-body-regata",
                 "label": "Body regata",
                 "icon": "body-regata",
                 "qty": "3"
               },
               {
-                "id": "01-mijao-culote",
+                "id": "01-tamanho-p-o-investimento-principal-mijao-culote",
                 "label": "Mijão / culote",
                 "icon": "mijao",
                 "qty": "6"
               },
               {
-                "id": "01-macacao-manga-longa-com-pe",
+                "id": "01-tamanho-p-o-investimento-principal-macacao-manga-longa-com-pe",
                 "label": "Macacão manga longa com pé",
                 "icon": "macacao",
                 "qty": "5",
                 "ess": true
               },
               {
-                "id": "01-macaquinho-manga-curta",
+                "id": "01-tamanho-p-o-investimento-principal-macaquinho-manga-curta",
                 "label": "Macaquinho manga curta",
                 "icon": "macaquinho",
                 "qty": "5",
@@ -266,38 +266,38 @@ export const MODULES = [
                 "note": "Peça-chave do verão."
               },
               {
-                "id": "01-shorts",
+                "id": "01-tamanho-p-o-investimento-principal-shorts",
                 "label": "Shorts",
                 "icon": "shorts",
                 "qty": "3"
               },
               {
-                "id": "01-casaquinho-cardiga-leve",
+                "id": "01-tamanho-p-o-investimento-principal-casaquinho-cardiga-leve",
                 "label": "Casaquinho / cardigã leve",
                 "icon": "casaquinho",
                 "qty": "2"
               },
               {
-                "id": "01-meias",
+                "id": "01-tamanho-p-o-investimento-principal-meias",
                 "label": "Meias",
                 "icon": "meias",
                 "qty": "5 pares"
               },
               {
-                "id": "01-chapeu-de-sol-de-algodao",
+                "id": "01-tamanho-p-o-investimento-principal-chapeu-de-sol-de-algodao",
                 "label": "Chapéu de sol de algodão",
                 "icon": "chapeu",
                 "qty": "2",
                 "note": "UV de Brasília é alto o ano todo."
               },
               {
-                "id": "01-manta-leve",
+                "id": "01-tamanho-p-o-investimento-principal-manta-leve",
                 "label": "Manta leve",
                 "icon": "manta-leve",
                 "qty": "2"
               },
               {
-                "id": "01-vestidinho-conjunto",
+                "id": "01-tamanho-p-o-investimento-principal-vestidinho-conjunto",
                 "label": "Vestidinho / conjunto",
                 "icon": "vestido",
                 "qty": "2",
@@ -309,35 +309,35 @@ export const MODULES = [
             "name": "Sem tamanho · compra única",
             "items": [
               {
-                "id": "01-fralda-de-pano-pano-de-boca",
+                "id": "01-sem-tamanho-compra-unica-fralda-de-pano-pano-de-boca",
                 "label": "Fralda de pano / pano de boca",
                 "icon": "pano",
-                "qty": "20",
+                "qty": "15",
                 "ess": true,
                 "note": "Item mais versátil do enxoval: golfada, ombro, sombra, forrar trocador."
               },
               {
-                "id": "01-babador",
+                "id": "01-sem-tamanho-compra-unica-babador",
                 "label": "Babador",
                 "icon": "babador",
                 "qty": "4",
                 "note": "Sobe para 6–8 na introdução alimentar (~6 meses)."
               },
               {
-                "id": "01-toalha-com-capuz",
+                "id": "01-sem-tamanho-compra-unica-toalha-com-capuz",
                 "label": "Toalha com capuz",
                 "icon": "toalha",
                 "qty": "2–3"
               },
               {
-                "id": "01-cueiro",
+                "id": "01-sem-tamanho-compra-unica-cueiro",
                 "label": "Cueiro",
                 "icon": "cueiro",
                 "qty": "2",
                 "note": "Uso decrescente — muitas famílias abandonam em semanas."
               },
               {
-                "id": "01-saco-de-dormir-tog-0-5",
+                "id": "01-sem-tamanho-compra-unica-saco-de-dormir-tog-0-5",
                 "label": "Saco de dormir TOG 0,5",
                 "icon": "saco-dormir",
                 "qty": "1",
@@ -345,7 +345,7 @@ export const MODULES = [
                 "note": "Para quarto acima de 24 °C."
               },
               {
-                "id": "01-saco-de-dormir-tog-1-0",
+                "id": "01-sem-tamanho-compra-unica-saco-de-dormir-tog-1-0",
                 "label": "Saco de dormir TOG 1,0",
                 "icon": "saco-dormir",
                 "qty": "1",
@@ -353,7 +353,7 @@ export const MODULES = [
                 "note": "O mais versátil para quarto com ar-condicionado no verão."
               },
               {
-                "id": "01-lavar-tudo-antes-do-primeiro-uso",
+                "id": "01-sem-tamanho-compra-unica-lavar-tudo-antes-do-primeiro-uso",
                 "label": "Lavar tudo antes do primeiro uso",
                 "icon": "lavar",
                 "ess": true,
@@ -437,12 +437,12 @@ export const MODULES = [
         "rows": [
           [
             "Espaço entre grades",
-            "máximo 6,5 cm",
-            "cabeça não passa"
+            "máximo 6 cm",
+            "cabeça e mãos não passam"
           ],
           [
             "Folga colchão–grade",
-            "máximo 2 dedos (~2 cm)",
+            "máximo 3 cm",
             "evita aprisionamento"
           ],
           [
@@ -461,7 +461,7 @@ export const MODULES = [
             "padrão de berço certificado"
           ]
         ],
-        "note": "Berço padrão usa colchão de 130×60 cm; mini-berço, 86×38 cm; berço acoplado (co-sleeper), ~75×67 cm e suporta até 9 kg. Exija selo do Inmetro e tinta atóxica."
+        "note": "Berço padrão usa colchão de 130×60 cm; mini-berço, 86×38 cm; berço acoplado (co-sleeper), ~75×67 cm e suporta até 9 kg. Exija selo do Inmetro e tinta atóxica. A NBR 15860 foi revisada e o espaçamento máximo caiu de 6,5 para 6 cm — berço antigo ou de segunda mão pode estar na norma velha. Teste prático da folga: não deve caber mais que dois dedos entre o colchão e a grade."
       },
       {
         "kind": "items",
@@ -628,9 +628,9 @@ export const MODULES = [
             "id": "03-algodao",
             "label": "Algodão",
             "icon": "algodao",
-            "qty": "1–2 pacotes de 500 g por mês",
+            "qty": "500 g a 1 kg por mês",
             "ess": true,
-            "note": "É o item que todo mundo subestima: usa-se a cada troca de fralda."
+            "note": "Item que todo mundo subestima: usa-se a cada troca de fralda. Compre por peso — as embalagens variam de 25 g a 500 g e comparar \"pacotes\" engana."
           },
           {
             "id": "03-gaze-esteril",
@@ -687,7 +687,7 @@ export const MODULES = [
           ],
           [
             "Antes do coto cair",
-            "possível, secando muito bem o coto depois"
+            "a AAP prefere banho de esponja; confirme com o pediatra"
           ],
           [
             "O que limpar sempre",
@@ -1063,7 +1063,7 @@ export const MODULES = [
         "kind": "avoid",
         "items": [
           "Comprar bomba extratora antes do parto — alugue ou teste a manual primeiro.",
-          "Chupeta e mamadeira antes da 4ª semana: risco de confusão de bicos e desmame precoce.",
+          "Chupeta e mamadeira antes de 3 a 4 semanas: risco de confusão de bicos e desmame precoce.",
           "Micro-ondas para aquecer leite materno.",
           "Estocar fórmula \"por precaução\" antes de qualquer avaliação."
         ]
@@ -1198,33 +1198,33 @@ export const MODULES = [
             "name": "Documentos",
             "items": [
               {
-                "id": "08-rg-e-cpf-dos-dois",
+                "id": "08-documentos-rg-e-cpf-dos-dois",
                 "label": "RG e CPF dos dois",
                 "icon": "documento",
                 "ess": true,
                 "note": "Originais e uma cópia de cada."
               },
               {
-                "id": "08-carteirinha-do-plano-guia-de-internacao",
+                "id": "08-documentos-carteirinha-do-plano-guia-de-internacao",
                 "label": "Carteirinha do plano + guia de internação",
                 "icon": "carteirinha",
                 "ess": true
               },
               {
-                "id": "08-caderneta-da-gestante-ultimos-exames-e-ultra",
+                "id": "08-documentos-caderneta-da-gestante-ultimos-exames-e-ultra",
                 "label": "Caderneta da gestante + últimos exames e ultrassons",
                 "icon": "caderneta",
                 "ess": true,
                 "note": "É o canal de comunicação com a equipe que vai receber vocês."
               },
               {
-                "id": "08-plano-de-parto-impresso",
+                "id": "08-documentos-plano-de-parto-impresso",
                 "label": "Plano de parto impresso",
                 "icon": "plano-parto",
                 "qty": "2 cópias"
               },
               {
-                "id": "08-comprovante-de-residencia",
+                "id": "08-documentos-comprovante-de-residencia",
                 "label": "Comprovante de residência",
                 "icon": "comprovante",
                 "qty": "1 cópia",
@@ -1236,20 +1236,20 @@ export const MODULES = [
             "name": "Para a Rafaella — internação",
             "items": [
               {
-                "id": "08-camisola-ou-pijama-com-abertura-frontal",
+                "id": "08-para-a-rafaella-internacao-camisola-ou-pijama-com-abertura-frontal",
                 "label": "Camisola ou pijama com abertura frontal",
                 "icon": "camisola",
                 "qty": "3–4",
                 "ess": true
               },
               {
-                "id": "08-robe-chinelo-antiderrapante",
+                "id": "08-para-a-rafaella-internacao-robe-chinelo-antiderrapante",
                 "label": "Robe + chinelo antiderrapante",
                 "icon": "robe",
                 "qty": "1"
               },
               {
-                "id": "08-calcinha-de-algodao-ou-descartavel",
+                "id": "08-para-a-rafaella-internacao-calcinha-de-algodao-ou-descartavel",
                 "label": "Calcinha de algodão ou descartável",
                 "icon": "calcinha",
                 "qty": "6",
@@ -1257,14 +1257,14 @@ export const MODULES = [
                 "note": "Cós alto, elástico largo."
               },
               {
-                "id": "08-sutia-de-amamentacao",
+                "id": "08-para-a-rafaella-internacao-sutia-de-amamentacao",
                 "label": "Sutiã de amamentação",
                 "icon": "sutia",
                 "qty": "2",
                 "ess": true
               },
               {
-                "id": "08-absorvente-pos-parto",
+                "id": "08-para-a-rafaella-internacao-absorvente-pos-parto",
                 "label": "Absorvente pós-parto",
                 "icon": "absorvente-pos",
                 "qty": "1–2 pacotes",
@@ -1272,13 +1272,13 @@ export const MODULES = [
                 "note": "A maternidade costuma fornecer parte — leve reforço mesmo assim."
               },
               {
-                "id": "08-necessaire-de-higiene-pessoal",
+                "id": "08-para-a-rafaella-internacao-necessaire-de-higiene-pessoal",
                 "label": "Nécessaire de higiene pessoal",
                 "icon": "necessaire",
                 "qty": "1"
               },
               {
-                "id": "08-roupa-confortavel-para-a-alta",
+                "id": "08-para-a-rafaella-internacao-roupa-confortavel-para-a-alta",
                 "label": "Roupa confortável para a alta",
                 "icon": "roupa-dobrada",
                 "qty": "1"
@@ -1289,7 +1289,7 @@ export const MODULES = [
             "name": "Para a Laura",
             "items": [
               {
-                "id": "08-body",
+                "id": "08-para-a-laura-body",
                 "label": "Body",
                 "icon": "body-mc",
                 "qty": "4–6",
@@ -1297,39 +1297,39 @@ export const MODULES = [
                 "note": "Levar tamanho RN e P — o peso ao nascer é imprevisível."
               },
               {
-                "id": "08-macacao",
+                "id": "08-para-a-laura-macacao",
                 "label": "Macacão",
                 "icon": "macacao",
                 "qty": "4–6",
                 "ess": true
               },
               {
-                "id": "08-meias",
+                "id": "08-para-a-laura-meias",
                 "label": "Meias",
                 "icon": "meias",
                 "qty": "3 pares"
               },
               {
-                "id": "08-manta-leve",
+                "id": "08-para-a-laura-manta-leve",
                 "label": "Manta leve",
                 "icon": "manta-leve",
                 "qty": "2"
               },
               {
-                "id": "08-touca",
+                "id": "08-para-a-laura-touca",
                 "label": "Touca",
                 "icon": "touca",
                 "qty": "1–2"
               },
               {
-                "id": "08-fraldas-rn",
+                "id": "08-para-a-laura-fraldas-rn",
                 "label": "Fraldas RN",
                 "icon": "fralda",
                 "qty": "1 pacote",
                 "note": "A maternidade fornece a maior parte — confirmar na visita."
               },
               {
-                "id": "08-saida-de-maternidade",
+                "id": "08-para-a-laura-saida-de-maternidade",
                 "label": "Saída de maternidade",
                 "icon": "saida",
                 "qty": "1"
@@ -1340,7 +1340,7 @@ export const MODULES = [
             "name": "Para o Palmer",
             "items": [
               {
-                "id": "08-trocas-de-roupa",
+                "id": "08-para-o-palmer-trocas-de-roupa",
                 "label": "Trocas de roupa",
                 "icon": "roupa-dobrada",
                 "qty": "3",
@@ -1348,26 +1348,26 @@ export const MODULES = [
                 "note": "Internação costuma durar 2 a 3 dias."
               },
               {
-                "id": "08-chinelo-e-necessaire",
+                "id": "08-para-o-palmer-chinelo-e-necessaire",
                 "label": "Chinelo e nécessaire",
                 "icon": "necessaire",
                 "qty": "1"
               },
               {
-                "id": "08-carregadores-power-bank",
+                "id": "08-para-o-palmer-carregadores-power-bank",
                 "label": "Carregadores + power bank",
                 "icon": "carregador",
                 "qty": "1",
                 "ess": true
               },
               {
-                "id": "08-lanches-e-garrafa-de-agua",
+                "id": "08-para-o-palmer-lanches-e-garrafa-de-agua",
                 "label": "Lanches e garrafa de água",
                 "icon": "lanche",
                 "note": "Trabalho de parto é longo e a cantina fecha."
               },
               {
-                "id": "08-bebe-conforto-instalado-no-carro",
+                "id": "08-para-o-palmer-bebe-conforto-instalado-no-carro",
                 "label": "Bebê conforto instalado no carro",
                 "icon": "bebe-conforto",
                 "ess": true,
@@ -1442,7 +1442,7 @@ export const MODULES = [
           {
             "when": "até 15 dias",
             "hot": true,
-            "what": "<b>Registro civil em cartório</b> — certidão gratuita por lei, e o CPF sai junto na hora. Basta a DNV e o documento de um dos pais."
+            "what": "<b>Registro civil em cartório</b> — certidão gratuita por lei. Basta a DNV e o documento de um dos pais. O CPF costuma sair junto, mas isso varia por cartório e por estado — confirmem no ato."
           },
           {
             "when": "até 30 dias",
@@ -1464,7 +1464,7 @@ export const MODULES = [
       {
         "kind": "tip",
         "title": "e a licença-maternidade",
-        "body": "São <b>120 dias</b>, pagos pelo INSS via salário-maternidade. A entrada pode ser feita a partir de 28 dias antes do parto e até o primeiro dia depois. Para autônoma e contribuinte individual há <b>carência de 10 contribuições</b> — vale confirmar o extrato do CNIS com antecedência, não depois."
+        "body": "São <b>120 dias</b>, pagos pelo INSS via salário-maternidade. A entrada pode ser feita a partir de 28 dias antes do parto e até o primeiro dia depois. <b>Não há mais carência</b>: o STF derrubou a exigência de 10 contribuições que valia para autônoma e contribuinte individual, por violar isonomia. O que ainda é preciso é ter <b>qualidade de segurada</b> na data do parto — vale conferir o extrato do CNIS com antecedência, não depois."
       }
     ]
   },

@@ -130,16 +130,6 @@
 }
 .cardHead:hover { background: rgba(0, 0, 0, 0.02); }
 
-.cardIcon { font-size: 20px; }
-
-.cardTitleWrap { min-width: 0; }
-
-.cardTitle {
-  display: block;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary, #2a2724);
-}
 
 .cardMeta {
   display: block;
@@ -148,19 +138,6 @@
   margin-top: 1px;
 }
 
-.cardProgressBar {
-  height: 5px;
-  background: rgba(0, 0, 0, 0.07);
-  border-radius: 3px;
-  overflow: hidden;
-}
-.cardProgressFill {
-  display: block;
-  height: 100%;
-  background: #468c5a;
-  border-radius: 3px;
-  transition: width 0.3s ease;
-}
 
 .statusPill {
   font-size: 10px;
@@ -215,14 +192,6 @@
   gap: 2px;
 }
 
-.groupHead {
-  font-size: 10.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-secondary, #6b6660);
-  padding: 12px 4px 4px;
-}
 
 .itemRow {
   display: flex;
@@ -335,31 +304,6 @@
 }
 .addForm button:disabled { opacity: 0.4; cursor: default; }
 
-/* ── Avoid box ──────────────────────────────────────── */
-.avoidBox {
-  margin-top: 12px;
-  background: rgba(180, 60, 60, 0.05);
-  border: 1px solid rgba(180, 60, 60, 0.18);
-  border-radius: 10px;
-  padding: 10px 14px;
-}
-.avoidTitle {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #b43c3c;
-  margin-bottom: 4px;
-}
-.avoidBox ul {
-  margin: 0;
-  padding-left: 16px;
-}
-.avoidBox li {
-  font-size: 12px;
-  color: var(--text-secondary, #6b6660);
-  line-height: 1.5;
-}
 
 /* ── Sources ────────────────────────────────────────── */
 .sources {
@@ -537,3 +481,5 @@
   line-height: 1.55;
   margin-bottom: 2px;
 }
+
+.headerLeft { flex: 1; min-width: 200px; }
