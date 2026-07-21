@@ -1,22 +1,24 @@
 /**
- * EnxovalView — interactive "Mapa do Enxoval" for the Família tab.
+ * EnxovalView — "Mapa do Enxoval da Laura" na aba Família.
  *
- * What the R$27 PDF funnels sell, but living inside Vault:
- *   - evidence-based checklist (SBP, MS, NHS, ANS, CONTRAN — see enxovalData)
- *   - aware of the CURRENT gestational week: each category gets a buy-window
- *     status (agora / futuro / atrasado / feito) like the prenatal checkpoints
- *   - shared check-state between the two profiles, synced cross-device
+ * Os dados vêm de enxovalData.js, que é GERADO a partir da mesma fonte que
+ * produz o PDF entregue à família (scratchpad/enxoval/modules.py). App e PDF
+ * não divergem: mudou o conteúdo, roda-se o export e os dois acompanham.
  *
- * Persistence: one FamilyNote (title = NOTE_TITLE) holding a JSON blob
- * { v, checked: {itemId: true}, custom: [{id, cat, label}] }. FamilyNotes are
- * household-shared and full-CRUD, so no backend change is needed. Home.jsx
- * hides "__"-prefixed titles from the bulletin board. Writes are debounced
- * whole-blob upserts — last write wins, fine for a two-person household.
+ * Cada módulo traz blocos de tipos diferentes — checklist, tabela, linha do
+ * tempo, caixa de destaque, caixa "evitar" — e cada item tem sua ilustração.
+ * O módulo ganha status pela janela de compra em semanas gestacionais.
+ *
+ * Persistência: um FamilyNote (title = NOTE_TITLE) com um blob JSON
+ * { v, checked: {itemId: true}, custom: [{id, cat, label}] }. FamilyNotes são
+ * compartilhados na casa e têm CRUD completo, então nada muda no backend.
+ * Home.jsx esconde títulos com prefixo "__". Escritas são upserts do blob
+ * inteiro, com debounce — last write wins, suficiente para duas pessoas.
  */
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import api from '../../api/client'
-import { ENXOVAL_CATEGORIES, SOURCES, PHASE_HINTS } from './enxovalData'
+import { MODULES, ICONS, SPOTS, SOURCES, PAL } from './enxovalData'
 import { weeksFromDum, formatWeeks } from './checkpoints'
 import styles from './enxoval.module.css'
 
@@ -42,23 +44,26 @@ function customId() {
   return `c-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-function categoryStatus(cat, currentWeek, done, total, pregnancyStatus) {
+function moduleStatus(mod, currentWeek, done, total, pregnancyStatus) {
   if (total > 0 && done === total) return 'completed'
-  // Deadline-driven (docs) categories go live once the baby is born.
-  if (!cat.buyWindow) return pregnancyStatus === 'finalizada' ? 'current' : 'posparto'
+  // Módulos sem janela (prazos, como usar) só ficam "agora" depois do parto.
+  if (!mod.buyWindow) return pregnancyStatus === 'finalizada' ? 'current' : 'posparto'
   if (currentWeek == null) return 'upcoming'
-  const [start, end] = cat.buyWindow
+  const [start, end] = mod.buyWindow
   if (currentWeek > end) return 'overdue'
   if (currentWeek >= start) return 'current'
   return 'upcoming'
 }
 
 const STATUS_LABEL = {
-  completed: 'feito',
-  current: 'agora',
-  upcoming: 'futuro',
-  overdue: 'atrasado',
-  posparto: 'pós-parto',
+  completed: 'feito', current: 'agora', upcoming: 'futuro',
+  overdue: 'atrasado', posparto: 'pós-parto',
+}
+
+/** SVG vindo dos dados — conteúdo nosso, gerado no build, nunca de terceiros. */
+function Art({ svg, className }) {
+  if (!svg) return null
+  return <span className={className} dangerouslySetInnerHTML={{ __html: svg }} />
 }
 
 export default function EnxovalView({ pregnancy }) {
@@ -70,17 +75,12 @@ export default function EnxovalView({ pregnancy }) {
     queryFn: () => api.get('/home/notes/'),
   })
   const notesList = notes.results || notes
-  // Deterministic canonical pick if duplicates ever exist: oldest first.
   const stateNote = useMemo(() => {
     const candidates = (notesList.filter?.(n => n.title === NOTE_TITLE) || [])
     candidates.sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
     return candidates[0] || null
   }, [notesList])
 
-  // Local state is the source of truth while editing; server writes are
-  // debounced whole-blob upserts (see saveSoon). While clean (no pending
-  // edit/save), re-hydrate from the server so the other profile's checks
-  // show up without a reload.
   const [state, setState] = useState(null)
   const noteIdRef = useRef(null)
   const dirtyRef = useRef(false)
@@ -99,13 +99,10 @@ export default function EnxovalView({ pregnancy }) {
   const pendingRef = useRef(null)
 
   const doSave = useCallback((blob) => {
-    // Chain writes so a create finishes (and yields its id) before any patch.
     savingRef.current = savingRef.current.then(async () => {
       const body = { title: NOTE_TITLE, content: JSON.stringify(blob), pinned: false }
       try {
         if (!noteIdRef.current) {
-          // Anti-duplicata: another device may have created the note since we
-          // loaded — re-check by fresh GET before POSTing a new one.
           const fresh = await api.get('/home/notes/')
           const list = fresh.results || fresh
           const existing = (list.filter?.(n => n.title === NOTE_TITLE) || [])
@@ -136,8 +133,6 @@ export default function EnxovalView({ pregnancy }) {
     saveTimer.current = setTimeout(() => doSave(next), 600)
   }, [doSave])
 
-  // Flush (not drop) any pending edit when the component unmounts —
-  // e.g. switching to another sub-tab within the debounce window.
   useEffect(() => () => {
     clearTimeout(saveTimer.current)
     if (pendingRef.current) doSave(pendingRef.current)
@@ -159,8 +154,7 @@ export default function EnxovalView({ pregnancy }) {
   })
 
   const addCustom = (catId, label) => update(s => ({
-    ...s,
-    custom: [...s.custom, { id: customId(), cat: catId, label }],
+    ...s, custom: [...s.custom, { id: customId(), cat: catId, label }],
   }))
 
   const removeCustom = (id) => update(s => {
@@ -169,51 +163,162 @@ export default function EnxovalView({ pregnancy }) {
     return { ...s, checked, custom: s.custom.filter(c => c.id !== id) }
   })
 
-  const [filter, setFilter] = useState('todos') // todos | pendentes | essenciais
-  const [expanded, setExpanded] = useState(null) // null = auto by status
+  const [filter, setFilter] = useState('todos')
+  const [expanded, setExpanded] = useState(null)
 
   const checked = state?.checked || {}
   const custom = state?.custom || []
 
-  // Per-category rows (base + custom) and progress.
-  const cats = useMemo(() => ENXOVAL_CATEGORIES.map(cat => {
-    const customItems = custom
-      .filter(c => c.cat === cat.id)
-      .map(c => ({ id: c.id, label: c.label, isCustom: true }))
-    const all = [...cat.items, ...customItems]
+  // Itens de um módulo = os do conteúdo + os que o casal adicionou.
+  const mods = useMemo(() => MODULES.map(mod => {
+    const base = []
+    for (const b of mod.blocks) {
+      if (b.kind === 'items') base.push(...b.items)
+      else if (b.kind === 'groups') b.groups.forEach(g => base.push(...g.items))
+    }
+    const extra = custom.filter(c => c.cat === mod.id)
+      .map(c => ({ id: c.id, label: c.label, isCustom: true, icon: 'check' }))
+    const all = [...base, ...extra]
     const done = all.filter(i => checked[i.id]).length
-    const status = categoryStatus(cat, currentWeek, done, all.length, pregnancy?.status)
-    return { ...cat, all, done, total: all.length, status }
+    return {
+      ...mod, extra, done, total: all.length,
+      status: moduleStatus(mod, currentWeek, done, all.length, pregnancy?.status),
+    }
   }), [custom, checked, currentWeek, pregnancy?.status])
 
-  const totalDone = cats.reduce((a, c) => a + c.done, 0)
-  const totalItems = cats.reduce((a, c) => a + c.total, 0)
+  const totalDone = mods.reduce((a, m) => a + m.done, 0)
+  const totalItems = mods.reduce((a, m) => a + m.total, 0)
   const pct = totalItems ? Math.round((totalDone / totalItems) * 100) : 0
-  const phase = PHASE_HINTS.find(p => currentWeek != null && currentWeek < p.until)
 
-  const isOpen = (cat) =>
-    expanded ? expanded.has(cat.id) : (cat.status === 'current' || cat.status === 'overdue')
-  const toggleOpen = (cat) => {
-    const base = expanded || new Set(cats.filter(isOpen).map(c => c.id))
+  const isOpen = (mod) =>
+    expanded ? expanded.has(mod.id) : (mod.status === 'current' || mod.status === 'overdue')
+  const toggleOpen = (mod) => {
+    const base = expanded || new Set(mods.filter(isOpen).map(m => m.id))
     const next = new Set(base)
-    if (next.has(cat.id)) next.delete(cat.id)
-    else next.add(cat.id)
+    if (next.has(mod.id)) next.delete(mod.id)
+    else next.add(mod.id)
     setExpanded(next)
+  }
+
+  const keep = (it) => {
+    if (filter === 'pendentes') return !checked[it.id]
+    if (filter === 'essenciais') return it.ess
+    return true
   }
 
   if (state === null) {
     return <div className={styles.loading}>Carregando mapa do enxoval…</div>
   }
 
+  const renderItem = (it, pal) => (
+    <div key={it.id} className={styles.itemRow}>
+      <label className={styles.item} data-checked={!!checked[it.id]}>
+        <input type="checkbox" checked={!!checked[it.id]} onChange={() => toggleItem(it.id)} />
+        <Art svg={ICONS[it.icon]} className={styles.itemArt} />
+        <span className={styles.itemBody}>
+          <span className={styles.itemLabel}>
+            {it.label}
+            {it.qty && (
+              <span className={styles.qty} style={{ background: pal.tint, color: pal.deep }}>
+                {it.qty}
+              </span>
+            )}
+            {it.ess && <span className={styles.critical} style={{ color: pal.deep }}>essencial</span>}
+          </span>
+          {it.note && <span className={styles.itemNote}>{it.note}</span>}
+        </span>
+      </label>
+      {it.isCustom && (
+        <button type="button" className={styles.removeCustom}
+          aria-label={`Remover item ${it.label}`} onClick={() => removeCustom(it.id)}>×</button>
+      )}
+    </div>
+  )
+
+  const renderBlock = (b, k, pal) => {
+    switch (b.kind) {
+      case 'intro':
+        return <p key={k} className={styles.blockIntro}>{b.text}</p>
+      case 'items': {
+        const vis = b.items.filter(keep)
+        if (!vis.length) return null
+        return <div key={k} className={styles.itemList}>{vis.map(it => renderItem(it, pal))}</div>
+      }
+      case 'groups':
+        return (
+          <div key={k}>
+            {b.groups.map(g => {
+              const vis = g.items.filter(keep)
+              if (!vis.length) return null
+              return (
+                <div key={g.name}>
+                  <div className={styles.groupChip} style={{ background: pal.tint, color: pal.deep }}>
+                    {g.name}
+                  </div>
+                  <div className={styles.itemList}>{vis.map(it => renderItem(it, pal))}</div>
+                </div>
+              )
+            })}
+          </div>
+        )
+      case 'table':
+        return (
+          <div key={k} className={styles.tableWrap}>
+            {b.title && <div className={styles.tableTitle} style={{ color: pal.deep }}>{b.title}</div>}
+            <table className={styles.table}>
+              <thead><tr style={{ background: pal.tint }}>
+                {b.head.map(h => <th key={h}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {b.rows.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci}>{c}</td>)}</tr>)}
+              </tbody>
+            </table>
+            {b.note && <div className={styles.tableNote}>{b.note}</div>}
+          </div>
+        )
+      case 'timeline':
+        return (
+          <div key={k} className={styles.timeline}>
+            {b.rows.map((r, ri) => {
+              const hp = r.hot ? PAL.terra : PAL.blue
+              return (
+                <div key={ri} className={styles.tlRow}>
+                  <span className={styles.tlWhen} style={{ background: hp.tint, color: hp.deep }}>
+                    {r.when}
+                  </span>
+                  <div className={styles.tlWhat} dangerouslySetInnerHTML={{ __html: r.what }} />
+                </div>
+              )
+            })}
+          </div>
+        )
+      case 'tip':
+        return (
+          <div key={k} className={styles.tip} style={{ background: pal.tint, borderColor: pal.mid }}>
+            <div className={styles.tipTitle} style={{ color: pal.deep }}>{b.title}</div>
+            <div className={styles.tipBody} dangerouslySetInnerHTML={{ __html: b.body }} />
+          </div>
+        )
+      case 'avoid':
+        return (
+          <div key={k} className={styles.avoid}>
+            <div className={styles.avoidTitle}>✕ &nbsp;{b.title || 'melhor evitar'}</div>
+            <ul>{b.items.map((a, ai) => <li key={ai}>{a}</li>)}</ul>
+          </div>
+        )
+      default:
+        return null
+    }
+  }
+
   return (
     <div className={styles.enxoval}>
-      {/* ── Header: progress + week phase ── */}
       <div className={styles.header}>
         <div className={styles.headerLeft}>
-          <div className={styles.headerTitle}>Mapa do Enxoval</div>
+          <div className={styles.headerTitle}>Mapa do Enxoval da Laura</div>
           <div className={styles.headerSub}>
             {currentWeek != null && <>Semana <strong>{formatWeeks(currentWeek)}</strong> · </>}
-            {phase?.text || 'Checklist compartilhado do casal.'}
+            {MODULES.length} módulos · mesma fonte do PDF da família
           </div>
         </div>
         <div className={styles.headerProgress}>
@@ -225,129 +330,49 @@ export default function EnxovalView({ pregnancy }) {
         </div>
       </div>
 
-      {/* ── Filters ── */}
       <div className={styles.filters} role="group" aria-label="Filtro de itens">
         {[['todos', 'Todos'], ['pendentes', 'Pendentes'], ['essenciais', 'Essenciais']].map(([key, label]) => (
-          <button
-            key={key}
-            className={filter === key ? styles.filterActive : styles.filter}
-            aria-pressed={filter === key}
-            onClick={() => setFilter(key)}
-          >
-            {label}
-          </button>
+          <button key={key} className={filter === key ? styles.filterActive : styles.filter}
+            aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</button>
         ))}
       </div>
 
-      {/* ── Categories ── */}
-      {cats.map(cat => {
-        const open = isOpen(cat)
-        const visible = cat.all.filter(item => {
-          if (filter === 'pendentes') return !checked[item.id]
-          if (filter === 'essenciais') return item.critical
-          return true
-        })
-        let lastGroup = null
+      {mods.map(mod => {
+        const pal = PAL[mod.pal] || PAL.terra
+        const open = isOpen(mod)
         return (
-          <section key={cat.id} className={styles.card} data-status={cat.status}>
-            <button
-              className={styles.cardHead}
-              onClick={() => toggleOpen(cat)}
-              aria-expanded={open}
-            >
-              <span className={styles.cardIcon} aria-hidden="true">{cat.icon}</span>
+          <section key={mod.id} className={styles.card} data-status={mod.status}>
+            <button className={styles.cardHead} onClick={() => toggleOpen(mod)} aria-expanded={open}
+              style={{ background: open ? pal.tint : undefined }}>
+              <Art svg={SPOTS[mod.spot]} className={styles.cardArt} />
               <span className={styles.cardTitleWrap}>
-                <span className={styles.cardTitle}>{cat.title}</span>
-                <span className={styles.cardMeta}>
-                  {cat.done}/{cat.total}
-                  {cat.buyWindow && <> · comprar entre as semanas {cat.buyWindow[0]}–{cat.buyWindow[1]}</>}
-                </span>
+                <span className={styles.cardNum} style={{ color: pal.deep }}>{mod.num}</span>
+                <span className={styles.cardTitle}>{mod.title}</span>
+                <span className={styles.cardMeta}>{mod.done}/{mod.total} · {mod.win}</span>
               </span>
-              <span className={styles.cardProgressBar}>
-                <span
-                  className={styles.cardProgressFill}
-                  style={{ width: `${cat.total ? (cat.done / cat.total) * 100 : 0}%` }}
-                />
-              </span>
-              <span className={styles.statusPill} data-status={cat.status}>
-                {STATUS_LABEL[cat.status]}
+              <span className={styles.statusPill} data-status={mod.status}>
+                {STATUS_LABEL[mod.status]}
               </span>
               <span className={styles.chevron} data-open={open} aria-hidden="true">▾</span>
             </button>
 
             {open && (
               <div className={styles.cardBody}>
-                {cat.intro && <p className={styles.catIntro}>{cat.intro}</p>}
-
-                {visible.length === 0 && (
-                  <div className={styles.emptyFilter}>Nada aqui com esse filtro.</div>
+                {mod.intro && <p className={styles.catIntro}>{mod.intro}</p>}
+                {mod.blocks.map((b, k) => renderBlock(b, k, pal))}
+                {mod.extra.length > 0 && (
+                  <div className={styles.itemList}>{mod.extra.filter(keep).map(it => renderItem(it, pal))}</div>
                 )}
-
-                <ul className={styles.itemList}>
-                  {visible.map(item => {
-                    const showGroup = item.group && item.group !== lastGroup
-                    lastGroup = item.group || lastGroup
-                    return (
-                      <li key={item.id}>
-                        {showGroup && <div className={styles.groupHead}>{item.group}</div>}
-                        <div className={styles.itemRow}>
-                          <label className={styles.item} data-checked={!!checked[item.id]}>
-                            <input
-                              type="checkbox"
-                              checked={!!checked[item.id]}
-                              onChange={() => toggleItem(item.id)}
-                            />
-                            <span className={styles.itemBody}>
-                              <span className={styles.itemLabel}>
-                                {item.label}
-                                {item.qty && <span className={styles.qty}>{item.qty}</span>}
-                                {item.critical && <span className={styles.critical}>essencial</span>}
-                              </span>
-                              {item.note && <span className={styles.itemNote}>{item.note}</span>}
-                            </span>
-                          </label>
-                          {item.isCustom && (
-                            <button
-                              type="button"
-                              className={styles.removeCustom}
-                              aria-label={`Remover item ${item.label}`}
-                              onClick={() => removeCustom(item.id)}
-                            >
-                              ×
-                            </button>
-                          )}
-                        </div>
-                      </li>
-                    )
-                  })}
-                </ul>
-
-                <AddCustomForm onAdd={(label) => addCustom(cat.id, label)} />
-
-                {cat.avoid?.length > 0 && (
-                  <div className={styles.avoidBox}>
-                    <div className={styles.avoidTitle}>⚠ Evitar</div>
-                    <ul>
-                      {cat.avoid.map((a, i) => <li key={i}>{a}</li>)}
-                    </ul>
-                  </div>
-                )}
+                <AddCustomForm onAdd={(label) => addCustom(mod.id, label)} />
               </div>
             )}
           </section>
         )
       })}
 
-      {/* ── Sources ── */}
       <div className={styles.sources}>
         <div className={styles.sourcesTitle}>Fontes</div>
-        <ul>
-          {Object.entries(SOURCES).map(([id, s]) => (
-            <li key={id}>
-              <a href={s.url} target="_blank" rel="noreferrer">{s.label} ↗</a>
-            </li>
-          ))}
-        </ul>
+        <ul>{SOURCES.map((s, i) => <li key={i}>{s}</li>)}</ul>
       </div>
     </div>
   )
@@ -364,14 +389,8 @@ function AddCustomForm({ onAdd }) {
   }
   return (
     <form className={styles.addForm} onSubmit={submit}>
-      <input
-        type="text"
-        value={value}
-        placeholder="Adicionar item…"
-        aria-label="Novo item da categoria"
-        onChange={(e) => setValue(e.target.value)}
-        maxLength={120}
-      />
+      <input type="text" value={value} placeholder="Adicionar item…"
+        aria-label="Novo item do módulo" onChange={(e) => setValue(e.target.value)} maxLength={120} />
       <button type="submit" aria-label="Adicionar item" disabled={!value.trim()}>+</button>
     </form>
   )
