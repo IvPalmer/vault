@@ -10,22 +10,40 @@ export function AuthProvider({ children }) {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  // On mount: try to restore session from stored tokens
+  // On mount: restore from stored tokens; failing that, try the silent SSO
+  // exchange — behind the oauth2-proxy gate the browser already did Google
+  // SSO, so /api/auth/sso/ turns that identity into a JWT pair without a
+  // second login screen. Outside the proxy (local dev) it 403s and the
+  // normal Login page shows. Skipped after an explicit logout (see logout),
+  // otherwise "sair" would re-entrar sozinho.
   useEffect(() => {
     async function restoreSession() {
       const token = getAccessToken()
       const refresh = getRefreshToken()
-      if (!token && !refresh) {
-        setIsLoading(false)
-        return
+      if (token || refresh) {
+        try {
+          const profile = await api.get('/auth/me/')
+          setUser(profile)
+          setProfileId(profile.id)
+          setIsLoading(false)
+          return
+        } catch (err) {
+          clearTokens()
+        }
       }
 
-      try {
-        const profile = await api.get('/auth/me/')
-        setUser(profile)
-        setProfileId(profile.id)
-      } catch (err) {
-        clearTokens()
+      if (localStorage.getItem('vaultSsoLoggedOut') !== '1') {
+        try {
+          const resp = await fetch('/api/auth/sso/', { method: 'POST' })
+          if (resp.ok) {
+            const data = await resp.json()
+            setTokens(data.access, data.refresh)
+            setUser(data.profile)
+            setProfileId(data.profile.id)
+          }
+        } catch {
+          // sem proxy (dev local) ou sem identidade — cai no Login normal
+        }
       }
       setIsLoading(false)
     }
@@ -47,6 +65,7 @@ export function AuthProvider({ children }) {
       setTokens(data.access, data.refresh)
       setUser(data.profile)
       setProfileId(data.profile.id)
+      localStorage.removeItem('vaultSsoLoggedOut')
       return data.profile
     } catch (err) {
       setError(err.message)
@@ -57,6 +76,11 @@ export function AuthProvider({ children }) {
   const logout = useCallback(() => {
     clearTokens()
     setUser(null)
+    // Suppress the silent SSO exchange until the user logs in on purpose,
+    // and best-effort kill the oauth2-proxy cookie too — otherwise logout
+    // would auto re-authenticate on the next page load.
+    localStorage.setItem('vaultSsoLoggedOut', '1')
+    fetch('/oauth2/sign_out', { redirect: 'manual' }).catch(() => {})
   }, [])
 
   // Direct user set for redirect flow (tokens already stored by Login page)

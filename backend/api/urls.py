@@ -42,7 +42,7 @@ from .views import (
     HealthExamViewSet, VitalReadingViewSet, LabMarkerViewSet,
     PregnancyViewSet, PrenatalConsultationViewSet, HealthContentView,
 )
-from .auth_views import GoogleLoginView, TokenRefreshView, AuthMeView, GoogleAuthStartView, GoogleAuthCallbackView
+from .auth_views import GoogleLoginView, TokenRefreshView, AuthMeView, GoogleAuthStartView, GoogleAuthCallbackView, SsoExchangeView
 from .dashboard_views import DashboardStateView
 from .google_views import (
     GoogleConnectView, GoogleOAuthCallbackView, GoogleAccountsView,
@@ -80,6 +80,7 @@ urlpatterns = [
     # Auth
     path('auth/google/', GoogleLoginView.as_view(), name='auth-google'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='auth-refresh'),
+    path('auth/sso/', SsoExchangeView.as_view(), name='auth-sso'),
     path('auth/me/', AuthMeView.as_view(), name='auth-me'),
     path('auth/google-start/', GoogleAuthStartView.as_view(), name='auth-google-start'),
     path('auth/google-callback/', GoogleAuthCallbackView.as_view(), name='auth-google-callback'),

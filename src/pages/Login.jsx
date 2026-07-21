@@ -51,6 +51,30 @@ export default function Login() {
     }
   }, [isAuthenticated, isLoading, navigate])
 
+  // Silent SSO: if we landed here (e.g. JWT expirado) but the oauth2-proxy
+  // cookie is still valid, exchange it for a JWT and skip the Google button.
+  // Skipped after an explicit logout. While pending, render nothing so the
+  // Google button doesn't flash before the auto-login resolves.
+  const ssoTried = useRef(false)
+  const [ssoPending, setSsoPending] = useState(
+    () => localStorage.getItem('vaultSsoLoggedOut') !== '1',
+  )
+  useEffect(() => {
+    if (isLoading || isAuthenticated || ssoTried.current) return
+    if (localStorage.getItem('vaultSsoLoggedOut') === '1') { setSsoPending(false); return }
+    ssoTried.current = true
+    fetch('/api/auth/sso/', { method: 'POST' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (!data?.access) { setSsoPending(false); return }
+        setTokens(data.access, data.refresh)
+        setProfileId(data.profile.id)
+        setUserDirect(data.profile)
+        navigate(`/${data.profile.slug}/overview`, { replace: true })
+      })
+      .catch(() => setSsoPending(false))
+  }, [isLoading, isAuthenticated, navigate, setUserDirect])
+
   const handleCredentialResponse = useCallback(async (response) => {
     try {
       const profile = await login(response.credential)
@@ -60,9 +84,10 @@ export default function Login() {
     }
   }, [login, navigate])
 
-  // Initialize GIS
+  // Initialize GIS — only after the silent SSO attempt settled (the button
+  // div only exists then; the ref would be null during the pending render).
   useEffect(() => {
-    if (initialized.current || !btnRef.current) return
+    if (ssoPending || initialized.current || !btnRef.current) return
     if (!window.google?.accounts?.id) {
       const checkInterval = setInterval(() => {
         if (window.google?.accounts?.id) {
@@ -91,14 +116,15 @@ export default function Login() {
         width: 300,
       })
     }
-  }, [googleClientId, handleCredentialResponse])
+  }, [ssoPending, googleClientId, handleCredentialResponse])
 
   // Fallback: redirect to Google OAuth via backend when GIS doesn't load
   const handleManualLogin = () => {
+    localStorage.removeItem('vaultSsoLoggedOut')
     window.location.href = `/api/auth/google-start/?next=${encodeURIComponent(window.location.origin + '/login')}`
   }
 
-  if (isLoading) return null
+  if (isLoading || ssoPending) return null
 
   const displayError = error || redirectError
 
