@@ -1095,3 +1095,54 @@ class CarryoverFloorTests(TestCase):
             result = get_metricas('2026-01', profile=profile)
         self.assertAlmostEqual(result['carryover_debt'], 0.00, places=2)
         self.assertEqual(result['carryover_items'], [])
+
+
+class OrcamentoRefundBreakdownTests(TestCase):
+    """A refund already nets into the card's total (a001d7e). Hiding the
+    refund-dominant sub made the breakdown sum to more than the total, so the
+    estorno looked like it had not been deducted at all."""
+
+    def setUp(self):
+        from api.models import Subcategory
+        self.profile = Profile.objects.create(name='Tester')
+        self.account = Account.objects.create(
+            profile=self.profile, name='Visa', account_type='credit_card',
+        )
+        self.cat = Category.objects.create(profile=self.profile, name='Drogas')
+        self.compras = Subcategory.objects.create(category=self.cat, name='Compras')
+        self.estornos = Subcategory.objects.create(category=self.cat, name='Estornos')
+
+    def _txn(self, amount, sub):
+        Transaction.objects.create(
+            profile=self.profile, account=self.account, date=date(2026, 3, 10),
+            description='GSO', amount=Decimal(amount), month_str='2026-03',
+            category=self.cat, subcategory=sub,
+        )
+
+    def _card(self):
+        from api.services import get_orcamento
+        cards = get_orcamento('2026-03', profile=self.profile)['categories']
+        return next(c for c in cards if c['name'] == 'Drogas')
+
+    def test_breakdown_adds_up_to_the_card_total(self):
+        self._txn('-1470.00', self.compras)
+        self._txn('975.00', self.estornos)
+        card = self._card()
+        self.assertAlmostEqual(card['spent'], 495.00, places=2)
+        self.assertAlmostEqual(
+            sum(s['spent'] for s in card['subcategories']), 495.00, places=2,
+        )
+
+    def test_the_refund_sub_is_flagged_as_a_credit_not_spending(self):
+        self._txn('-1470.00', self.compras)
+        self._txn('975.00', self.estornos)
+        subs = {s['name']: s for s in self._card()['subcategories']}
+        self.assertAlmostEqual(subs['Estornos']['spent'], -975.00, places=2)
+        self.assertTrue(subs['Estornos']['is_credit'])
+        self.assertFalse(subs['Compras']['is_credit'])
+
+    def test_a_sub_with_no_movement_stays_out(self):
+        self._txn('-1470.00', self.compras)
+        self.assertEqual(
+            [s['name'] for s in self._card()['subcategories']], ['Compras'],
+        )

@@ -304,6 +304,11 @@
   color: var(--color-text);
 }
 
+/* Estorno/crédito: abate o gasto da categoria, não é consumo. */
+.subSpentCredit {
+  color: var(--color-green);
+}
+
 .subLimit {
   color: var(--color-text-secondary);
   font-weight: 400;

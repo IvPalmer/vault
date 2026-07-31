@@ -160,11 +160,15 @@ function CategoryCard({ cat }) {
 
       {expanded && hasSubs && (
         <div className={styles.subBreakdown}>
+          {/* A credit (estorno) shows as a deduction — never as spending — so
+              the breakdown reconciles with "Gasto" above. */}
           {cat.subcategories.map(sub => (
             <div key={sub.id} className={styles.subRow}>
               <div className={styles.subHeader}>
-                <span className={styles.subName}>{sub.name}</span>
-                <span className={styles.subSpent}>R$ {fmt(sub.spent)}</span>
+                <span className={`${styles.subName} ${sub.is_credit ? styles.subNameDim : ''}`}>{sub.name}</span>
+                <span className={`${styles.subSpent} ${sub.is_credit ? styles.subSpentCredit : ''}`}>
+                  {sub.is_credit ? '−' : ''}R$ {fmt(sub.spent)}
+                </span>
               </div>
             </div>
           ))}

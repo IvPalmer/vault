@@ -5009,20 +5009,25 @@ def get_orcamento(month_str, profile=None):
         if has_current:
             total_current_consumption += spent
 
-        # Subcategory breakdown: net per sub (signed), clamped for display.
-        # Refunds inside a sub cancel its purchases; subs that net to zero or
-        # positive (more refunds than spend) drop out of the breakdown.
+        # Subcategory breakdown: net per sub (signed). A refund-dominant sub
+        # (e.g. "Estornos") carries a NEGATIVE spent and is flagged is_credit,
+        # so the breakdown adds up to the card's `spent` instead of hiding the
+        # credit and looking like nothing was deducted. It must render as a
+        # deduction, never as income — that is what `is_credit` is for; the
+        # category total above stays clamped.
         cat_sub_spending = sub_spending.get(cat.id, {})
         subcategories_data = []
         for sub in all_subcategories.get(cat.id, []):
             sub_net = float(cat_sub_spending.get(sub.id, Decimal('0.00')))
-            sub_spent = max(0.0, -sub_net)
-            if sub_spent > 0:
-                subcategories_data.append({
-                    'id': str(sub.id),
-                    'name': sub.name,
-                    'spent': round(sub_spent, 2),
-                })
+            if sub_net == 0:
+                continue
+            sub_spent = -sub_net
+            subcategories_data.append({
+                'id': str(sub.id),
+                'name': sub.name,
+                'spent': round(sub_spent, 2),
+                'is_credit': sub_spent < 0,
+            })
         subcategories_data.sort(key=lambda s: -s['spent'])
         # Cat-only net (no subcategory). When this is positive (pure refund on
         # the category), it already deducted from `spent` above — hide the row.
