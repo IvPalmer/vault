@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from io import StringIO
 from unittest.mock import patch
@@ -906,3 +906,192 @@ class PluggyBilledDuplicateSkipTests(TestCase):
         )
         self.assertEqual(new, 2)
         self.assertEqual(skipped, 0)
+
+
+class _FrozenDatetime(datetime):
+    """datetime with a pinned now(), so get_metricas treats 2026-03 as current.
+
+    Carryover only runs for the current month, so every test below needs the
+    clock parked inside it. Subclassing keeps strptime and friends intact.
+    """
+    _now = datetime(2026, 3, 15, 12, 0)
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls._now
+
+
+class CarryoverTests(TestCase):
+    """Prior-month recurring items whose cash lands in THIS month.
+
+    Two states with deliberately different bases: `pending` is still a forecast
+    (expected), `paid_late` already happened (the real linked amount).
+    """
+
+    def setUp(self):
+        from api.models import BalanceAnchor
+        self.profile = Profile.objects.create(name='Tester')
+        self.account = Account.objects.create(
+            profile=self.profile, name='Checking', account_type='checking',
+        )
+        BalanceAnchor.objects.create(
+            profile=self.profile, date=date(2026, 2, 28),
+            balance=Decimal('10000.00'),
+        )
+
+    def _fixo(self, name, month_str, expected):
+        from api.models import RecurringMapping
+        tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name=name, template_type='Fixo',
+            default_limit=Decimal(expected),
+        )
+        return RecurringMapping.objects.create(
+            profile=self.profile, template=tpl, month_str=month_str,
+            expected_amount=Decimal(expected),
+        )
+
+    def _pay(self, mapping, when, amount, month_str):
+        from api.services import map_transaction_to_category
+        txn = Transaction.objects.create(
+            profile=self.profile, account=self.account, date=when,
+            description='PAGAMENTO', amount=Decimal(amount), month_str=month_str,
+        )
+        map_transaction_to_category(txn.id, mapping_id=mapping.id, profile=self.profile)
+        return txn
+
+    def _metricas(self, month_str='2026-03'):
+        with patch('api.services.datetime', _FrozenDatetime):
+            return get_metricas(month_str, profile=self.profile)
+
+    def test_unpaid_prior_month_bill_carries_at_expected(self):
+        self._fixo('AMIL', '2026-02', '979.00')
+        result = self._metricas()
+        self.assertAlmostEqual(result['carryover_pending'], 979.00, places=2)
+        self.assertAlmostEqual(result['carryover_paid_late'], 0.00, places=2)
+
+    def test_bill_paid_on_time_does_not_carry(self):
+        mapping = self._fixo('AMIL', '2026-02', '979.00')
+        self._pay(mapping, date(2026, 2, 27), '-979.40', '2026-02')
+        self.assertAlmostEqual(self._metricas()['carryover_debt'], 0.00, places=2)
+
+    def test_bill_paid_late_charges_what_actually_left_not_expected(self):
+        """The real defect behind the stuck −R$ 979: expected is a placeholder,
+        but the cash that left in March is what the balance must absorb."""
+        mapping = self._fixo('AMIL', '2026-02', '979.00')
+        self._pay(mapping, date(2026, 3, 10), '-1003.14', '2026-03')
+        result = self._metricas()
+        self.assertAlmostEqual(result['carryover_paid_late'], 1003.14, places=2)
+        self.assertAlmostEqual(result['carryover_pending'], 0.00, places=2)
+
+    def test_refund_linked_beside_the_late_payment_nets_out(self):
+        mapping = self._fixo('AMIL', '2026-02', '979.00')
+        self._pay(mapping, date(2026, 3, 10), '-1000.00', '2026-03')
+        self._pay(mapping, date(2026, 3, 12), '200.00', '2026-03')
+        self.assertAlmostEqual(self._metricas()['carryover_paid_late'], 800.00, places=2)
+
+    def test_payment_from_an_older_month_settles_the_debt(self):
+        mapping = self._fixo('AMIL', '2026-02', '979.00')
+        self._pay(mapping, date(2026, 1, 20), '-979.40', '2026-01')
+        self.assertAlmostEqual(self._metricas()['carryover_debt'], 0.00, places=2)
+
+    def test_a_link_to_a_future_month_is_a_plan_not_a_payment(self):
+        """A future-dated link used to suppress the carryover entirely — the
+        money has not moved yet, so the debt is still pending."""
+        mapping = self._fixo('AMIL', '2026-02', '979.00')
+        self._pay(mapping, date(2026, 5, 10), '-979.40', '2026-05')
+        self.assertAlmostEqual(self._metricas()['carryover_pending'], 979.00, places=2)
+
+    def test_skipped_prior_month_item_never_carries(self):
+        mapping = self._fixo('AMIL', '2026-02', '979.00')
+        mapping.status = 'skipped'
+        mapping.save()
+        self.assertAlmostEqual(self._metricas()['carryover_debt'], 0.00, places=2)
+
+    def test_items_are_itemized_so_the_row_can_name_its_cause(self):
+        self._fixo('AMIL', '2026-02', '979.00')
+        paid = self._fixo('LUZ', '2026-02', '350.00')
+        self._pay(paid, date(2026, 3, 5), '-415.27', '2026-03')
+        items = self._metricas()['carryover_items']
+        self.assertEqual(
+            [(i['name'], i['state'], i['amount']) for i in items],
+            [('AMIL', 'pending', 979.00), ('LUZ', 'paid_late', 415.27)],
+        )
+
+
+class CarryoverCardTests(TestCase):
+    """Each Cartao mapping carries its OWN invoice. Summing every card account
+    once per mapping charged the whole invoice N times over."""
+
+    def setUp(self):
+        from api.models import BalanceAnchor, RecurringMapping
+        self.profile = Profile.objects.create(name='Tester')
+        BalanceAnchor.objects.create(
+            profile=self.profile, date=date(2026, 2, 28),
+            balance=Decimal('10000.00'),
+        )
+        self.cards = {}
+        for name, spend in (('Mastercard Black', '3000.00'), ('Visa Infinite', '1000.00')):
+            acct = Account.objects.create(
+                profile=self.profile, name=name, account_type='credit_card',
+            )
+            self.cards[name] = acct
+            Transaction.objects.create(
+                profile=self.profile, account=acct, date=date(2026, 2, 10),
+                description='COMPRA', amount=-Decimal(spend), month_str='2026-02',
+            )
+
+    def _cartao(self, name, expected):
+        from api.models import RecurringMapping
+        tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name=name, template_type='Cartao',
+            default_limit=Decimal(expected),
+        )
+        return RecurringMapping.objects.create(
+            profile=self.profile, template=tpl, month_str='2026-02',
+            expected_amount=Decimal(expected),
+        )
+
+    def _metricas(self):
+        with patch('api.services.datetime', _FrozenDatetime):
+            return get_metricas('2026-03', profile=self.profile)
+
+    def test_two_unpaid_cards_carry_their_own_invoices_once(self):
+        self._cartao('Mastercard Black', '0.00')
+        self._cartao('Visa Infinite', '0.00')
+        # 3000 + 1000, NOT 2 x 4000.
+        self.assertAlmostEqual(self._metricas()['carryover_pending'], 4000.00, places=2)
+
+    def test_pluggy_bill_total_wins_over_the_purchase_sum(self):
+        """sync writes the bill's totalAmount into expected_amount, and
+        _fatura_total_for_month treats it as the invoice — carryover agrees."""
+        self._cartao('Mastercard Black', '2900.00')
+        self._cartao('Visa Infinite', '0.00')
+        self.assertAlmostEqual(self._metricas()['carryover_pending'], 3900.00, places=2)
+
+
+class CarryoverFloorTests(TestCase):
+    """2025 mappings were imported without transaction links, so an "unpaid"
+    2025 row means "never mapped", not "still owed"."""
+
+    def test_nothing_before_the_floor_ever_carries(self):
+        from api.models import BalanceAnchor, RecurringMapping
+
+        class _Jan2026(_FrozenDatetime):
+            _now = datetime(2026, 1, 15, 12, 0)
+
+        profile = Profile.objects.create(name='Tester')
+        BalanceAnchor.objects.create(
+            profile=profile, date=date(2025, 12, 31), balance=Decimal('10000.00'),
+        )
+        tpl = RecurringTemplate.objects.create(
+            profile=profile, name='UNICEUB', template_type='Fixo',
+            default_limit=Decimal('1700.00'),
+        )
+        RecurringMapping.objects.create(
+            profile=profile, template=tpl, month_str='2025-12',
+            expected_amount=Decimal('1700.00'),
+        )
+        with patch('api.services.datetime', _Jan2026):
+            result = get_metricas('2026-01', profile=profile)
+        self.assertAlmostEqual(result['carryover_debt'], 0.00, places=2)
+        self.assertEqual(result['carryover_items'], [])

@@ -18,6 +18,12 @@ from .models import (
 )
 
 
+# Carryover never reaches back before this month: 2025 mappings were imported
+# without transaction links, so an "unpaid" 2025 row means "never mapped", not
+# "still owed" — the real bank balance already absorbed those payments.
+CARRYOVER_MIN_MONTH = '2026-01'
+
+
 # The salary is transferred once per half of the work month. _weekdays_in_half
 # splits the month in two, so this is 2 by construction, not a preference.
 SALARY_PAYMENTS_PER_MONTH = 2
@@ -212,6 +218,12 @@ def _mapping_expected_amount(mapping):
     if mapping.template and not _template_active_in_month(mapping.template, mapping.month_str):
         return Decimal('0.00')
     return mapping.expected_amount or Decimal('0.00')
+
+
+def _mapping_display_name(mapping):
+    if mapping.is_custom:
+        return mapping.custom_name
+    return mapping.template.name if mapping.template else '?'
 
 
 def _linked_transactions(mapping):
@@ -2002,16 +2014,29 @@ def get_metricas(month_str, profile=None):
 
     a_pagar = a_pagar_fixo + a_pagar_invest + fatura_remaining
 
-    # Carryover debt: previous month's recurring items not paid within that month.
-    # Only for the CURRENT month — future months already account for pending
-    # items via the projection cascade (projected_balance).
-    # Checks ALL recurring types (Fixo, Cartao, Investimento), not just CC.
-    # Split into paid_late (paid from current month) vs still_pending.
+    # Carryover: previous month's recurring items that did not settle within that
+    # month, so their cash lands in THIS month instead. Only for the CURRENT month
+    # — future months already account for pending items via the projection cascade
+    # (projected_balance). Checks Fixo, Cartao and Investimento, never Income.
+    #
+    # Two states, deliberately measured on different bases:
+    #   paid_late — the money already left this month: use the ACTUAL linked amount
+    #   pending   — the money has yet to leave: use expected (the only estimate there is)
+    # Both reduce the starting balance (they are cash out of this month either way),
+    # but only `pending` is still a forecast. Consumers that already see real
+    # spending (saldo_projetado on an anchor) must subtract `pending` alone.
+    #
+    # Lookback is exactly one month, on purpose: the starting balance is the real
+    # bank balance at the end of the previous month, so anything older that was
+    # actually paid is already inside it. An older unpaid mapping means "never
+    # mapped", not "still owed" — aging those forward would invent debt.
     _prev_m = _month_str_add(month_str, -1)
     carryover_debt = Decimal('0')
     carryover_paid_late = Decimal('0')
     carryover_pending = Decimal('0')
-    if is_current:
+    carryover_items = []
+    if is_current and _prev_m >= CARRYOVER_MIN_MONTH:
+        _cc_acct_by_name = {a.name: a for a in cc_accounts}
         _prev_mappings = RecurringMapping.objects.filter(
             month_str=_prev_m, profile=profile,
         ).exclude(
@@ -2040,29 +2065,61 @@ def get_metricas(month_str, profile=None):
                 )
             if _paid_in_own_month:
                 continue
-            _paid_from_other = any(
-                _t.month_str != month_str for _t in _cm.cross_month_transactions.all()
+            _cur_txns = [
+                _t for _t in _cm.cross_month_transactions.all()
+                if _t.month_str == month_str
+            ]
+            _paid_from_current = bool(_cur_txns)
+            # Only a payment made BEFORE this month settles the debt elsewhere. A
+            # link to a future month is a plan, not a payment — it must not
+            # suppress the carryover.
+            _paid_from_past = any(
+                _t.month_str < month_str for _t in _cm.cross_month_transactions.all()
             )
-            _paid_from_current = any(
-                _t.month_str == month_str for _t in _cm.cross_month_transactions.all()
-            )
-            if _paid_from_other and not _paid_from_current:
+            if _paid_from_past and not _paid_from_current:
                 continue  # Paid from an older month, already reflected in past balances
-            # Determine expected amount
-            if _ttype == 'Cartao':
-                _prev_fatura = Decimal('0')
-                for cc_acct in cc_accounts:
-                    q = _build_cc_fatura_query_single(cc_acct.id, _prev_m, profile)
-                    _prev_fatura += abs(Transaction.objects.filter(q).aggregate(
-                        total=Sum('amount'))['total'] or Decimal('0'))
-                _debt_amount = _prev_fatura
+            if _paid_from_current:
+                # Already paid — the real amount that left the account, not the
+                # expected placeholder (AMIL: R$ 1.003,14 paid vs R$ 979 expected).
+                # Net, not sum-of-abs: a refund linked alongside the payment is an
+                # inflow and must reduce the cash out, not add to it.
+                _debt_amount = max(
+                    Decimal('0'), -sum((_t.amount for _t in _cur_txns), Decimal('0'))
+                )
+            elif _ttype == 'Cartao':
+                # Same precedence as _fatura_total_for_month: the Pluggy bill
+                # totalAmount (written into expected_amount by sync) is the
+                # invoice; reconstructing it from purchases is only a fallback.
+                # And only THIS mapping's card — summing every cc account here
+                # charged the whole invoice once per Cartao mapping.
+                _debt_amount = _mapping_expected_amount(_cm)
+                if _debt_amount <= 0:
+                    _acct = _cc_acct_by_name.get(
+                        _cm.template.name if _cm.template else _cm.custom_name
+                    )
+                    if _acct is not None:
+                        q = _build_cc_fatura_query_single(_acct.id, _prev_m, profile)
+                        _debt_amount = abs(Transaction.objects.filter(q).aggregate(
+                            total=Sum('amount'))['total'] or Decimal('0'))
             else:
                 _debt_amount = _mapping_expected_amount(_cm) or (_cm.template.default_limit if _cm.template else Decimal('0'))
+            if _debt_amount <= 0:
+                continue
             carryover_debt += _debt_amount
             if _paid_from_current:
                 carryover_paid_late += _debt_amount
             else:
                 carryover_pending += _debt_amount
+            carryover_items.append({
+                'mapping_id': str(_cm.id),
+                'name': _mapping_display_name(_cm),
+                'type': _ttype,
+                'month_str': _prev_m,
+                'state': 'paid_late' if _paid_from_current else 'pending',
+                'amount': float(_debt_amount),
+                'expected': float(_mapping_expected_amount(_cm)),
+            })
+        carryover_items.sort(key=lambda i: -i['amount'])
 
     # =====================================================================
     # 12. BALANCE OVERRIDE + SALDO PROJETADO
@@ -2138,8 +2195,13 @@ def get_metricas(month_str, profile=None):
         # Also subtract carryover_pending (unpaid prior-month items still due).
         saldo_projetado = Decimal(str(effective_balance)) + a_entrar - a_pagar - carryover_pending
     elif is_current and prev_checking is not None:
-        # Current month without BO: prev real balance + income - all expenses
-        saldo_projetado = prev_checking + entradas_projetadas - gastos_projetados
+        # Current month without BO: prev real balance + income - all expenses.
+        # Subtracts the FULL carryover, unlike the anchor branch above: prev_checking
+        # is the previous month's EOM balance, so it predates a late payment made
+        # this month, and that payment is cross-month-linked out of
+        # gastos_projetados. Pending and paid_late are both still missing here.
+        saldo_projetado = (prev_checking + entradas_projetadas - gastos_projetados
+                           - carryover_debt)
     elif not is_current:
         # Closed month without balance anchor — no reliable data
         saldo_projetado = None
@@ -2318,6 +2380,8 @@ def get_metricas(month_str, profile=None):
         'carryover_debt': float(carryover_debt),
         'carryover_paid_late': float(carryover_paid_late),
         'carryover_pending': float(carryover_pending),
+        'carryover_month': _prev_m if carryover_items else None,
+        'carryover_items': carryover_items,
     }
 
     # Overdraft interest estimate: Itaú Personnalité cheque especial

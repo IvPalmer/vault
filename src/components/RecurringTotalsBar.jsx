@@ -4,8 +4,16 @@ import { useMonth } from '../context/MonthContext'
 import api from '../api/client'
 import styles from './RecurringTotalsBar.module.css'
 
+const MONTH_ABBR = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
+
 function fmt(n) {
   return Math.abs(n).toLocaleString('pt-BR', { maximumFractionDigits: 0 })
+}
+
+function fmtMonth(monthStr) {
+  if (!monthStr) return 'mês ant.'
+  const [y, m] = monthStr.split('-')
+  return `${MONTH_ABBR[Number(m) - 1]}/${y.slice(2)}`
 }
 
 function TotalRow({ label, expected, actual, paid, pending, color, isIncome, hint, expectedLabel }) {
@@ -82,12 +90,24 @@ function RecurringTotalsBar() {
   const cartaoForBudget = metricasData?.fatura_total != null ? metricasData.fatura_total : cartao.expected
   const cartaoPaid = cartao.actual
 
-  // Starting balance: carry-over from previous month, minus any late CC payments
+  // Starting balance: carry-over from previous month, minus prior-month items
+  // whose cash lands in this month. Both states reduce it, but they mean
+  // different things — "pendente" is still owed, "pago com atraso" already left
+  // the account — so they get their own lines instead of one "Pendências" lump.
   const rawStarting = metricasData?.is_future
     ? (metricasData?.projected_balance ?? 0)
     : (metricasData?.prev_month_saldo ?? 0)
   const carryoverDebt = metricasData?.carryover_debt ?? 0
+  const carryoverPending = metricasData?.carryover_pending ?? 0
+  const carryoverPaidLate = metricasData?.carryover_paid_late ?? 0
+  const carryoverItems = metricasData?.carryover_items || []
+  const carryoverMonth = metricasData?.carryover_month
   const startingBalance = rawStarting - carryoverDebt
+
+  const itemsTitle = (state) => carryoverItems
+    .filter((i) => i.state === state)
+    .map((i) => `${i.name}: R$ ${fmt(i.amount)}`)
+    .join('\n')
   // Use fixo_for_budget (excludes CC-billed fixo already in fatura) to avoid double-counting
   const fixoForBudget = metricasData?.fixo_for_budget != null ? metricasData.fixo_for_budget : fixo.expected
   const sobra = startingBalance + income.expected - fixoForBudget - investExpected - cartaoForBudget
@@ -100,9 +120,14 @@ function RecurringTotalsBar() {
           <span className={styles.totalsExpected}>
             Conta: <strong style={{ color: rawStarting >= 0 ? 'var(--color-green)' : 'var(--color-red)' }}>R$ {fmt(rawStarting)}</strong>
           </span>
-          {carryoverDebt > 0 && (
-            <span className={styles.totalsActual}>
-              Pendências mês ant.: <strong style={{ color: 'var(--color-red)' }}>−R$ {fmt(carryoverDebt)}</strong>
+          {carryoverPending > 0 && (
+            <span className={styles.totalsActual} title={itemsTitle('pending')}>
+              Pendente de {fmtMonth(carryoverMonth)}: <strong style={{ color: 'var(--color-red)' }}>−R$ {fmt(carryoverPending)}</strong>
+            </span>
+          )}
+          {carryoverPaidLate > 0 && (
+            <span className={styles.totalsActual} title={itemsTitle('paid_late')}>
+              Pago neste mês (ref. {fmtMonth(carryoverMonth)}): <strong style={{ color: 'var(--color-orange)' }}>−R$ {fmt(carryoverPaidLate)}</strong>
             </span>
           )}
           <span className={styles.totalsStatus}>
