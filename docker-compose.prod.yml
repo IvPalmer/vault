@@ -114,6 +114,9 @@ services:
         # Phantom-duplicate sentinel: runs 30 minutes after each Pluggy sync.
         # Logs counts; exits 1 if rows > 5 OR value > R$500 so cron logs flag regressions.
         echo "30 8 * * * . /etc/cron_env && cd /app && python manage.py check_phantom_duplicates --max-rows 5 --max-value 500 >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        # Invariant audit: states the pipeline can only reach by regressing.
+        # Runs last so it sees the post-dedup, post-rebucket world.
+        echo "35 8 * * * . /etc/cron_env && cd /app && python manage.py audit_sync >> /proc/1/fd/1 2>&1" >> /tmp/crontab
         crontab /tmp/crontab
         echo "cron started: $$SYNC_SCHEDULE"
         cron -f

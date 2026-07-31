@@ -1180,3 +1180,184 @@ class InternalTransferDetectionTests(TestCase):
             'Pagamento recebido',
         ):
             self.assertTrue(self._flag(desc), desc)
+
+
+class AuditSyncTests(TestCase):
+    """The sync pipeline's failures are silent — flags and categories are
+    derived from descriptions Pluggy rewrites, written once at INSERT and never
+    revisited. These are the states that mean something regressed."""
+
+    def setUp(self):
+        from api.management.commands.audit_sync import Command
+        from api.models import Subcategory
+        self.cmd = Command()
+        self.profile = Profile.objects.create(name='Tester')
+        self.account = Account.objects.create(
+            profile=self.profile, name='Visa', account_type='credit_card',
+        )
+        self.saude = Category.objects.create(profile=self.profile, name='Saude')
+        self.compras = Category.objects.create(profile=self.profile, name='Compras Gerais')
+        self.farmacia = Subcategory.objects.create(category=self.saude, name='Farmacia')
+
+    def _txn(self, **kw):
+        base = dict(
+            profile=self.profile, account=self.account, date=date(2026, 3, 10),
+            description='COMPRA', amount=Decimal('-100.00'), month_str='2026-03',
+        )
+        base.update(kw)
+        return Transaction.objects.create(**base)
+
+    def test_a_flags_a_subcategory_with_no_category(self):
+        self._txn(category=None, subcategory=self.farmacia)
+        count, _ = self.cmd._check_a(self.profile, '2026-01')
+        self.assertEqual(count, 1)
+
+    def test_a_flags_a_category_that_is_not_the_subcategorys_parent(self):
+        self._txn(category=self.compras, subcategory=self.farmacia)
+        count, lines = self.cmd._check_a(self.profile, '2026-01')
+        self.assertEqual(count, 1)
+        self.assertIn('Farmacia', lines[0])
+
+    def test_a_accepts_a_matching_pair(self):
+        self._txn(category=self.saude, subcategory=self.farmacia)
+        self.assertEqual(self.cmd._check_a(self.profile, '2026-01')[0], 0)
+
+    def test_a_ignores_backlog_before_the_cutoff(self):
+        self._txn(category=None, subcategory=self.farmacia,
+                  date=date(2025, 3, 10), month_str='2025-03')
+        self.assertEqual(self.cmd._check_a(self.profile, '2026-01')[0], 0)
+
+    def test_b_flags_a_fixo_paid_by_a_supposed_internal_transfer(self):
+        """The car-financing boleto reads like a bill payment, so the sync
+        flagged it internal and five months of real spending vanished."""
+        from api.models import RecurringMapping
+        tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name='FINANCIAMENTO CARRO', template_type='Fixo',
+            default_limit=Decimal('1633.31'),
+        )
+        m = RecurringMapping.objects.create(
+            profile=self.profile, template=tpl, month_str='2026-03',
+            expected_amount=Decimal('1633.31'),
+        )
+        m.transactions.add(self._txn(
+            amount=Decimal('-1633.31'), description='PAG BOLETO BANCO ITAUCARD',
+            is_internal_transfer=True,
+        ))
+        self.assertEqual(self.cmd._check_b(self.profile)[0], 1)
+
+    def test_b_leaves_a_hand_made_custom_bucket_alone(self):
+        """A custom mapping is a trip/event bucket that legitimately groups
+        transfers — it carries no invariant."""
+        from api.models import RecurringMapping
+        m = RecurringMapping.objects.create(
+            profile=self.profile, month_str='2026-03', is_custom=True,
+            custom_name='DDD GASTOS', custom_type='Fixo',
+            expected_amount=Decimal('1000.00'),
+        )
+        m.transactions.add(self._txn(is_internal_transfer=True))
+        self.assertEqual(self.cmd._check_b(self.profile)[0], 0)
+
+    def test_b_reads_a_legacy_fk_link_too(self):
+        from api.models import RecurringMapping
+        tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name='LUZ', template_type='Fixo',
+            default_limit=Decimal('350.00'),
+        )
+        RecurringMapping.objects.create(
+            profile=self.profile, template=tpl, month_str='2026-03',
+            expected_amount=Decimal('350.00'),
+            transaction=self._txn(is_internal_transfer=True),
+        )
+        self.assertEqual(self.cmd._check_b(self.profile)[0], 1)
+
+    def test_d_flags_the_same_position_on_one_invoice(self):
+        for d in (date(2026, 1, 30), date(2026, 2, 23)):
+            self._txn(date=d, month_str=d.strftime('%Y-%m'), invoice_month='2026-03',
+                      amount=Decimal('-608.00'), description='ACUAS FITNESS 06/15',
+                      installment_info='6/15')
+        count, lines = self.cmd._check_d(self.profile)
+        self.assertEqual(count, 1)
+        self.assertIn('6/15', lines[0])
+        self.assertIn('2026-03', lines[0])
+
+    def test_d_keeps_distinct_positions_apart(self):
+        for pos, inv in (('6/15', '2026-03'), ('7/15', '2026-04')):
+            self._txn(invoice_month=inv, amount=Decimal('-608.00'),
+                      description=f'ACUAS FITNESS {pos}', installment_info=pos)
+        self.assertEqual(self.cmd._check_d(self.profile)[0], 0)
+
+    def test_e_flags_a_row_the_dedup_cannot_see(self):
+        self._txn(installment_info='6/15', is_installment=False)
+        self.assertEqual(self.cmd._check_e(self.profile)[0], 1)
+
+
+class DedupMergeSafetyTests(TestCase):
+    """dedup_installments deletes rows from a cron job. What survives the merge
+    has to carry everything the deleted row was holding."""
+
+    def setUp(self):
+        from api.management.commands.dedup_installments import Command
+        from api.models import Subcategory
+        self.cmd = Command()
+        self.profile = Profile.objects.create(name='Tester')
+        self.account = Account.objects.create(
+            profile=self.profile, name='Visa', account_type='credit_card',
+        )
+        self.saude = Category.objects.create(profile=self.profile, name='Saude')
+        self.compras = Category.objects.create(profile=self.profile, name='Compras Gerais')
+        self.sub = Subcategory.objects.create(category=self.saude, name='Academia')
+
+    def _txn(self, **kw):
+        base = dict(
+            profile=self.profile, account=self.account, date=date(2026, 3, 10),
+            description='ACUAS FITNESS 06/15', amount=Decimal('-608.00'),
+            month_str='2026-03', installment_info='6/15',
+        )
+        base.update(kw)
+        return Transaction.objects.create(**base)
+
+    def test_the_keeper_inherits_the_category_of_the_deleted_row(self):
+        src = self._txn(category=self.saude, subcategory=self.sub,
+                        is_manually_categorized=True)
+        dst = self._txn(category=None)
+        self.cmd._transfer_links(src, dst)
+        dst.refresh_from_db()
+        self.assertEqual(dst.category_id, self.saude.id)
+        self.assertEqual(dst.subcategory_id, self.sub.id)
+        self.assertTrue(dst.is_manually_categorized)
+
+    def test_an_already_categorized_keeper_is_not_overwritten(self):
+        src = self._txn(category=self.saude)
+        dst = self._txn(category=self.compras)
+        self.cmd._transfer_links(src, dst)
+        dst.refresh_from_db()
+        self.assertEqual(dst.category_id, self.compras.id)
+
+    def test_two_conflicting_manual_decisions_are_a_conflict(self):
+        src = self._txn(category=self.saude, is_manually_categorized=True)
+        dst = self._txn(category=self.compras, is_manually_categorized=True)
+        self.assertTrue(self.cmd._categorization_conflict(src, dst))
+
+    def test_one_manual_decision_is_not_a_conflict(self):
+        src = self._txn(category=self.saude, is_manually_categorized=True)
+        dst = self._txn(category=self.compras)
+        self.assertFalse(self.cmd._categorization_conflict(src, dst))
+
+    def test_actual_is_recomputed_when_both_copies_shared_a_mapping(self):
+        """Both duplicates linked to one mapping: dropping one shrinks the set,
+        leaving actual_amount at the doubled value."""
+        from api.models import RecurringMapping
+        tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name='ACADEMIA', template_type='Fixo',
+            default_limit=Decimal('608.00'),
+        )
+        m = RecurringMapping.objects.create(
+            profile=self.profile, template=tpl, month_str='2026-03',
+            expected_amount=Decimal('608.00'), actual_amount=Decimal('1216.00'),
+        )
+        src, dst = self._txn(), self._txn()
+        m.transactions.add(src, dst)
+        src.delete()
+        self.cmd._recompute_actual(m)
+        m.refresh_from_db()
+        self.assertEqual(m.actual_amount, Decimal('608.00'))

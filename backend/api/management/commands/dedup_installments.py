@@ -104,12 +104,44 @@ class Command(BaseCommand):
                     inst_winner[ident] = (t['id'], has_bill)
         return live_ext, ext_to_ident, {k: v[0] for k, v in inst_winner.items()}
 
+    @staticmethod
+    def _categorization_conflict(src, dst):
+        """True when merging would have to pick between two human decisions."""
+        return (src.is_manually_categorized and dst.is_manually_categorized
+                and src.category_id != dst.category_id)
+
     def _transfer_links(self, src, dst):
+        """Move every link off `src` onto `dst`, and carry categorization when
+        the keeper has none — the row being deleted may be the categorized one
+        (the keeper is chosen by link count first), and category drives every
+        per-category total. Returns the mappings whose linked set changed."""
         RecurringMapping.objects.filter(transaction=src).update(transaction=dst)
+        touched = set()
         for m in src.recurring_mapping_links.all():
             m.transactions.add(dst)
+            touched.add(m)
         for m in src.cross_month_links.all():
             m.cross_month_transactions.add(dst)
+            touched.add(m)
+        if src.category_id and not dst.category_id:
+            dst.category_id = src.category_id
+            dst.subcategory_id = src.subcategory_id
+            dst.is_manually_categorized = src.is_manually_categorized
+            dst.save(update_fields=['category', 'subcategory',
+                                    'is_manually_categorized'])
+        return touched
+
+    @staticmethod
+    def _recompute_actual(mapping):
+        """Both duplicates could be linked to the same mapping, so dropping one
+        shrinks the linked set and leaves actual_amount stale (doubled). Same
+        Income-vs-expense rule the service layer uses."""
+        ctype = mapping.custom_type if mapping.is_custom else (
+            mapping.template.template_type if mapping.template else '')
+        txns = mapping.transactions.all()
+        mapping.actual_amount = (sum(t.amount for t in txns) if ctype == 'Income'
+                                 else sum(abs(t.amount) for t in txns))
+        mapping.save(update_fields=['actual_amount'])
 
     def handle(self, *args, **opts):
         apply = opts['apply']
@@ -183,6 +215,16 @@ class Command(BaseCommand):
                 if keep_id is not None:
                     decided[t.id] = keep_id
 
+            # Never merge across two conflicting human decisions — that would
+            # silently discard one of them. Leave the pair for review.
+            for del_id, keep_id in list(decided.items()):
+                if self._categorization_conflict(by_id[del_id], by_id[keep_id]):
+                    self.stdout.write(self.style.WARNING(
+                        f'  SKIP {by_id[del_id].date} {by_id[del_id].description[:26]}: '
+                        f'categorização manual conflitante '
+                        f'({by_id[del_id].category} vs {by_id[keep_id].category})'))
+                    del decided[del_id]
+
             for del_id, keep_id in sorted(decided.items(), key=lambda kv: str(by_id[kv[0]].date)):
                 d = by_id[del_id]
                 self.stdout.write(
@@ -193,11 +235,14 @@ class Command(BaseCommand):
 
             if apply and decided:
                 with dbtx.atomic():
+                    touched = set()
                     for del_id, keep_id in decided.items():
                         d = by_id[del_id]
                         keep = by_id[keep_id]
-                        self._transfer_links(d, keep)
+                        touched |= self._transfer_links(d, keep)
                         d.delete()
+                    for m in touched:
+                        self._recompute_actual(m)
                 self.stdout.write(self.style.SUCCESS(f'  deleted {len(decided)} rows'))
 
         if apply:
