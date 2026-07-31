@@ -1146,3 +1146,37 @@ class OrcamentoRefundBreakdownTests(TestCase):
         self.assertEqual(
             [s['name'] for s in self._card()['subcategories']], ['Compras'],
         )
+
+
+class InternalTransferDetectionTests(TestCase):
+    """The car-financing boleto is issued by Banco Itaucard and reads like a
+    bill payment. Flagging it internal erased R$ 1.633,31 of real spending from
+    five months — it never reached gastos, nor the budget cards."""
+
+    def _flag(self, description):
+        from api.management.commands.sync_pluggy import _detect_internal_transfer
+        return _detect_internal_transfer(description, Decimal('-1633.31'))
+
+    def test_itaucard_boleto_is_real_spending(self):
+        self.assertFalse(self._flag('PAG BOLETO BANCO ITAUCARD S.A.'))
+
+    def test_the_description_variants_of_the_same_boleto_agree(self):
+        """Pluggy rewrote this description four times across the series; every
+        variant must land on the same answer."""
+        for desc in (
+            'PAG BOLETO BANCO ITAUCARD S.A.',
+            'PAG BOLETO  BANCO ITAUCA',
+            'PAG TIT INT 090000000000',
+            'PAG BOLETO BANCO ITAU UNIBANCO HOLDING',
+            'Pagamento de boleto BANCO ITAU UNIBANCO HOLDING SA',
+        ):
+            self.assertFalse(self._flag(desc), desc)
+
+    def test_real_bill_payments_are_still_internal(self):
+        for desc in (
+            'PAG BOLETO ITAU UNIBANCO HOLDING S.A.',
+            'Pagamento de fatura',
+            'Fatura paga',
+            'Pagamento recebido',
+        ):
+            self.assertTrue(self._flag(desc), desc)

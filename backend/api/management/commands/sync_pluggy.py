@@ -72,8 +72,13 @@ def _detect_internal_transfer(description, amount, raw_description=''):
         'resgate',
         'aplicacao',
         'pag boleto itau unibanco',
-        'pag boleto banco itaucard',
-        'pag boleto itaucard',
+        # NOT 'pag boleto (banco )itaucard': the car-financing boleto is issued by
+        # Banco Itaucard and reads exactly like a bill payment. Every ITAUCARD row
+        # in this history is the financing (R$ 1.633,31 x5), never a bill — the
+        # real bill payments read "PAG BOLETO ITAU UNIBANCO HOLDING" or "Int Mc
+        # Black". Flagging them internal erased real spending from 5 months.
+        # A bill payment that ever does read ITAUCARD is still caught downstream:
+        # _cartao_paid_txn_ids drops any txn linked to a Cartao mapping.
         'pagamento recebido',  # CC payment received (from checking)
     ]
     return any(p in combined for p in patterns)
