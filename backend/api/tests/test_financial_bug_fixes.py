@@ -1361,3 +1361,125 @@ class DedupMergeSafetyTests(TestCase):
         self.cmd._recompute_actual(m)
         m.refresh_from_db()
         self.assertEqual(m.actual_amount, Decimal('608.00'))
+
+
+class OpeningBalanceAdvanceTests(TestCase):
+    """A salary transferred on the 30th sits in the previous month's closing
+    balance AND in this month's expected income. Counting both is R$ 22.000 of
+    money that does not exist."""
+
+    def setUp(self):
+        from api.models import BalanceAnchor
+        self.profile = Profile.objects.create(name='Tester')
+        self.account = Account.objects.create(
+            profile=self.profile, name='Checking', account_type='checking',
+        )
+        # Real bank closing balance for February, salary already inside it.
+        BalanceAnchor.objects.create(
+            profile=self.profile, date=date(2026, 2, 28),
+            balance=Decimal('42000.00'), source_file='statement:itau-022026',
+        )
+        self.tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name='FS', template_type='Income',
+            default_limit=Decimal('44000.00'),
+        )
+
+    def _mapping(self):
+        from api.models import RecurringMapping
+        return RecurringMapping.objects.create(
+            profile=self.profile, template=self.tpl, month_str='2026-03',
+            expected_amount=Decimal('44000.00'),
+        )
+
+    def _pay_early(self, mapping, amount):
+        from api.services import map_transaction_to_category
+        txn = Transaction.objects.create(
+            profile=self.profile, account=self.account, date=date(2026, 2, 28),
+            description='SISPAG PIX', amount=Decimal(amount), month_str='2026-02',
+        )
+        map_transaction_to_category(txn.id, mapping_id=mapping.id, profile=self.profile)
+        return txn
+
+    def test_salary_received_early_leaves_the_opening_balance(self):
+        from api.services import get_metricas
+        self._pay_early(self._mapping(), '22000.00')
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertAlmostEqual(result['prev_month_saldo'], 42000.00, places=2)
+        self.assertAlmostEqual(result['prev_month_advance'], 22000.00, places=2)
+        self.assertAlmostEqual(result['opening_balance'], 20000.00, places=2)
+
+    def test_nothing_early_means_opening_equals_the_bank(self):
+        from api.services import get_metricas
+        self._mapping()
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertAlmostEqual(result['prev_month_advance'], 0.00, places=2)
+        self.assertAlmostEqual(result['opening_balance'], 42000.00, places=2)
+        self.assertEqual(result['opening_balance'], result['prev_month_saldo'])
+
+    def test_a_bill_paid_early_is_added_back(self):
+        """Mirror case: the closing balance already lost it, and this month's
+        budget still charges it — so the opening balance has to get it back."""
+        from api.models import RecurringMapping
+        from api.services import get_metricas
+        tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name='ALUGUEL', template_type='Fixo',
+            default_limit=Decimal('5000.00'),
+        )
+        m = RecurringMapping.objects.create(
+            profile=self.profile, template=tpl, month_str='2026-03',
+            expected_amount=Decimal('5000.00'),
+        )
+        self._pay_early(m, '-5000.00')
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertAlmostEqual(result['prev_month_advance'], -5000.00, places=2)
+        self.assertAlmostEqual(result['opening_balance'], 47000.00, places=2)
+
+    def test_the_same_transaction_is_netted_once(self):
+        """cross_month_transactions is a subset of transactions — reading both
+        without deduping would net the salary twice."""
+        from api.services import _prev_month_advance
+        m = self._mapping()
+        txn = self._pay_early(m, '22000.00')
+        self.assertTrue(m.transactions.filter(id=txn.id).exists())
+        self.assertTrue(m.cross_month_transactions.filter(id=txn.id).exists())
+        self.assertAlmostEqual(
+            float(_prev_month_advance('2026-03', self.profile)), 22000.00, places=2)
+
+    def test_an_older_month_transaction_does_not_count(self):
+        """Only the immediately previous month sits in that closing balance."""
+        from api.services import _prev_month_advance, map_transaction_to_category
+        m = self._mapping()
+        txn = Transaction.objects.create(
+            profile=self.profile, account=self.account, date=date(2026, 1, 20),
+            description='SISPAG PIX', amount=Decimal('22000.00'), month_str='2026-01',
+        )
+        map_transaction_to_category(txn.id, mapping_id=m.id, profile=self.profile)
+        self.assertAlmostEqual(
+            float(_prev_month_advance('2026-03', self.profile)), 0.00, places=2)
+
+    def test_a_card_purchase_never_adjusts_the_checking_balance(self):
+        """The anchor is a checking balance. A card purchase linked in from last
+        month never left checking — the money leaves when the bill is paid."""
+        from api.services import _prev_month_advance, map_transaction_to_category
+        card = Account.objects.create(
+            profile=self.profile, name='Visa', account_type='credit_card',
+        )
+        m = self._mapping()
+        txn = Transaction.objects.create(
+            profile=self.profile, account=card, date=date(2026, 2, 20),
+            description='COMPRA', amount=Decimal('-800.00'), month_str='2026-02',
+        )
+        map_transaction_to_category(txn.id, mapping_id=m.id, profile=self.profile)
+        self.assertAlmostEqual(
+            float(_prev_month_advance('2026-03', self.profile)), 0.00, places=2)
+
+    def test_the_envelope_does_not_count_the_early_salary_twice(self):
+        """End to end. Bank holds 42.000, of which 22.000 is this month's salary
+        arriving early; expected income 44.000; no fixo and no card. Envelope =
+        20.000 opening + 44.000 income − 4.400 savings goal = 59.600. Reading
+        the bank figure instead of the opening would give 81.600."""
+        from api.services import get_metricas
+        self._pay_early(self._mapping(), '22000.00')
+        result = get_metricas('2026-03', profile=self.profile)
+        self.assertAlmostEqual(result['invest_expected_total'], 4400.00, places=2)
+        self.assertAlmostEqual(result['orcamento_variavel'], 59600.00, places=2)

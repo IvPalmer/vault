@@ -94,15 +94,18 @@ function RecurringTotalsBar() {
   // whose cash lands in this month. Both states reduce it, but they mean
   // different things — "pendente" is still owed, "pago com atraso" already left
   // the account — so they get their own lines instead of one "Pendências" lump.
+  // "Conta" is the bank's closing balance; the opening balance nets out money
+  // received or paid early that this month also counts (prev_month_advance).
   const rawStarting = metricasData?.is_future
     ? (metricasData?.projected_balance ?? 0)
     : (metricasData?.prev_month_saldo ?? 0)
+  const advance = metricasData?.is_future ? 0 : (metricasData?.prev_month_advance ?? 0)
   const carryoverDebt = metricasData?.carryover_debt ?? 0
   const carryoverPending = metricasData?.carryover_pending ?? 0
   const carryoverPaidLate = metricasData?.carryover_paid_late ?? 0
   const carryoverItems = metricasData?.carryover_items || []
   const carryoverMonth = metricasData?.carryover_month
-  const startingBalance = rawStarting - carryoverDebt
+  const startingBalance = rawStarting - advance - carryoverDebt
 
   const itemsTitle = (state) => carryoverItems
     .filter((i) => i.state === state)
@@ -114,12 +117,24 @@ function RecurringTotalsBar() {
 
   return (
     <div className={styles.totalsBar}>
-      {(startingBalance !== 0 || carryoverDebt > 0) && (
+      {(startingBalance !== 0 || carryoverDebt > 0 || advance !== 0) && (
         <div className={styles.totalsRow}>
           <span className={styles.totalsLabel} style={{ color: 'var(--color-text-secondary)' }}>Saldo Inicial</span>
           <span className={styles.totalsExpected}>
             Conta: <strong style={{ color: rawStarting >= 0 ? 'var(--color-green)' : 'var(--color-red)' }}>R$ {fmt(rawStarting)}</strong>
           </span>
+          {advance !== 0 && (
+            <span
+              className={styles.totalsActual}
+              title={advance > 0
+                ? 'Entrada recebida no mês anterior que este mês já conta como receita'
+                : 'Despesa paga no mês anterior que este mês já orça'}
+            >
+              {advance > 0 ? 'Recebido antes' : 'Pago antes'}: <strong style={{ color: 'var(--color-orange)' }}>
+                {advance > 0 ? '−' : '+'}R$ {fmt(advance)}
+              </strong>
+            </span>
+          )}
           {carryoverPending > 0 && (
             <span className={styles.totalsActual} title={itemsTitle('pending')}>
               Pendente de {fmtMonth(carryoverMonth)}: <strong style={{ color: 'var(--color-red)' }}>−R$ {fmt(carryoverPending)}</strong>

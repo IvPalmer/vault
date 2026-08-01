@@ -220,6 +220,43 @@ def _mapping_expected_amount(mapping):
     return mapping.expected_amount or Decimal('0.00')
 
 
+def _prev_month_advance(month_str, profile):
+    """Signed total of PREVIOUS-month transactions this month already claims.
+
+    A salary transferred on the 30th sits inside the previous month's closing
+    balance AND inside this month's expected income (it is cross-month-linked
+    forward), so an opening balance that keeps it counts the money twice.
+    Symmetric for a bill paid early: the closing balance already lost it while
+    this month's budget still charges it, so it has to be added back.
+
+    Returns a signed Decimal: subtract it from the closing balance to get this
+    month's true opening balance.
+
+    CHECKING ONLY. The balance being adjusted is a checking-account anchor, so a
+    card purchase linked in from last month must not touch it — that money never
+    left checking; it leaves when the bill is paid.
+    """
+    prev_m = _month_str_add(month_str, -1)
+    checking_ids = set(
+        Account.objects.filter(profile=profile, account_type='checking')
+        .values_list('id', flat=True)
+    )
+    if not checking_ids:
+        return Decimal('0.00')
+    total = Decimal('0.00')
+    mappings = RecurringMapping.objects.filter(
+        month_str=month_str, profile=profile,
+    ).prefetch_related('cross_month_transactions')
+    seen = set()
+    for m in mappings:
+        for t in m.cross_month_transactions.all():
+            if (t.month_str == prev_m and t.id not in seen
+                    and t.account_id in checking_ids):
+                seen.add(t.id)
+                total += t.amount
+    return total
+
+
 def _mapping_display_name(mapping):
     if mapping.is_custom:
         return mapping.custom_name
@@ -2150,11 +2187,24 @@ def get_metricas(month_str, profile=None):
     if not is_current:
         checking_balance_eom = _get_checking_balance_eom(month_str, profile=profile)
 
-    # Prev month's real checking balance (for cascade and frontend subtitle)
-    prev_checking = _get_checking_balance_eom(
+    # Prev month's real checking balance, and this month's OPENING balance —
+    # the same number only when nothing was received or paid early. Money the
+    # previous month already holds but this month also claims (cross-month
+    # links) has to come out, or it is counted on both sides. Both are exposed:
+    # the bank figure is the truth about the account, the opening figure is what
+    # this month can actually plan with.
+    # `prev_month_saldo` keeps meaning the BANK figure — MetricasSection reads it
+    # as "saldo em conta" and nothing about the account changed. The netted
+    # number is a new field, `opening_balance`, and only the budget math uses it.
+    prev_checking_bank = _get_checking_balance_eom(
         _month_str_add(month_str, -1), profile=profile
     )
-    prev_month_saldo_float = float(prev_checking) if prev_checking is not None else None
+    prev_month_advance = _prev_month_advance(month_str, profile)
+    prev_checking = (None if prev_checking_bank is None
+                     else prev_checking_bank - prev_month_advance)
+    prev_month_saldo_float = (float(prev_checking_bank)
+                              if prev_checking_bank is not None else None)
+    opening_balance_float = float(prev_checking) if prev_checking is not None else None
 
     # Determine if this is a future month (after today)
     is_future = (year > today.year or (year == today.year and month > today.month))
@@ -2276,8 +2326,8 @@ def get_metricas(month_str, profile=None):
     # balance, _get_checking_balance_eom returns None there too.)
     if is_future and projected_balance is not None:
         _orc_starting = float(projected_balance)
-    elif prev_month_saldo_float is not None:
-        _orc_starting = prev_month_saldo_float
+    elif opening_balance_float is not None:
+        _orc_starting = opening_balance_float
     else:
         _orc_starting = float(balance_override) if balance_override is not None else 0.0
     _orc_starting -= float(carryover_debt)
@@ -2342,6 +2392,8 @@ def get_metricas(month_str, profile=None):
         'projected_balance': projected_balance,
         'is_future': is_future,
         'prev_month_saldo': prev_month_saldo_float,
+        'opening_balance': opening_balance_float,
+        'prev_month_advance': float(prev_month_advance),
         'checking_balance_eom': float(checking_balance_eom) if checking_balance_eom is not None else None,
         'entradas_atuais': float(entradas_atuais),
         'entradas_projetadas': float(entradas_projetadas),
@@ -2350,8 +2402,10 @@ def get_metricas(month_str, profile=None):
         'gastos_projetados': float(gastos_projetados),
         'gastos_fixos': float(gastos_fixos),
         'gastos_variaveis': float(gastos_variaveis),
+        # Opening, not bank: entradas_projetadas already contains anything
+        # received early, so the bank figure would overstate implied spending.
         'gastos_variaveis_checking': round(
-            (prev_month_saldo_float or 0) + float(entradas_projetadas)
+            (opening_balance_float or 0) + float(entradas_projetadas)
             - float(fixo_for_budget) - float(invest_expected_total)
             - float(fatura_total) - float(saldo_projetado or 0), 2
         ) if not is_future else 0.0,
@@ -4655,9 +4709,17 @@ def get_projection(start_month_str, num_months=0, profile=None):
             invest = float(metricas.get('invest_expected_total', invest))
             # Metricas saldo already reflects actual spending via bank balance.
             cumulative = current_month_saldo
-            # Budget = theoretical variable budget (total envelope).
-            _carryover = float(metricas.get('carryover_debt', 0))
-            budget = starting_balance - _carryover + income - fixo - invest - installments
+            # Budget = theoretical variable budget (total envelope). Read from
+            # metricas instead of recomputed: the envelope is defined once, and
+            # the local formula silently drifted from it (it started at the
+            # month's own balance, which already holds income received early,
+            # and then added that income again).
+            _orc = metricas.get('orcamento_variavel')
+            if _orc is not None:
+                budget = float(_orc)
+            else:
+                _carryover = float(metricas.get('carryover_debt', 0))
+                budget = starting_balance - _carryover + income - fixo - invest - installments
             # Variable = actual variable spending this month.
             variable = float(metricas.get('gastos_variaveis', 0))
             net = cumulative - starting_balance
