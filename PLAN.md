@@ -201,6 +201,13 @@ Instead: **enforce adjacent-only forward links.** Both observed advances are adj
 non-adjacency is a capability nobody uses. Enforcement replaces handling, and the
 whole provenance problem disappears.
 
+**"Known to include" is deliberately conservative.** `BalanceAnchor.date` is not
+proof of coverage — that is exactly the Pluggy lag. Initial rule: statement/manual
+anchors with known coverage are eligible; a Pluggy anchor, a `BalanceOverride`, a
+future or synthetic row, or no anchor are **unverified** → `advance = 0`. This can
+under-adjust a projection; it cannot invent or remove money. Refining coverage later
+is evolution, not a blocker.
+
 **Design.**
 - **Enforce, directionally** — the earlier wording would have broken carryover, which
   is built on late settlement:
@@ -322,8 +329,9 @@ still carries; audit B silent on a discretionary transfer. Diff identical today.
 
 ## Sequencing
 
-0. **Decision required** (below) — W1 and W6 both wait on it.
-1. **W1** — the only live corruption path.
+1. **W1**, carrying the single additive migration that creates **both** tables — a
+   schema-only deploy adds overhead without reducing risk, and shipping the unused
+   `FinancePipelineRun` alongside preserves the authorised one-migration design.
 2. **W6** — destructive stages run unguarded every day.
 3. **W4** — reads the run summary W6 defines.
 4. **W0a** → **W2**.
@@ -352,26 +360,58 @@ are not committed to git.
 - **Fabricating links to silence check C** — a zero warning is not a true one.
 - **An enum for W3** — one distinction, one Boolean.
 
-## Decision required — blocks W1 and W6
+## Decision — resolved by the operator
 
-Both need durable operational state: W1 a bill-reconciliation conflict that survives
-until a human resolves it, W6 a run history for gap and missed-run detection. A file
-inside the cron container is not durable, and W1's resolution mutates a mapping.
+**One schema addition for operational state is authorised, covering W1 and W6.** Two
+small models:
 
-`models.py` and `migrations/` are Edit-denied by project policy, which until this
-round only W3 acknowledged. **W1 is therefore not independently shippable.** Two ways
-forward:
+**`BillReconciliationConflict`** — backs W1's quarantine, check G and the
+compare-and-swap resolutions.
 
-**(a) Authorise one schema addition for operational state** — two small models, bill
-conflicts and pipeline runs — covering W1 and W6 together. Recommended: it is one
-exception instead of three file-based mechanisms bolted onto a database-backed app.
+| field | note |
+|---|---|
+| `mapping` | FK → `RecurringMapping`, nullable, `SET_NULL` — compare-and-swap must target the *exact* mapping observed, not re-derive it from names that can be renamed |
+| `profile`, `account` (FK), `month_str`, `bill_id` | snapshot, so the row stays auditable after the mapping is deleted |
+| `stored_total`, `pluggy_total` | same Decimal precision as `expected_amount` |
+| `first_seen_at`, `last_seen_at` | |
+| `resolution` | enum: `pending` · `accepted_pluggy` · `kept_statement` · `superseded` |
+| `acknowledged_at` | |
 
-**(b) Redesign W1 and W6 to hold no durable state.** W1 loses its termination
-guarantee (the conflict re-derives every run and cannot be acknowledged, so check G
-alerts daily forever). W6 loses gap detection, missed-run detection and
-`--approve-gap-run`. The rest of both workstreams survives.
+`superseded` closes a termination hole: Pluggy reports 90 against a stored 100, then
+revises to 95. Without it the obsolete 90 conflict stays unacknowledged and check G
+reports it forever. Unique constraint on the canonical identity; partial index on
+unresolved rows. Both resolution operations lock the conflict and the mapping.
 
-W3 remains separately gated on the same policy.
+**`FinancePipelineRun`** — backs W6's run history, gap rule, missed-run detection,
+`--approve-gap-run`, **and the maintenance gate**.
+
+| field | note |
+|---|---|
+| `run_id`, `started_at`, `finished_at` | the row is created *before* the first stage, so a crash leaves an unfinished record |
+| `kind` | `scheduled` · `manual` · `gap_approval` · `maintenance` — without it a manual diagnostic run masks a missed scheduled one |
+| `scheduled_for` | nullable; lets missed-run detection ask whether *that slot* completed, not whether any recent row exists |
+| `stages`, `coverage` | per-stage outcome and endpoint coverage |
+| `applied` | whether mutations were applied or dry-run |
+| `approved_at` | |
+
+Finished rows are immutable **except** one compare-and-swap transition of
+`approved_at` from null to a timestamp — stated explicitly because the plan otherwise
+contradicted itself.
+
+**The maintenance gate is a row, not a lock.** A database advisory lock is released
+if the maintenance command disconnects, which would let the next scheduled pipeline
+dedup against the rows W5-E had just exposed. Instead an open
+`FinancePipelineRun(kind='maintenance', finished_at=NULL)` *is* the gate: the
+pipeline refuses mutations while one exists, an abandoned session stays fail-closed
+and alerts, and the release command closes it. Read-only stages still run.
+
+Both are operational state, not financial records: no amounts beyond the two totals
+already being compared, no transaction data. They are additive — no existing table or
+column changes — so the migration is reversible by dropping them.
+
+**W3 remains gated.** `is_committed` on `RecurringTemplate` alters an existing model
+and touches carryover semantics, and was deliberately not included in this
+authorisation. W3 stays last and stays optional.
 
 ## Logged separately for the operator
 

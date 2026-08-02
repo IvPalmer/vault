@@ -490,3 +490,77 @@ the round-1 rejection of the M2M write surface, "generalise to any earlier month
 for operational state (bill-reconciliation conflicts + pipeline run summaries), or
 have W1 and W6 redesigned to hold no durable state — which costs W1 its termination
 guarantee and W6 its gap and missed-run detection.
+
+---
+
+## Round 5 — codex: REVISE (specification, not design)
+
+The blocking decision was resolved — the operator authorised one schema addition for
+W1 and W6, exactly the "one exception instead of three file-based mechanisms" codex
+recommended. W3 stays gated. The final round is entirely about pinning the schema
+*before* it is written, which is plan-level precisely because the operator authorised
+one migration.
+
+### Accepted
+
+65. **The conflict row needs the mapping FK**, not a name-derived lookup —
+    compare-and-swap must target the exact mapping observed, and names can be renamed
+    or the mapping deleted. `card` becomes an Account FK, not text. **ACCEPT.**
+
+66. **`superseded` is a termination hole.** Pluggy reports 90 against a stored 100; a
+    conflict is created; Pluggy revises to 95; a second conflict is created; the
+    obsolete 90 stays unacknowledged and check G reports it forever. **ACCEPT** —
+    `last_seen_at` plus a `superseded` resolution.
+
+67. **`FinancePipelineRun` needs `kind` and `scheduled_for`.** Otherwise a manual
+    diagnostic run, a filtered run or a gap approval masks a missed scheduled run.
+    **ACCEPT.**
+
+68. **The immutability claim contradicted itself** — `approved_at` is written after a
+    dry-run row is finished. **ACCEPT**: immutable except one compare-and-swap
+    transition of `approved_at` from null.
+
+69. **The maintenance gate had no durable representation.** An advisory lock is
+    released when the maintenance command disconnects, so the next scheduled pipeline
+    could dedup against the rows W5-E had just exposed — W5-E's entire safety rested
+    on that gate. **ACCEPT, and the proposed shape is elegant:** an open
+    `FinancePipelineRun(kind='maintenance', finished_at=NULL)` *is* the gate.
+    Fail-closed when abandoned.
+
+70. **"Known to include" must be defined conservatively.** `BalanceAnchor.date` is not
+    proof of coverage — that is the Pluggy lag itself. **ACCEPT**: statement/manual
+    anchors eligible; Pluggy anchors, `BalanceOverride`, future/synthetic/missing →
+    unverified, `advance = 0`. Under-adjusting cannot invent or remove money.
+
+71. **Land the migration with W1**, not as its own deploy; shipping the unused run
+    table alongside preserves the one-migration design. **ACCEPT.**
+
+### Deferred to per-workstream code review
+
+Codex explicitly classified these as implementation-review items rather than plan
+blockers: hard timeouts must use child processes (in-process `call_command` is not
+reliably killable); `--strict` gathers *all* endpoint failures before any mutation;
+checker findings stay distinct from execution failures; gap approval authorises a
+fresh run and never replays an old mutation plan; the run summary row is created
+before the first stage.
+
+---
+
+## Loop closed
+
+Five rounds — `MAX_ROUNDS`. Codex's own closing condition: *"Once the mapping FK, run
+kind/scheduled slot, maintenance representation, and immutability exception are
+incorporated into that migration design, the plan is sound enough to start
+building."* All four are now in `PLAN.md`, so the loop ends on a specification
+checklist rather than an unresolved disagreement.
+
+**Tally.** Every round produced findings I accepted. Two rounds produced findings that
+made the plan *smaller* (adjacency enforcement replacing anchor provenance;
+sequential control flow replacing a stage protocol). Four positions of mine were
+reversed by the review: cron chaining, the round-1 rejection of the M2M write surface,
+generalising `_prev_month_advance` to any earlier month, and "W1 is independently
+shippable". Two of codex's recommendations were rejected with reasons and stayed
+rejected: external dead-man monitoring, and an enum in place of a Boolean for W3.
+
+**No unresolved disagreement remains.** Awaiting the operator's final sign-off to
+start building.
