@@ -1919,3 +1919,57 @@ class InstallmentDoubleStampTests(TestCase):
         lone = self._row('ccc', '11/15', None)
         ext_to_ident = {'ccc': self._ident('2025-09-02T13:22:31.000Z', 11)}
         self.assertEqual(self.cmd._rule4([lone], ext_to_ident, set()), {})
+
+
+class ProjectionAdvanceTests(TestCase):
+    """The cascade adds each month's full template income to the carried
+    balance. A salary paid early sits in BOTH, so it lands twice."""
+
+    def setUp(self):
+        from api.models import BalanceAnchor, RecurringMapping
+        self.profile = Profile.objects.create(name='Tester')
+        self.account = Account.objects.create(
+            profile=self.profile, name='Checking', account_type='checking')
+        BalanceAnchor.objects.create(
+            profile=self.profile, date=date(2026, 3, 31),
+            balance=Decimal('42000.00'), source_file='statement:itau-032026')
+        self.tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name='FS', template_type='Income',
+            default_limit=Decimal('44000.00'))
+
+    def _claim(self, target_month, txn_month, day):
+        from api.models import RecurringMapping
+        from api.services import map_transaction_to_category
+        m = RecurringMapping.objects.create(
+            profile=self.profile, template=self.tpl, month_str=target_month,
+            expected_amount=Decimal('44000.00'))
+        txn = Transaction.objects.create(
+            profile=self.profile, account=self.account, date=day,
+            description='SISPAG PIX', amount=Decimal('22000.00'), month_str=txn_month)
+        map_transaction_to_category(txn.id, mapping_id=m.id, profile=self.profile)
+        return m
+
+    def _rows(self, start='2026-03'):
+        from api.services import get_projection
+        return get_projection(start, profile=self.profile)['months']
+
+    def test_the_first_synthetic_row_nets_the_advance(self):
+        self._claim('2026-04', '2026-03', date(2026, 3, 31))
+        rows = self._rows()
+        self.assertAlmostEqual(rows[1]['advance'], 22000.00, places=2)
+
+    def test_later_rows_are_never_adjusted(self):
+        """Their predecessor is a synthesised balance that never held it."""
+        self._claim('2026-04', '2026-03', date(2026, 3, 31))
+        for row in self._rows()[2:]:
+            self.assertAlmostEqual(row['advance'], 0.00, places=2)
+
+    def test_nothing_claimed_means_no_adjustment(self):
+        self.assertAlmostEqual(self._rows()[1]['advance'], 0.00, places=2)
+
+    def test_an_unverified_anchor_refuses_to_adjust(self):
+        from api.models import BalanceAnchor
+        BalanceAnchor.objects.filter(profile=self.profile).update(
+            source_file='pluggy:checking')
+        self._claim('2026-04', '2026-03', date(2026, 3, 31))
+        self.assertAlmostEqual(self._rows()[1]['advance'], 0.00, places=2)

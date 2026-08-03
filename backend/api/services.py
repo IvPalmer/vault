@@ -4740,6 +4740,7 @@ def get_projection(start_month_str, num_months=0, profile=None):
         # so the Invest column reconciles with the Investimentos table.
         savings_target_amount = income * savings_target_pct / 100 if income > 0 else 0.0
 
+        advance = 0.0
         if i == 0:
             # Current month: use metricas clamped invest and saldo.
             invest = float(metricas.get('invest_expected_total', invest))
@@ -4765,6 +4766,18 @@ def get_projection(start_month_str, num_months=0, profile=None):
 
             # Budget = envelope (max you COULD spend to break even). Kept as the
             # chart's "ORC" column — NOT what we assume you actually spend.
+            # Money this month already claims that is sitting in the balance being
+            # carried forward — a salary paid early. Without netting it out the
+            # cascade adds it twice: once inside `cumulative`, once inside
+            # `income`. Only the FIRST synthetic row is eligible: it is the only
+            # one whose predecessor is the real anchored month. Later rows carry
+            # a synthesised balance that never held the transaction, so
+            # subtracting there would remove money the cascade never added.
+            if i == 1:
+                _adv = _prev_month_advance(month, profile)
+                if _adv and _eom_anchor_is_statement(_month_str_add(month, -1), profile):
+                    advance = float(_adv)
+            cumulative -= advance
             monthly_surplus = income - fixo - invest - installments
             budget = cumulative + monthly_surplus  # cumulative = prev month's ending saldo
             # Realistic + dynamic: assume the trailing-average variable spend, so
@@ -4776,6 +4789,7 @@ def get_projection(start_month_str, num_months=0, profile=None):
 
         rows.append({
             'month': month,
+            'advance': round(advance if i else 0.0, 2),
             'income': round(income, 2),
             'outras_entradas': round(float(metricas.get('outras_entradas', 0)) if i == 0 else 0.0, 2),
             'fixo': round(fixo, 2),
