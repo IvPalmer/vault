@@ -84,6 +84,30 @@ def _detect_internal_transfer(description, amount, raw_description=''):
     return any(p in combined for p in patterns)
 
 
+def bill_write_decision(stored, bill_total, closing_date, today):
+    """Decide whether a Pluggy bill total may overwrite a stored invoice amount.
+
+    The issued bank statement is primary evidence; Pluggy is a delayed third-party
+    representation of it. `billClosingDate` proves the cycle closed, not that the
+    number is immutable — bills take post-close corrections, refunds and disputes,
+    and the sampled payload's `updatedAt` was five weeks after its closing date.
+    So a disagreement is quarantined for a human, never resolved by overwriting.
+
+    Returns one of: 'skip_open', 'write', 'noop', 'conflict'.
+    """
+    if closing_date is None or closing_date > today:
+        return 'skip_open'          # an open bill's total is provisional by definition
+    if bill_total is None or bill_total < 0:
+        return 'conflict'           # a negative closed total is not a bill
+    if bill_total == 0:
+        return 'skip_open'          # nothing to write; never zero out a real value
+    if stored is None or stored == 0:
+        return 'write'
+    if stored == bill_total:
+        return 'noop'
+    return 'conflict'
+
+
 def _extract_base_desc(description):
     """Remove installment suffix and clean up description."""
     desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', description).strip()
@@ -178,6 +202,11 @@ class Command(BaseCommand):
         parser.add_argument('--accounts', help='Comma-separated account filter: checking,master,nubank')
         parser.add_argument('--item', dest='item_id', help='Override Pluggy item ID (for ad-hoc sync)')
         parser.add_argument('--dry-run', action='store_true', help='Show what would be synced without writing')
+        parser.add_argument(
+            '--explain-bills', action='store_true',
+            help='Report the write decision for every Pluggy bill (write / skip-open / '
+                 'noop / conflict) using the same logic as the real write. A plain '
+                 '--dry-run cannot show this: the write is guarded by `not dry_run`.')
         parser.add_argument('--save-balance', action='store_true',
                             help='Create BalanceAnchor from current checking balance')
         parser.add_argument('--refresh', action='store_true',
@@ -204,6 +233,7 @@ class Command(BaseCommand):
 
         self.profile = profile
         self.dry_run = options['dry_run']
+        self.explain_bills = options.get('explain_bills', False)
 
         # Resolve item IDs and account map for this profile
         config = PROFILE_CONFIG.get(profile_name, {})
@@ -281,7 +311,10 @@ class Command(BaseCommand):
 
             # Pre-fetch bills for CC accounts in this item
             self.bill_map = {}
-            self.bill_totals = {}  # (card_name, invoice_month) → totalAmount
+            # (card_name, invoice_month) → (totalAmount, billClosingDate, bill_id).
+            # The closing date rides along because an OPEN bill's total is
+            # provisional and must never reach expected_amount.
+            self.bill_totals = {}
             for pluggy_acct_id, vault_name in account_map.items():
                 if vault_name not in vault_accounts:
                     continue
@@ -294,7 +327,16 @@ class Command(BaseCommand):
                             self.bill_map[bill['id']] = inv_month
                             total_amount = bill.get('totalAmount')
                             if total_amount is not None:
-                                self.bill_totals[(vault_name, inv_month)] = Decimal(str(total_amount))
+                                # Bank-local calendar date encoded at midnight UTC —
+                                # compare dates, never instants.
+                                _closing_raw = bill.get('billClosingDate')
+                                _closing = (
+                                    date.fromisoformat(_closing_raw[:10])
+                                    if _closing_raw else None
+                                )
+                                self.bill_totals[(vault_name, inv_month)] = (
+                                    Decimal(str(total_amount)), _closing, bill.get('id', ''),
+                                )
                         self.stdout.write(f'  Loaded {len(bills)} bills for {vault_name}')
                     except Exception as e:
                         self.stderr.write(f'  Failed to load bills for {vault_name}: {e}')
@@ -323,18 +365,44 @@ class Command(BaseCommand):
                 total_skipped += skipped
                 total_updated += updated
 
-        # Update Cartao mapping expected_amount from Pluggy bill totals
-        if self.bill_totals and not self.dry_run:
-            from api.models import RecurringMapping, RecurringTemplate
-            for (card_name, inv_month), bill_total in self.bill_totals.items():
-                updated = RecurringMapping.objects.filter(
+        # Update Cartao mapping expected_amount from Pluggy bill totals.
+        # Quarantine, not overwrite: see bill_write_decision. A stored value that
+        # came from an issued statement outranks a later aggregator total, and a
+        # disagreement is surfaced for a human instead of being resolved silently.
+        if self.bill_totals and (not self.dry_run or self.explain_bills):
+            from api.models import RecurringMapping
+            today = date.today()
+            for (card_name, inv_month), (bill_total, closing, bill_id) in sorted(
+                self.bill_totals.items()
+            ):
+                mapping = RecurringMapping.objects.filter(
                     template__name=card_name,
                     template__template_type='Cartao',
                     month_str=inv_month,
                     profile=self.profile,
-                ).update(expected_amount=bill_total)
-                if updated and self.verbosity >= 2:
-                    self.stdout.write(f'  Updated {card_name} {inv_month} fatura = R$ {bill_total}')
+                ).first()
+                if mapping is None:
+                    continue
+                stored = mapping.expected_amount
+                action = bill_write_decision(stored, bill_total, closing, today)
+                label = f'{card_name} {inv_month}'
+                if action == 'write':
+                    if not self.dry_run:
+                        RecurringMapping.objects.filter(id=mapping.id).update(
+                            expected_amount=bill_total)
+                    if self.explain_bills or self.verbosity >= 2:
+                        self.stdout.write(f'  bill WRITE      {label} = R$ {bill_total}')
+                elif action == 'conflict':
+                    # Never write. W1b turns this into a durable, acknowledgeable row.
+                    self.stderr.write(self.style.WARNING(
+                        f'  bill CONFLICT   {label}: guardado R$ {stored} != '
+                        f'Pluggy R$ {bill_total} (fatura {bill_id[:8]} fechada '
+                        f'{closing}) — mantendo o valor guardado'))
+                elif self.explain_bills:
+                    verb = 'SKIP(aberta)' if action == 'skip_open' else 'NOOP        '
+                    self.stdout.write(f'  bill {verb} {label} '
+                                      f'guardado R$ {stored} Pluggy R$ {bill_total} '
+                                      f'fecha {closing}')
 
         # Reconcile installment-series categorization so forward/later positions
         # inherit the category+subcategory of their earlier siblings (Pluggy

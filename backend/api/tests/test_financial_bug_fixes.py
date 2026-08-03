@@ -1483,3 +1483,55 @@ class OpeningBalanceAdvanceTests(TestCase):
         result = get_metricas('2026-03', profile=self.profile)
         self.assertAlmostEqual(result['invest_expected_total'], 4400.00, places=2)
         self.assertAlmostEqual(result['orcamento_variavel'], 59600.00, places=2)
+
+
+class BillWriteQuarantineTests(TestCase):
+    """The issued bank statement is primary evidence; Pluggy is a delayed
+    third-party representation of it. `billClosingDate` proves the cycle closed,
+    not that the number is immutable — the sampled payload's `updatedAt` was five
+    weeks after its closing date. So a disagreement is quarantined, never
+    resolved by overwriting."""
+
+    TODAY = date(2026, 8, 2)
+    CLOSED = date(2026, 6, 28)
+    OPEN = date(2026, 8, 29)
+
+    def _decide(self, stored, total, closing, today=None):
+        from api.management.commands.sync_pluggy import bill_write_decision
+        return bill_write_decision(
+            None if stored is None else Decimal(stored),
+            None if total is None else Decimal(total),
+            closing, today or self.TODAY,
+        )
+
+    def test_an_open_bill_never_writes(self):
+        self.assertEqual(self._decide('3431.74', '1200.00', self.OPEN), 'skip_open')
+
+    def test_a_bill_with_no_closing_date_never_writes(self):
+        self.assertEqual(self._decide('3431.74', '1200.00', None), 'skip_open')
+
+    def test_a_closed_bill_fills_an_empty_value(self):
+        self.assertEqual(self._decide('0.00', '739.12', self.CLOSED), 'write')
+        self.assertEqual(self._decide(None, '739.12', self.CLOSED), 'write')
+
+    def test_a_closed_bill_that_agrees_is_a_noop(self):
+        self.assertEqual(self._decide('739.12', '739.12', self.CLOSED), 'noop')
+
+    def test_a_closed_bill_that_disagrees_is_quarantined(self):
+        """The August case: the statement says 3.431,74. A closed Pluggy bill
+        saying something else must not win — it is quarantined for a human."""
+        self.assertEqual(self._decide('3431.74', '3400.00', self.CLOSED), 'conflict')
+
+    def test_a_negative_closed_total_is_not_a_bill(self):
+        self.assertEqual(self._decide('739.12', '-50.00', self.CLOSED), 'conflict')
+
+    def test_a_zero_closed_total_never_zeroes_a_real_value(self):
+        self.assertEqual(self._decide('3431.74', '0.00', self.CLOSED), 'skip_open')
+
+    def test_a_closing_date_of_today_counts_as_closed(self):
+        self.assertEqual(
+            self._decide('0.00', '739.12', self.TODAY, self.TODAY), 'write')
+
+    def test_one_cent_of_disagreement_is_still_a_conflict(self):
+        """`> 0.01` would have silently written an exactly-one-cent difference."""
+        self.assertEqual(self._decide('739.12', '739.13', self.CLOSED), 'conflict')
