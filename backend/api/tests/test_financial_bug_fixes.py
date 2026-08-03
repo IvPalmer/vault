@@ -1535,3 +1535,85 @@ class BillWriteQuarantineTests(TestCase):
     def test_one_cent_of_disagreement_is_still_a_conflict(self):
         """`> 0.01` would have silently written an exactly-one-cent difference."""
         self.assertEqual(self._decide('739.12', '739.13', self.CLOSED), 'conflict')
+
+
+class BillConflictLifecycleTests(TestCase):
+    """A quarantined conflict has to terminate, or check G reports it forever."""
+
+    def setUp(self):
+        from api.models import BillReconciliationConflict, RecurringMapping
+        self.profile = Profile.objects.create(name='Tester')
+        Account.objects.create(
+            profile=self.profile, name='Visa', account_type='credit_card')
+        tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name='Visa', template_type='Cartao',
+            default_limit=Decimal('3431.74'),
+        )
+        self.mapping = RecurringMapping.objects.create(
+            profile=self.profile, template=tpl, month_str='2026-08',
+            expected_amount=Decimal('3431.74'),
+        )
+
+    def _conflict(self, stored, pluggy, bill_id='bill-1'):
+        from api.models import BillReconciliationConflict
+        return BillReconciliationConflict.objects.create(
+            profile=self.profile, mapping=self.mapping, card_name='Visa',
+            month_str='2026-08', bill_id=bill_id,
+            stored_total=Decimal(stored), pluggy_total=Decimal(pluggy),
+            bill_closing_date=date(2026, 7, 29),
+        )
+
+    def test_accept_pluggy_writes_the_total(self):
+        from django.core.management import call_command
+        c = self._conflict('3431.74', '3400.00')
+        call_command('resolve_bill_conflict', id=str(c.id), accept_pluggy=True)
+        self.mapping.refresh_from_db(); c.refresh_from_db()
+        self.assertEqual(self.mapping.expected_amount, Decimal('3400.00'))
+        self.assertEqual(c.resolution, 'accepted_pluggy')
+
+    def test_keep_statement_leaves_the_amount_alone(self):
+        from django.core.management import call_command
+        c = self._conflict('3431.74', '3400.00')
+        call_command('resolve_bill_conflict', id=str(c.id), keep_statement=True,
+                     note='PDF Itau 05/08')
+        self.mapping.refresh_from_db(); c.refresh_from_db()
+        self.assertEqual(self.mapping.expected_amount, Decimal('3431.74'))
+        self.assertEqual(c.resolution, 'kept_statement')
+        self.assertEqual(c.note, 'PDF Itau 05/08')
+
+    def test_a_stale_conflict_refuses_to_resolve(self):
+        """Someone edits the amount by hand after the conflict was recorded.
+        Resolving the old one would write the wrong number."""
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+        c = self._conflict('3431.74', '3400.00')
+        self.mapping.expected_amount = Decimal('3420.00')
+        self.mapping.save(update_fields=['expected_amount'])
+        with self.assertRaises(CommandError):
+            call_command('resolve_bill_conflict', id=str(c.id), accept_pluggy=True)
+        self.mapping.refresh_from_db()
+        self.assertEqual(self.mapping.expected_amount, Decimal('3420.00'))
+
+    def test_a_revised_pluggy_total_supersedes_the_stale_conflict(self):
+        """Pluggy says 3400, then revises to 3410. Without superseding, the
+        obsolete 3400 row stays pending and check G reports it forever."""
+        from api.management.commands.sync_pluggy import _supersede_stale_conflicts
+        from api.models import BillReconciliationConflict
+        old = self._conflict('3431.74', '3400.00')
+        new = self._conflict('3431.74', '3410.00')
+        _supersede_stale_conflicts(self.profile, 'bill-1', new.id)
+        old.refresh_from_db(); new.refresh_from_db()
+        self.assertEqual(old.resolution, 'superseded')
+        self.assertEqual(new.resolution, 'pending')
+        self.assertEqual(
+            BillReconciliationConflict.objects.filter(resolution='pending').count(), 1)
+
+    def test_check_g_reports_only_unresolved(self):
+        from api.management.commands.audit_sync import Command
+        self._conflict('3431.74', '3400.00')
+        resolved = self._conflict('3431.74', '3390.00', bill_id='bill-2')
+        resolved.resolution = 'kept_statement'
+        resolved.save(update_fields=['resolution'])
+        count, lines = Command()._check_g(self.profile)
+        self.assertEqual(count, 1)
+        self.assertIn('3400.00', lines[0])

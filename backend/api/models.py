@@ -1069,3 +1069,111 @@ class HealthContent(models.Model):
 
     def __str__(self):
         return f'{self.profile.name} | {self.slug}'
+
+
+class BillReconciliationConflict(models.Model):
+    """A closed Pluggy bill whose total disagrees with the stored invoice amount.
+
+    The issued bank statement is primary evidence; Pluggy is a delayed
+    third-party representation of it, and `billClosingDate` proves the cycle
+    closed, not that the number is immutable. So sync refuses to write and
+    records the disagreement here instead — quarantine, never overwrite.
+
+    Identity is (bill_id, stored_total, pluggy_total): a later Pluggy revision
+    reads as NEW information, while unrelated metadata churn does not. The
+    mapping FK is the resolution target — re-deriving it from names would break
+    on a rename or a deleted mapping — while the profile/card/month snapshot
+    keeps the row auditable after the mapping is gone.
+    """
+    RESOLUTION_CHOICES = (
+        ('pending', 'Pending'),
+        ('accepted_pluggy', 'Accepted Pluggy total'),
+        ('kept_statement', 'Kept statement total'),
+        ('superseded', 'Superseded by a newer conflict'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(
+        Profile, on_delete=models.CASCADE, related_name='bill_conflicts',
+    )
+    mapping = models.ForeignKey(
+        'RecurringMapping', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='bill_conflicts',
+        help_text='Resolution target. Null once the mapping is gone; the snapshot survives.',
+    )
+    account = models.ForeignKey(
+        Account, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='bill_conflicts',
+    )
+    card_name = models.CharField(max_length=100, help_text='Snapshot, readable after a rename.')
+    month_str = models.CharField(max_length=7, db_index=True)
+    bill_id = models.CharField(max_length=100)
+    stored_total = models.DecimalField(max_digits=12, decimal_places=2)
+    pluggy_total = models.DecimalField(max_digits=12, decimal_places=2)
+    bill_closing_date = models.DateField(null=True, blank=True)
+    first_seen_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(auto_now=True)
+    resolution = models.CharField(
+        max_length=20, choices=RESOLUTION_CHOICES, default='pending', db_index=True,
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-first_seen_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['profile', 'bill_id', 'stored_total', 'pluggy_total'],
+                name='unique_bill_conflict_identity',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['profile', 'resolution'], name='billconf_prof_res_idx'),
+        ]
+
+    def __str__(self):
+        return (f'{self.card_name} {self.month_str}: guardado {self.stored_total} '
+                f'!= Pluggy {self.pluggy_total} [{self.resolution}]')
+
+
+class FinancePipelineRun(models.Model):
+    """One invocation of the finance pipeline.
+
+    Backs missed-run detection, the gap rule and `--approve-gap-run`. An OPEN row
+    with kind='maintenance' also *is* the maintenance gate: a database advisory
+    lock would be released the moment the maintenance command disconnects, which
+    would let the next scheduled run mutate rows a human was still reviewing.
+
+    Rows are immutable once finished, with exactly one exception: a
+    compare-and-swap transition of `approved_at` from null to a timestamp.
+    """
+    KIND_CHOICES = (
+        ('scheduled', 'Scheduled'),
+        ('manual', 'Manual'),
+        ('gap_approval', 'Gap approval'),
+        ('maintenance', 'Maintenance window'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, default='scheduled', db_index=True)
+    scheduled_for = models.DateTimeField(
+        null=True, blank=True,
+        help_text='The slot this run was meant to fill, so a manual run cannot mask a missed one.',
+    )
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    stages = models.JSONField(default=dict, help_text='Per-stage outcome.')
+    coverage = models.JSONField(default=dict, help_text='Profiles/accounts/endpoints fully fetched.')
+    applied = models.BooleanField(default=False, help_text='False when the mutating stages ran dry.')
+    approved_at = models.DateTimeField(null=True, blank=True)
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-started_at']
+        indexes = [
+            models.Index(fields=['kind', 'finished_at'], name='pipelinerun_kind_fin_idx'),
+        ]
+
+    def __str__(self):
+        state = 'running' if self.finished_at is None else ('applied' if self.applied else 'dry-run')
+        return f'{self.kind} {self.started_at:%Y-%m-%d %H:%M} [{state}]'

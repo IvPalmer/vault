@@ -108,6 +108,19 @@ def bill_write_decision(stored, bill_total, closing_date, today):
     return 'conflict'
 
 
+def _supersede_stale_conflicts(profile, bill_id, keep_id):
+    """Close pending conflicts for the same bill that no longer describe reality.
+
+    Pluggy reports 90 against a stored 100, then revises to 95. Without this the
+    obsolete 90 row stays pending and check G reports it forever.
+    """
+    from django.utils import timezone as _tz
+    from api.models import BillReconciliationConflict
+    return BillReconciliationConflict.objects.filter(
+        profile=profile, bill_id=bill_id, resolution='pending',
+    ).exclude(id=keep_id).update(resolution='superseded', resolved_at=_tz.now())
+
+
 def _extract_base_desc(description):
     """Remove installment suffix and clean up description."""
     desc = re.sub(r'\s*\d{1,2}/\d{1,2}\s*$', '', description).strip()
@@ -393,7 +406,11 @@ class Command(BaseCommand):
                     if self.explain_bills or self.verbosity >= 2:
                         self.stdout.write(f'  bill WRITE      {label} = R$ {bill_total}')
                 elif action == 'conflict':
-                    # Never write. W1b turns this into a durable, acknowledgeable row.
+                    # Never write — record it for a human instead.
+                    if not self.dry_run:
+                        self._record_bill_conflict(
+                            mapping, card_name, inv_month, bill_id,
+                            stored, bill_total, closing)
                     self.stderr.write(self.style.WARNING(
                         f'  bill CONFLICT   {label}: guardado R$ {stored} != '
                         f'Pluggy R$ {bill_total} (fatura {bill_id[:8]} fechada '
@@ -501,6 +518,35 @@ class Command(BaseCommand):
                     break
 
         return category, subcategory
+
+    def _record_bill_conflict(self, mapping, card_name, month_str, bill_id,
+                              stored, pluggy_total, closing):
+        """Persist a quarantined disagreement, keyed on its identity.
+
+        (bill_id, stored_total, pluggy_total) — so a later Pluggy revision, or a
+        hand-edited stored amount, mints a NEW unacknowledged row while unrelated
+        metadata churn does not.
+        """
+        from api.models import BillReconciliationConflict
+        obj, created = BillReconciliationConflict.objects.get_or_create(
+            profile=self.profile, bill_id=bill_id,
+            stored_total=stored, pluggy_total=pluggy_total,
+            defaults={
+                'mapping': mapping,
+                # Cartao templates carry no account FK; the convention across the
+                # engine is template.name == account.name.
+                'account': Account.objects.filter(
+                    profile=self.profile, name=card_name,
+                    account_type='credit_card').first(),
+                'card_name': card_name,
+                'month_str': month_str,
+                'bill_closing_date': closing,
+            },
+        )
+        if not created:
+            obj.save(update_fields=['last_seen_at'])   # auto_now
+        _supersede_stale_conflicts(self.profile, bill_id, obj.id)
+        return obj
 
     def _sync_transactions(self, pluggy_txns, vault_acct):
         """Sync a list of Pluggy transactions into Vault for one account."""

@@ -31,6 +31,11 @@ Checks (each independent; all are reported, exit code reflects the worst):
      one invoice legitimately. Every group needs a human before anything is
      deleted.
 
+  G  bill reconciliation conflict — a closed Pluggy bill whose total disagrees
+     with the stored invoice amount. Sync refuses to write and records it; this
+     surfaces the ones nobody has resolved yet. Gates the exit code: it means a
+     bank statement and the aggregator disagree about money.
+
   E  installment metadata missing — installment_info parsed from the
      description but is_installment=False. Today's sync sets both together, so
      these are historical rows; they are invisible to any check keyed on the
@@ -48,7 +53,9 @@ from collections import defaultdict
 
 from django.core.management.base import BaseCommand
 
-from api.models import Profile, RecurringMapping, Transaction
+from api.models import (
+    BillReconciliationConflict, Profile, RecurringMapping, Transaction,
+)
 
 # A mapping whose month is older than this is import backlog, not a live
 # regression — same cutoff the carryover uses.
@@ -72,13 +79,14 @@ class Command(BaseCommand):
                             help='Always exit 0. Report only.')
         parser.add_argument('--max-violations', type=int, default=0,
                             help='Per-check tolerance before failing (default 0).')
-        # Only A and B gate. C ("mapped" with nothing linked) is import backlog
+        # A, B and G gate. C ("mapped" with nothing linked) is import backlog
         # a human triages; E (no installment metadata) is a risk indicator, not
         # a wrong state; and D yields CANDIDATES — two real purchases can share
         # merchant, amount, plan and starting invoice. A and B are the only
-        # states the pipeline cannot reach without regressing.
-        parser.add_argument('--fail-on', default='A,B',
-                            help='Checks that gate the exit code (default A,B).')
+        # states the pipeline cannot reach without regressing. G means a bank
+        # statement and the aggregator disagree about money — always worth a stop.
+        parser.add_argument('--fail-on', default='A,B,G',
+                            help='Checks that gate the exit code (default A,B,G).')
 
     def _profiles(self, arg):
         qs = Profile.objects.filter(is_active=True)
@@ -187,6 +195,16 @@ class Command(BaseCommand):
             lines.append(f'valor duplicado: R$ {value:,.2f}')
         return count, lines[:20]
 
+    def _check_g(self, profile):
+        rows = BillReconciliationConflict.objects.filter(
+            profile=profile, resolution='pending',
+        ).order_by('month_str')
+        return rows.count(), [
+            f'{c.card_name} {c.month_str} | guardado R$ {c.stored_total} != '
+            f'Pluggy R$ {c.pluggy_total} | fatura {c.bill_id[:8]} | id {c.id}'
+            for c in rows[:20]
+        ]
+
     def _check_e(self, profile):
         rows = Transaction.objects.filter(
             profile=profile, is_installment=False,
@@ -215,6 +233,7 @@ class Command(BaseCommand):
                 ('D', 'parcela repetida na mesma fatura (candidatos)',
                  *self._check_d(profile)),
                 ('E', 'parcela sem metadata (cega o dedup)', *self._check_e(profile)),
+                ('G', 'fatura: extrato vs Pluggy em conflito', *self._check_g(profile)),
             ]
             for code, label, count, lines in results:
                 if count == 0:
