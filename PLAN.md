@@ -10,7 +10,7 @@ findings that made this plan **smaller** rather than larger.
 
 ---
 
-## W1 — Never let an aggregator overwrite a bank statement
+## W1a — Never let an aggregator overwrite a bank statement
 
 **Problem.** `sync_pluggy` writes any `totalAmount` Pluggy returns into a `Cartao`
 mapping's `expected_amount`, unconditionally (`sync_pluggy.py:326`). August's totals
@@ -31,7 +31,13 @@ it, and `billClosingDate` proves the cycle closed, not that the number is immuta
 | closed | equal | no-op |
 | closed | different, non-zero | **do not write** — persist a conflict |
 
-**Termination.** A conflict is a durable row, not a log line — `audit_sync` reads
+**W1a is the protection and needs no schema at all** — refusing to write is the whole
+defence, and it closes the live risk immediately. Everything below about durable
+conflicts is **W1b**, which is blocked (see *"Tooling blocker"*). Until W1b lands, a
+conflict is logged and reported by check G derived live, which means it repeats every
+run — acceptable while the count is zero.
+
+**Termination (W1b).** A conflict is a durable row, not a log line — `audit_sync` reads
 database state and never fetches bills, so sync must persist what it saw. Identity:
 `(bill_id, stored_total, pluggy_total)`, so a later Pluggy revision reads as new
 information while unrelated metadata churn does not. Two terminal operations:
@@ -44,10 +50,6 @@ equals `stored_total` *and* the observed bill still equals `pluggy_total`;
 `keep-statement` refuses if the mapping no longer matches. Otherwise an operator
 resolves a stale conflict over a newer manual edit. A hand-edited `expected_amount`
 correctly mints a **new** unacknowledged identity.
-
-**Blocked on the same authorisation as W3.** A conflict must be a durable row — a file
-in the cron container is not durable, and resolution mutates a mapping. See
-*"Decision required"* below; W1 is **not** independently shippable until it is answered.
 
 **Settled details.** Compare with `!=` on 2-decimal Decimals, not `> 0.01`.
 `billClosingDate` is a bank-local calendar date at midnight UTC — compare dates, not
@@ -118,50 +120,17 @@ dry-run and `--approve-gap-run` releases it; the maintenance gate skips mutation
 
 ---
 
-## W4 — Make the guard reach a human
+## W4 — Alerting — REMOVED
 
-**Problem.** The checkers exit non-zero into stdout and nothing alerts. Every bug this
-session was found by the operator noticing a number — what the guard was meant to
-replace.
+Dropped at the operator's request: *"não precisa me mandar nenhum aviso por enquanto,
+tire essa etapa."* No WhatsApp delivery, no identity allowlist, no `--json` output.
+`audit_sync` stays exactly as it is — log plus exit code on checks A and B.
 
-**What review corrected.** Alerting on exit code stays silent when C/D/E regress
-(only A and B gate). And a **count** baseline cannot see a replacement: resolve one
-legacy row, gain one new, count stays 10, nothing fires.
-
-**Design.**
-- `audit_sync --json` emits per check `{check, label, count, identities[]}` with
-  **complete** identifiers.
-- **Canonical identity per check**, so an allowlist entry cannot drift:
-
-  | | identity |
-  |---|---|
-  | A | transaction id + violation type (orphan vs parent-mismatch) |
-  | B | mapping id + transaction id |
-  | C | mapping id |
-  | D | sorted member transaction ids + invoice month — **never merchant text**, which sync rewrites |
-  | E | transaction id |
-  | F | transaction id + sorted claiming mapping ids; malformed: + state code |
-  | G | bill id + stored total + Pluggy total |
-
-- **Identity allowlist** in the repo — the ten C rows and the one D pair, each with a
-  one-line justification. Alert on `current − accepted`, naming what appeared **and**
-  what disappeared. Adding an entry requires a justification; tests fail on an
-  unexplained addition, so it is not a make-it-green knob.
-- Alerts also on a stage failing, timing out, or the previous scheduled run never
-  completing.
-- Delivery: WhatsApp via the bridge (`http://whatsapp-bridge:8080`), fixed recipient,
-  `[elder-brain] ` prefix, short timeout. Payload bounded to check letter, label and
-  counts — no merchant text, no per-row amounts. Detail stays in the log. Delivery
-  failure logs at ERROR and never masks the exit code.
-- Silent when nothing is new.
-
-**Accepted limitation.** A wrapper inside the cron container cannot report that cron
-never started or the container died; the next run reports a missed previous run,
-which covers everything short of a *continuing* outage. An external dead-man is the
-real answer and is out of scope — "the operator opens the dashboard most days" is an
-availability tradeoff, not monitoring, and is recorded as such.
-
----
+**Cost, stated rather than buried.** The standing backlog (C=10, E=4, D=1) remains a
+permanent wall of warnings, so a *new* occurrence of check C is not distinguishable
+from the ten known ones without reading the list by hand. That is today's situation;
+it simply does not improve. W6's gap rule and `check_phantom_duplicates` still work —
+they are safety mechanisms, not notifications.
 
 ## W0 — Defects the review found in shipped code
 
@@ -329,15 +298,14 @@ still carries; audit B silent on a discretionary transfer. Diff identical today.
 
 ## Sequencing
 
-1. **W1**, carrying the single additive migration that creates **both** tables — a
+1. **W1a** — quarantine only, no schema, closes the live corruption path today.
+2. **W1b + W6**, carrying the single additive migration that creates **both** tables — a
    schema-only deploy adds overhead without reducing risk, and shipping the unused
    `FinancePipelineRun` alongside preserves the authorised one-migration design.
-2. **W6** — destructive stages run unguarded every day.
-3. **W4** — reads the run summary W6 defines.
-4. **W0a** → **W2**.
-5. **W0b** + targeted merge → **W5-E**.
-6. **W3** — only if authorised.
-7. **W5-D** — when the invoice arrives.
+3. **W0a** → **W2**.
+4. **W0b** + targeted merge → **W5-E**.
+5. **W3** — only if authorised.
+6. **W5-D** — when the invoice arrives.
 
 One deploy per workstream so a regression is attributable. Each: codex review of the
 finished work, tests, old-vs-new production diff, deploy.
@@ -359,6 +327,16 @@ are not committed to git.
   invoice is not proof of duplication; the rule would have deleted a legitimate series.
 - **Fabricating links to silence check C** — a zero warning is not a true one.
 - **An enum for W3** — one distinction, one Boolean.
+
+## Tooling blocker — W1b and W6
+
+The operator authorised the schema addition, but `.claude/settings.json` still denies
+`Edit(backend/api/models.py)` and `Edit(backend/api/migrations/*)`. The authorisation
+is verbal; the guard rail is mechanical. W1b and W6 cannot start until the operator
+either relaxes those two entries or applies the model and migration.
+
+**W1a is unaffected** and ships first regardless — the protection is a refusal to
+write, not a record.
 
 ## Decision — resolved by the operator
 

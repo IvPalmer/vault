@@ -564,3 +564,28 @@ rejected: external dead-man monitoring, and an enum in place of a Boolean for W3
 
 **No unresolved disagreement remains.** Awaiting the operator's final sign-off to
 start building.
+
+---
+
+## Post-loop change — W4 removed
+
+Operator, after the loop closed: *"não precisa me mandar nenhum aviso por enquanto,
+tire essa etapa, siga com as outras."*
+
+W4 is dropped whole — delivery, identity allowlist and `--json`. Not deferred under
+another name: the allowlist existed to make an alert meaningful, and without delivery
+it is machinery without a consumer.
+
+**Consequence recorded, not buried:** the standing backlog stays a permanent wall of
+warnings, so a new check-C occurrence is not distinguishable from the ten known ones
+without reading the list by hand. That is the status quo; it simply stops improving.
+W6's gap rule and the phantom checker are unaffected — they are safety mechanisms,
+not notifications.
+
+W1 is also split: **W1a** (quarantine, no schema, closes the live risk) ships first;
+**W1b** (durable conflict store) joins W6 behind the tooling blocker below.
+
+**Tooling blocker.** The schema addition is authorised verbally, but
+`.claude/settings.json` still denies `Edit(backend/api/models.py)` and
+`Edit(backend/api/migrations/*)`. W1b and W6 wait on the operator relaxing those or
+applying the model himself.
