@@ -1,3 +1,9 @@
+> **Status 2026-08-03 — executado.** W1a, W1b, W6, W0a/W0b, W2 e o merge
+> direcionado estão em produção; ver `docs/finance-metrics-ago2026.md`. W4
+> (alertas) foi removido a pedido do operador. W3 (consórcio vs reserva) foi
+> descartado por decisão: reserva conta como gasto. Resta apenas W5-D, a
+> duplicata da Rafa, bloqueada na fatura do NuBank de out/2025.
+
 # Plan — Clean slate: stabilise and automate the finance pipeline
 
 Operator's goal: *"quero um prato limpo e tudo estável e automatizado."* No
