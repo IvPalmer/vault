@@ -15,7 +15,7 @@ import re
 import logging
 import unicodedata
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -82,6 +82,20 @@ def _detect_internal_transfer(description, amount, raw_description=''):
         'pagamento recebido',  # CC payment received (from checking)
     ]
     return any(p in combined for p in patterns)
+
+
+def _money(value):
+    """Two decimal places, matching the DecimalField the value is compared against.
+
+    Pluggy returns JSON floats, so `totalAmount` arrives as 1467.5600000000001.
+    Comparing at full precision called that a conflict against a stored 1467.56,
+    and then storing it rounded to 2dp produced a row whose two totals were
+    equal — a false conflict that also collided with the identity constraint on
+    the next run.
+    """
+    if value is None:
+        return None
+    return Decimal(str(value)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
 def bill_write_decision(stored, bill_total, closing_date, today):
@@ -348,7 +362,7 @@ class Command(BaseCommand):
                                     if _closing_raw else None
                                 )
                                 self.bill_totals[(vault_name, inv_month)] = (
-                                    Decimal(str(total_amount)), _closing, bill.get('id', ''),
+                                    _money(total_amount), _closing, bill.get('id', ''),
                                 )
                         self.stdout.write(f'  Loaded {len(bills)} bills for {vault_name}')
                     except Exception as e:
@@ -396,7 +410,7 @@ class Command(BaseCommand):
                 ).first()
                 if mapping is None:
                     continue
-                stored = mapping.expected_amount
+                stored = _money(mapping.expected_amount)
                 action = bill_write_decision(stored, bill_total, closing, today)
                 label = f'{card_name} {inv_month}'
                 if action == 'write':
@@ -527,22 +541,31 @@ class Command(BaseCommand):
         hand-edited stored amount, mints a NEW unacknowledged row while unrelated
         metadata churn does not.
         """
+        from django.db import IntegrityError, transaction as _dbtx
         from api.models import BillReconciliationConflict
-        obj, created = BillReconciliationConflict.objects.get_or_create(
+
+        identity = dict(
             profile=self.profile, bill_id=bill_id,
             stored_total=stored, pluggy_total=pluggy_total,
-            defaults={
-                'mapping': mapping,
-                # Cartao templates carry no account FK; the convention across the
-                # engine is template.name == account.name.
-                'account': Account.objects.filter(
-                    profile=self.profile, name=card_name,
-                    account_type='credit_card').first(),
-                'card_name': card_name,
-                'month_str': month_str,
-                'bill_closing_date': closing,
-            },
         )
+        defaults = {
+            'mapping': mapping,
+            # Cartao templates carry no account FK; the convention across the
+            # engine is template.name == account.name.
+            'account': Account.objects.filter(
+                profile=self.profile, name=card_name,
+                account_type='credit_card').first(),
+            'card_name': card_name,
+            'month_str': month_str,
+            'bill_closing_date': closing,
+        }
+        try:
+            with _dbtx.atomic():
+                obj, created = BillReconciliationConflict.objects.get_or_create(
+                    defaults=defaults, **identity)
+        except IntegrityError:
+            # Raced another run on the identity constraint — the row exists.
+            obj, created = BillReconciliationConflict.objects.get(**identity), False
         if not created:
             obj.save(update_fields=['last_seen_at'])   # auto_now
         _supersede_stale_conflicts(self.profile, bill_id, obj.id)

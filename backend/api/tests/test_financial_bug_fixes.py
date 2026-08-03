@@ -1617,3 +1617,33 @@ class BillConflictLifecycleTests(TestCase):
         count, lines = Command()._check_g(self.profile)
         self.assertEqual(count, 1)
         self.assertIn('3400.00', lines[0])
+
+
+class BillAmountPrecisionTests(TestCase):
+    """Pluggy returns JSON floats: `totalAmount` arrives as 1467.5600000000001.
+    Comparing at full precision called that a conflict against a stored 1467.56,
+    and storing it rounded to 2dp produced a row whose two totals were equal —
+    a false conflict that then collided with the identity constraint."""
+
+    def test_float_residue_is_not_a_conflict(self):
+        from api.management.commands.sync_pluggy import _money, bill_write_decision
+        stored = Decimal('1467.56')
+        pluggy = _money(1467.5600000000001)
+        self.assertEqual(pluggy, stored)
+        self.assertEqual(
+            bill_write_decision(stored, pluggy, date(2026, 7, 29), date(2026, 8, 3)),
+            'noop',
+        )
+
+    def test_a_real_difference_survives_quantisation(self):
+        from api.management.commands.sync_pluggy import _money, bill_write_decision
+        self.assertEqual(
+            bill_write_decision(Decimal('1467.56'), _money(1467.57),
+                                date(2026, 7, 29), date(2026, 8, 3)),
+            'conflict',
+        )
+
+    def test_money_rounds_half_up_at_two_places(self):
+        from api.management.commands.sync_pluggy import _money
+        self.assertEqual(_money(739.125), Decimal('739.13'))
+        self.assertEqual(_money(None), None)
