@@ -105,18 +105,13 @@ services:
         # spaces and quotes), and source it in every job.
         python -c "import os,shlex;ks=[k for k in os.environ if k in ('PATH','DEBUG','SECRET_KEY','ALLOWED_HOSTS') or k.startswith(('PLUGGY_','POSTGRES_','CORS_','DJANGO_'))];open('/etc/cron_env','w').write(''.join('export %s=%s\n'%(k,shlex.quote(os.environ[k])) for k in sorted(ks)))"
         chmod 600 /etc/cron_env
-        echo "$$SYNC_SCHEDULE . /etc/cron_env && cd /app && python manage.py sync_pluggy --profile Palmer --save-balance >> /proc/1/fd/1 2>&1" > /tmp/crontab
-        echo "$$SYNC_SCHEDULE . /etc/cron_env && cd /app && python manage.py sync_pluggy --profile Rafa --save-balance >> /proc/1/fd/1 2>&1" >> /tmp/crontab
-        # Reconcile Pluggy installments after each sync: correct invoice_month
-        # from the authoritative billId, then remove re-listed duplicates.
-        echo "15 8 * * * . /etc/cron_env && cd /app && python manage.py rebucket_invoice_month --apply >> /proc/1/fd/1 2>&1" >> /tmp/crontab
-        echo "20 8 * * * . /etc/cron_env && cd /app && python manage.py dedup_installments --apply >> /proc/1/fd/1 2>&1" >> /tmp/crontab
-        # Phantom-duplicate sentinel: runs 30 minutes after each Pluggy sync.
-        # Logs counts; exits 1 if rows > 5 OR value > R$500 so cron logs flag regressions.
-        echo "30 8 * * * . /etc/cron_env && cd /app && python manage.py check_phantom_duplicates --max-rows 5 --max-value 500 >> /proc/1/fd/1 2>&1" >> /tmp/crontab
-        # Invariant audit: states the pipeline can only reach by regressing.
-        # Runs last so it sees the post-dedup, post-rebucket world.
-        echo "35 8 * * * . /etc/cron_env && cd /app && python manage.py audit_sync >> /proc/1/fd/1 2>&1" >> /tmp/crontab
+        # One sequenced, guarded run replaces five clock-triggered jobs. The old
+        # 08:00/08:15/08:20/08:30/08:35 layout fired rebucket --apply and dedup
+        # --apply regardless of whether the syncs had finished, or finished at
+        # all — and rebucketing and DELETING on top of a partial sync is a
+        # different failure class from running late.
+        echo "$$SYNC_SCHEDULE . /etc/cron_env && cd /app && python manage.py run_finance_pipeline >> /proc/1/fd/1 2>&1" > /tmp/crontab
+        echo "" >> /tmp/crontab
         crontab /tmp/crontab
         echo "cron started: $$SYNC_SCHEDULE"
         cron -f

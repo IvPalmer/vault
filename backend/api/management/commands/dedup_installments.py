@@ -24,7 +24,7 @@ import re
 from collections import defaultdict
 from datetime import date, timedelta
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction as dbtx
 
 from api.models import Account, Profile, RecurringMapping, Transaction
@@ -59,6 +59,12 @@ class Command(BaseCommand):
         parser.add_argument('--profile', help='Profile name. Default: all in PROFILE_CONFIG.')
         parser.add_argument('--apply', action='store_true', help='Delete duplicates (default: dry-run).')
         parser.add_argument('--days', type=int, default=400, help='Pluggy lookback window.')
+        parser.add_argument(
+            '--strict', action='store_true',
+            help='Treat a failed upstream fetch as fatal instead of logging and '
+                 'continuing. Partial bill coverage changes which rows are '
+                 'considered bill-backed, so a mutating run must refuse it.')
+
 
     def _profiles(self, arg):
         if arg:
@@ -84,6 +90,10 @@ class Command(BaseCommand):
                         bill_map[b['id']] = b['dueDate'][:7]
                 except Exception as e:
                     self.stderr.write(f'  bills fail {vname}: {e}')
+                    if self.strict:
+                        raise CommandError(
+                            f'--strict: cobertura incompleta, faturas de '
+                            f'{vname} não carregaram ({e})')
         live_ext, ext_to_ident, inst_winner = set(), {}, {}
         for pid, vname in amap.items():
             a = Account.objects.filter(profile=profile, name=vname).first()
@@ -144,6 +154,7 @@ class Command(BaseCommand):
         mapping.save(update_fields=['actual_amount'])
 
     def handle(self, *args, **opts):
+        self.strict = opts.get('strict', False)
         apply = opts['apply']
         cutoff = date.today() - timedelta(days=opts['days'])
         grand = 0

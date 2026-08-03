@@ -230,6 +230,11 @@ class Command(BaseCommand):
         parser.add_argument('--item', dest='item_id', help='Override Pluggy item ID (for ad-hoc sync)')
         parser.add_argument('--dry-run', action='store_true', help='Show what would be synced without writing')
         parser.add_argument(
+            '--strict', action='store_true',
+            help='Treat a failed upstream fetch as fatal instead of logging and '
+                 'continuing. Partial bill coverage changes which rows count as '
+                 'bill-backed, so a mutating run must refuse it.')
+        parser.add_argument(
             '--explain-bills', action='store_true',
             help='Report the write decision for every Pluggy bill (write / skip-open / '
                  'noop / conflict) using the same logic as the real write. A plain '
@@ -261,6 +266,7 @@ class Command(BaseCommand):
         self.profile = profile
         self.dry_run = options['dry_run']
         self.explain_bills = options.get('explain_bills', False)
+        self.strict = options.get('strict', False)
 
         # Resolve item IDs and account map for this profile
         config = PROFILE_CONFIG.get(profile_name, {})
@@ -367,6 +373,10 @@ class Command(BaseCommand):
                         self.stdout.write(f'  Loaded {len(bills)} bills for {vault_name}')
                     except Exception as e:
                         self.stderr.write(f'  Failed to load bills for {vault_name}: {e}')
+                        if self.strict:
+                            raise CommandError(
+                                f'--strict: cobertura incompleta, faturas de '
+                                f'{vault_name} não carregaram ({e})')
 
             # Sync each mapped account in this item
             for pluggy_acct_id, vault_name in account_map.items():

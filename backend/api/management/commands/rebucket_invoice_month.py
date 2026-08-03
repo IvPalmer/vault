@@ -26,7 +26,7 @@ import os
 from collections import Counter
 from datetime import date, timedelta
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from api.models import Account, Profile, Transaction
 from api.pluggy import PluggyClient
@@ -42,6 +42,12 @@ class Command(BaseCommand):
     help = 'Fix invoice_month on existing Pluggy CC transactions from the Pluggy billId mapping.'
 
     def add_arguments(self, parser):
+        parser.add_argument(
+            '--strict', action='store_true',
+            help='Treat a failed upstream fetch as fatal instead of logging and '
+                 'continuing. Partial bill coverage changes which rows are '
+                 'considered bill-backed, so a mutating run must refuse it.')
+
         parser.add_argument('--profile', help='Profile name. Default: all in PROFILE_CONFIG.')
         parser.add_argument('--apply', action='store_true', help='Write changes (default: dry-run).')
         parser.add_argument('--days', type=int, default=400, help='Pluggy lookback window.')
@@ -52,6 +58,7 @@ class Command(BaseCommand):
         return Profile.objects.filter(name__in=list(PROFILE_CONFIG.keys()))
 
     def handle(self, *args, **opts):
+        self.strict = opts.get('strict', False)
         apply = opts['apply']
         grand = 0
         for profile in self._profiles(opts.get('profile')):
@@ -85,6 +92,10 @@ class Command(BaseCommand):
                                     latest_close, latest_close_inv = cd, inv
                     except Exception as e:
                         self.stderr.write(f'  bills fail {vname}: {e}')
+                        if self.strict:
+                            raise CommandError(
+                                f'--strict: cobertura incompleta, faturas de '
+                                f'{vname} não carregaram ({e})')
 
             # Is this an Itaú-style cycle (bill due the month AFTER it closes)?
             # NuBank closes mid-month and is due the same month — its open-bill

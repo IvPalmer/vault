@@ -1647,3 +1647,73 @@ class BillAmountPrecisionTests(TestCase):
         from api.management.commands.sync_pluggy import _money
         self.assertEqual(_money(739.125), Decimal('739.13'))
         self.assertEqual(_money(None), None)
+
+
+class FinancePipelineGuardTests(TestCase):
+    """rebucket --apply and dedup --apply used to fire on the clock regardless
+    of whether the syncs finished, or finished at all."""
+
+    def setUp(self):
+        from api.management.commands.run_finance_pipeline import Command
+        self.cmd = Command()
+
+    def _run(self, **kw):
+        from api.models import FinancePipelineRun
+        from django.utils import timezone
+        base = dict(kind='scheduled', applied=True, finished_at=timezone.now())
+        base.update(kw)
+        return FinancePipelineRun.objects.create(**base)
+
+    def test_an_open_maintenance_row_is_the_gate(self):
+        self.assertIsNone(self.cmd.maintenance_open())
+        self._run(kind='maintenance', applied=False, finished_at=None)
+        self.assertIsNotNone(self.cmd.maintenance_open())
+
+    def test_a_closed_maintenance_row_reopens_the_pipeline(self):
+        self._run(kind='maintenance', applied=False)
+        self.assertIsNone(self.cmd.maintenance_open())
+
+    def test_a_checker_finding_something_is_not_a_stage_failure(self):
+        """Both checkers exit non-zero by design. Treating that as failure
+        would stop the run before the audit and the report."""
+        outcome, _ = self.cmd._run_stage(
+            'x', ['audit_sync', '--nonexistent-flag'], 30, checker=True)
+        self.assertEqual(outcome, 'findings')
+
+    def test_a_real_stage_failure_is_a_failure(self):
+        outcome, _ = self.cmd._run_stage(
+            'x', ['audit_sync', '--nonexistent-flag'], 30, checker=False)
+        self.assertEqual(outcome, 'failed')
+
+    def test_no_previous_run_is_not_stale(self):
+        self.assertFalse(self.cmd.gap_blocks_apply(36))
+
+    def test_a_recent_applied_run_is_not_stale(self):
+        self._run()
+        self.assertFalse(self.cmd.gap_blocks_apply(36))
+
+    def test_an_old_applied_run_blocks_apply(self):
+        from datetime import timedelta as _td
+        from django.utils import timezone
+        r = self._run()
+        type(r).objects.filter(id=r.id).update(
+            finished_at=timezone.now() - _td(days=5))
+        self.assertTrue(self.cmd.gap_blocks_apply(36))
+
+    def test_approving_a_catch_up_run_releases_the_gap(self):
+        """Otherwise dry-run is never a successful applying run, and the
+        pipeline stays in dry-run forever."""
+        from datetime import timedelta as _td
+        from django.utils import timezone
+        old = self._run()
+        type(old).objects.filter(id=old.id).update(
+            finished_at=timezone.now() - _td(days=5))
+        self.assertTrue(self.cmd.gap_blocks_apply(36))
+        self._run(applied=False, approved_at=timezone.now())
+        self.assertFalse(self.cmd.gap_blocks_apply(36))
+
+    def test_the_lock_is_acquired_and_released(self):
+        # A second HOLDER cannot be tested from one connection: Postgres
+        # advisory locks are re-entrant within a session.
+        self.assertTrue(self.cmd._try_lock())
+        self.cmd._unlock()
