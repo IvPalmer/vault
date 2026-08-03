@@ -220,6 +220,31 @@ def _mapping_expected_amount(mapping):
     return mapping.expected_amount or Decimal('0.00')
 
 
+def _eom_anchor_is_statement(month_str, profile):
+    """Is the previous month's closing balance backed by a STATEMENT?
+
+    A Pluggy anchor's date is the sync date, not the date the balance covers —
+    the documented ~1-day lag. So a salary landing on the 30th may sit outside
+    an anchor nominally dated the 30th, and netting it out of the opening
+    balance would remove money the balance never held. Only a statement- or
+    manually-sourced anchor on the exact month end is known to cover its own
+    month; everything else (Pluggy anchor, BalanceOverride, rolled-forward,
+    missing) is unverified.
+
+    Conservative by construction: an unverified anchor means no adjustment,
+    which can under-adjust a projection but can never invent or remove money.
+    """
+    import calendar
+    from datetime import date as _date
+
+    year, month = int(month_str[:4]), int(month_str[5:7])
+    month_end = _date(year, month, calendar.monthrange(year, month)[1])
+    anchor = BalanceAnchor.objects.filter(
+        profile=profile, date=month_end,
+    ).order_by('-id').first()
+    return bool(anchor and not (anchor.source_file or '').startswith('pluggy:'))
+
+
 def _prev_month_advance(month_str, profile):
     """Signed total of PREVIOUS-month transactions this month already claims.
 
@@ -244,9 +269,10 @@ def _prev_month_advance(month_str, profile):
     if not checking_ids:
         return Decimal('0.00')
     total = Decimal('0.00')
+    # Skipped mappings claim nothing — every other metric excludes them.
     mappings = RecurringMapping.objects.filter(
         month_str=month_str, profile=profile,
-    ).prefetch_related('cross_month_transactions')
+    ).exclude(status__in=['skipped', 'Pulado']).prefetch_related('cross_month_transactions')
     seen = set()
     for m in mappings:
         for t in m.cross_month_transactions.all():
@@ -2199,7 +2225,14 @@ def get_metricas(month_str, profile=None):
     prev_checking_bank = _get_checking_balance_eom(
         _month_str_add(month_str, -1), profile=profile
     )
-    prev_month_advance = _prev_month_advance(month_str, profile)
+    # Only net the advance out when the closing balance is KNOWN to contain it.
+    # A lagging Pluggy anchor may not hold a salary that landed on the 30th, and
+    # subtracting it then would remove money the balance never had.
+    _advance_raw = _prev_month_advance(month_str, profile)
+    _advance_verified = (_advance_raw == 0
+                         or _eom_anchor_is_statement(
+                             _month_str_add(month_str, -1), profile))
+    prev_month_advance = _advance_raw if _advance_verified else Decimal('0.00')
     prev_checking = (None if prev_checking_bank is None
                      else prev_checking_bank - prev_month_advance)
     prev_month_saldo_float = (float(prev_checking_bank)
@@ -2394,6 +2427,9 @@ def get_metricas(month_str, profile=None):
         'prev_month_saldo': prev_month_saldo_float,
         'opening_balance': opening_balance_float,
         'prev_month_advance': float(prev_month_advance),
+        # True when an advance exists but the closing balance is not known to
+        # contain it, so it was deliberately NOT netted out.
+        'advance_unverified': float(_advance_raw) if not _advance_verified else 0.0,
         'checking_balance_eom': float(checking_balance_eom) if checking_balance_eom is not None else None,
         'entradas_atuais': float(entradas_atuais),
         'entradas_projetadas': float(entradas_projetadas),

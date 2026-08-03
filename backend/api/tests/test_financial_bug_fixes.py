@@ -1717,3 +1717,133 @@ class FinancePipelineGuardTests(TestCase):
         # advisory locks are re-entrant within a session.
         self.assertTrue(self.cmd._try_lock())
         self.cmd._unlock()
+
+
+class AdvanceVerificationTests(TestCase):
+    """Netting the advance out of the opening balance is only valid when the
+    closing balance is KNOWN to contain it. A Pluggy anchor's date is the sync
+    date, not the date the balance covers."""
+
+    def setUp(self):
+        from api.models import BalanceAnchor
+        self.profile = Profile.objects.create(name='Tester')
+        self.account = Account.objects.create(
+            profile=self.profile, name='Checking', account_type='checking')
+        self.tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name='FS', template_type='Income',
+            default_limit=Decimal('44000.00'))
+
+    def _anchor(self, source):
+        from api.models import BalanceAnchor
+        BalanceAnchor.objects.create(
+            profile=self.profile, date=date(2026, 2, 28),
+            balance=Decimal('42000.00'), source_file=source)
+
+    def _early_salary(self, status='mapped'):
+        from api.models import RecurringMapping
+        from api.services import map_transaction_to_category
+        m = RecurringMapping.objects.create(
+            profile=self.profile, template=self.tpl, month_str='2026-03',
+            expected_amount=Decimal('44000.00'), status=status)
+        txn = Transaction.objects.create(
+            profile=self.profile, account=self.account, date=date(2026, 2, 28),
+            description='SISPAG PIX', amount=Decimal('22000.00'), month_str='2026-02')
+        map_transaction_to_category(txn.id, mapping_id=m.id, profile=self.profile)
+        return m
+
+    def test_a_statement_anchor_lets_the_advance_net(self):
+        from api.services import get_metricas
+        self._anchor('statement:itau-022026')
+        self._early_salary()
+        r = get_metricas('2026-03', profile=self.profile)
+        self.assertAlmostEqual(r['prev_month_advance'], 22000.00, places=2)
+        self.assertAlmostEqual(r['opening_balance'], 20000.00, places=2)
+        self.assertAlmostEqual(r['advance_unverified'], 0.00, places=2)
+
+    def test_a_pluggy_anchor_refuses_to_net(self):
+        """The lag is exactly why: the balance may not hold a salary that
+        landed on the 30th, and subtracting it would remove money it never had."""
+        from api.services import get_metricas
+        self._anchor('pluggy:checking')
+        self._early_salary()
+        r = get_metricas('2026-03', profile=self.profile)
+        self.assertAlmostEqual(r['prev_month_advance'], 0.00, places=2)
+        self.assertAlmostEqual(r['opening_balance'], 42000.00, places=2)
+        self.assertAlmostEqual(r['advance_unverified'], 22000.00, places=2)
+
+    def test_a_skipped_mapping_claims_nothing(self):
+        from api.services import _prev_month_advance
+        self._anchor('statement:itau-022026')
+        m = self._early_salary()
+        # map_transaction_to_category sets status='mapped' when it links, so the
+        # skip has to come after — which is also how it happens in the UI.
+        m.status = 'skipped'
+        m.save(update_fields=['status'])
+        self.assertAlmostEqual(
+            float(_prev_month_advance('2026-03', self.profile)), 0.00, places=2)
+
+
+class CrossMonthIntegrityTests(TestCase):
+    """Check F. A checking transaction claimed twice would net an advance twice;
+    card links are exempt from adjacency because Pluggy stamps the purchase date,
+    so a September instalment legitimately bills in February."""
+
+    def setUp(self):
+        from api.management.commands.audit_sync import Command
+        self.cmd = Command()
+        self.profile = Profile.objects.create(name='Tester')
+        self.checking = Account.objects.create(
+            profile=self.profile, name='Checking', account_type='checking')
+        self.card = Account.objects.create(
+            profile=self.profile, name='Visa', account_type='credit_card')
+
+    def _mapping(self, month):
+        from api.models import RecurringMapping
+        tpl = RecurringTemplate.objects.create(
+            profile=self.profile, name=f'X{month}', template_type='Fixo',
+            default_limit=Decimal('100.00'))
+        return RecurringMapping.objects.create(
+            profile=self.profile, template=tpl, month_str=month,
+            expected_amount=Decimal('100.00'))
+
+    def _txn(self, account, month):
+        return Transaction.objects.create(
+            profile=self.profile, account=account, date=date(2026, int(month[5:]), 10),
+            description='X', amount=Decimal('-100.00'), month_str=month)
+
+    def test_a_clean_adjacent_link_passes(self):
+        m = self._mapping('2026-03')
+        t = self._txn(self.checking, '2026-02')
+        m.transactions.add(t); m.cross_month_transactions.add(t)
+        self.assertEqual(self.cmd._check_f(self.profile)[0], 0)
+
+    def test_a_non_adjacent_checking_claim_is_flagged(self):
+        m = self._mapping('2026-06')
+        t = self._txn(self.checking, '2026-02')
+        m.transactions.add(t); m.cross_month_transactions.add(t)
+        count, lines = self.cmd._check_f(self.profile)
+        self.assertEqual(count, 1)
+        self.assertIn('não-adjacente', lines[0])
+
+    def test_a_distant_card_link_is_legitimate(self):
+        """ACUAS 05/15: purchased 2025-09, billed 2026-02."""
+        m = self._mapping('2026-06')
+        t = self._txn(self.card, '2026-02')
+        m.transactions.add(t); m.cross_month_transactions.add(t)
+        self.assertEqual(self.cmd._check_f(self.profile)[0], 0)
+
+    def test_a_missing_cross_month_marker_is_flagged(self):
+        m = self._mapping('2026-03')
+        t = self._txn(self.checking, '2026-02')
+        m.transactions.add(t)          # no cross-month marker
+        count, lines = self.cmd._check_f(self.profile)
+        self.assertEqual(count, 1)
+        self.assertIn('sem marcador cross', lines[0])
+
+    def test_two_mappings_claiming_one_checking_txn_is_flagged(self):
+        t = self._txn(self.checking, '2026-02')
+        for month in ('2026-03', '2026-01'):
+            m = self._mapping(month)
+            m.transactions.add(t); m.cross_month_transactions.add(t)
+        count, lines = self.cmd._check_f(self.profile)
+        self.assertTrue(any('dupla' in l for l in lines), lines)

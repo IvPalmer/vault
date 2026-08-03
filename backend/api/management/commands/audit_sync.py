@@ -31,6 +31,13 @@ Checks (each independent; all are reported, exit code reflects the worst):
      one invoice legitimately. Every group needs a human before anything is
      deleted.
 
+  F  cross-month link integrity — a checking transaction claimed by more than
+     one mapping (which would net an advance twice), a non-adjacent checking
+     claim, or a malformed pair where an other-month transaction sits in
+     `transactions` without its `cross_month_transactions` marker. Card links
+     are exempt from adjacency: Pluggy stamps the purchase date, so a September
+     instalment legitimately bills in February.
+
   G  bill reconciliation conflict — a closed Pluggy bill whose total disagrees
      with the stored invoice amount. Sync refuses to write and records it; this
      surfaces the ones nobody has resolved yet. Gates the exit code: it means a
@@ -62,6 +69,15 @@ from api.models import (
 MIN_MONTH = '2026-01'
 
 _POS_SUFFIX = re.compile(r'\s*\d{1,2}/\d{1,2}\s*$')
+
+
+def _month_gap(a, b):
+    """Months from b to a, or None if either is unparseable."""
+    try:
+        return ((int(a[:4]) * 12 + int(a[5:7]))
+                - (int(b[:4]) * 12 + int(b[5:7])))
+    except (ValueError, IndexError):
+        return None
 
 
 def _merchant_key(description):
@@ -195,6 +211,37 @@ class Command(BaseCommand):
             lines.append(f'valor duplicado: R$ {value:,.2f}')
         return count, lines[:20]
 
+    def _check_f(self, profile):
+        from api.models import Account
+        checking = set(Account.objects.filter(
+            profile=profile, account_type='checking').values_list('id', flat=True))
+        lines, claims = [], defaultdict(list)
+        mappings = RecurringMapping.objects.filter(
+            profile=profile).prefetch_related('transactions', 'cross_month_transactions')
+        for m in mappings:
+            cross = {t.id: t for t in m.cross_month_transactions.all()}
+            trans = {t.id: t for t in m.transactions.all()}
+            for t in cross.values():
+                if t.account_id in checking:
+                    claims[t.id].append(m)
+                    gap = _month_gap(m.month_str, t.month_str)
+                    if gap is not None and abs(gap) > 1:
+                        lines.append(
+                            f'não-adjacente {m.month_str} <- {t.month_str} '
+                            f'(gap {gap}) R$ {abs(t.amount)} txn {t.id}')
+                if t.id not in trans:
+                    lines.append(f'cross sem transactions {m.month_str} txn {t.id}')
+            for t in trans.values():
+                if t.month_str != m.month_str and t.id not in cross:
+                    lines.append(
+                        f'outro mês sem marcador cross {m.month_str} <- '
+                        f'{t.month_str} R$ {abs(t.amount)} txn {t.id}')
+        for txn_id, ms in claims.items():
+            if len(ms) > 1:
+                lines.append('reivindicação dupla txn %s por %s' % (
+                    txn_id, ', '.join(sorted(m.month_str for m in ms))))
+        return len(lines), lines[:20]
+
     def _check_g(self, profile):
         rows = BillReconciliationConflict.objects.filter(
             profile=profile, resolution='pending',
@@ -233,6 +280,7 @@ class Command(BaseCommand):
                 ('D', 'parcela repetida na mesma fatura (candidatos)',
                  *self._check_d(profile)),
                 ('E', 'parcela sem metadata (cega o dedup)', *self._check_e(profile)),
+                ('F', 'vínculo cross-month inconsistente', *self._check_f(profile)),
                 ('G', 'fatura: extrato vs Pluggy em conflito', *self._check_g(profile)),
             ]
             for code, label, count, lines in results:
