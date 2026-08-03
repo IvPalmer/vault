@@ -23,6 +23,7 @@ import os
 import re
 from collections import defaultdict
 from datetime import date, timedelta
+from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction as dbtx
@@ -59,6 +60,10 @@ class Command(BaseCommand):
         parser.add_argument('--profile', help='Profile name. Default: all in PROFILE_CONFIG.')
         parser.add_argument('--apply', action='store_true', help='Delete duplicates (default: dry-run).')
         parser.add_argument('--days', type=int, default=400, help='Pluggy lookback window.')
+        parser.add_argument('--delete-id', help='Targeted merge: transaction to delete.')
+        parser.add_argument('--keep-id', help='Targeted merge: transaction to keep.')
+        parser.add_argument('--force', action='store_true',
+                            help='Targeted merge: skip the compatibility guards.')
         parser.add_argument(
             '--strict', action='store_true',
             help='Treat a failed upstream fetch as fatal instead of logging and '
@@ -153,8 +158,57 @@ class Command(BaseCommand):
                                  else sum(abs(t.amount) for t in txns))
         mapping.save(update_fields=['actual_amount'])
 
+    def _targeted_merge(self, del_id, keep_id, apply, force):
+        """Merge one reviewed pair. The rules decide sets; this decides nothing —
+        a human already did, with the issued invoice in hand.
+
+        Guarded so an id typo cannot turn a conservative maintenance command
+        into arbitrary deletion.
+        """
+        try:
+            d = Transaction.objects.get(id=del_id)
+            k = Transaction.objects.get(id=keep_id)
+        except Transaction.DoesNotExist as e:
+            raise CommandError(f'Transação não encontrada: {e}')
+        if d.id == k.id:
+            raise CommandError('delete-id e keep-id são a mesma transação.')
+        if not force:
+            if d.profile_id != k.profile_id:
+                raise CommandError('Perfis diferentes.')
+            if d.account_id != k.account_id:
+                raise CommandError('Contas diferentes — use --force se for intencional.')
+            if (d.amount > 0) != (k.amount > 0):
+                raise CommandError('Sinais opostos: um é estorno, o outro é compra.')
+            if abs(abs(d.amount) - abs(k.amount)) > Decimal('0.01'):
+                raise CommandError(
+                    f'Valores diferentes ({d.amount} vs {k.amount}) — use --force.')
+            if self._categorization_conflict(d, k):
+                raise CommandError(
+                    f'Duas categorizações manuais divergentes '
+                    f'({d.category} vs {k.category}) — resolva antes.')
+        self.stdout.write(
+            f'  apagar {d.date} {d.installment_info or "-":6} R${abs(d.amount):>9} '
+            f'fatura {d.invoice_month} ext {d.external_id[:8]} cat {d.category}')
+        self.stdout.write(
+            f'  manter {k.date} {k.installment_info or "-":6} R${abs(k.amount):>9} '
+            f'fatura {k.invoice_month} ext {k.external_id[:8]} cat {k.category}')
+        if not apply:
+            self.stdout.write(self.style.WARNING('  (dry-run)'))
+            return
+        with dbtx.atomic():
+            touched = self._transfer_links(d, k)
+            d.delete()
+            for m in touched:
+                self._recompute_actual(m)
+        self.stdout.write(self.style.SUCCESS('  merge aplicado'))
+
     def handle(self, *args, **opts):
         self.strict = opts.get('strict', False)
+        if opts.get('delete_id') or opts.get('keep_id'):
+            if not (opts.get('delete_id') and opts.get('keep_id')):
+                raise CommandError('--delete-id e --keep-id andam juntos.')
+            return self._targeted_merge(
+                opts['delete_id'], opts['keep_id'], opts['apply'], opts['force'])
         apply = opts['apply']
         cutoff = date.today() - timedelta(days=opts['days'])
         grand = 0
