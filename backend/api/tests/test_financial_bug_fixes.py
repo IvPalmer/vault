@@ -1847,3 +1847,75 @@ class CrossMonthIntegrityTests(TestCase):
             m.transactions.add(t); m.cross_month_transactions.add(t)
         count, lines = self.cmd._check_f(self.profile)
         self.assertTrue(any('dupla' in l for l in lines), lines)
+
+
+class InstallmentDoubleStampTests(TestCase):
+    """Pluggy recorded one purchase under two purchaseDate stamps 97 minutes
+    apart, so every position exists twice with DIFFERENT identities. RULE 1 keys
+    on the full timestamp on purpose — two genuine same-day purchases differ by
+    seconds — so it can never group them. That is why ~R$2.4k of phantom card
+    spending came back after every sync: deleting the row is useless while
+    Pluggy keeps returning it."""
+
+    def setUp(self):
+        from api.management.commands.dedup_installments import Command
+        self.cmd = Command()
+        self.profile = Profile.objects.create(name='Tester')
+        self.card = Account.objects.create(
+            profile=self.profile, name='Visa', account_type='credit_card')
+
+    def _row(self, ext, pos, when):
+        return Transaction.objects.create(
+            profile=self.profile, account=self.card, date=date(2026, 2, 23),
+            description=f'ACUAS FITNESS {pos}', amount=Decimal('-608.00'),
+            month_str='2026-02', installment_info=pos, is_installment=True,
+            external_id=ext, source_file=f'pluggy:{ext}',
+        )
+
+    @staticmethod
+    def _ident(stamp, n):
+        return ('5284', stamp, n, 15, 'ACUAS', Decimal('608'))
+
+    def test_the_two_stamps_produce_different_identities(self):
+        """The premise: this is why RULE 1 is blind."""
+        a = self._ident('2025-09-02T15:00:01.000Z', 6)
+        b = self._ident('2025-09-02T13:22:31.000Z', 6)
+        self.assertNotEqual(a, b)
+        self.assertEqual(a[5], b[5])
+        self.assertEqual(a[1][:10], b[1][:10])   # same purchase DAY
+
+    def test_the_unbilled_copy_is_the_extra(self):
+        billed = self._row('aaa', '6/15', None)
+        unbilled = self._row('bbb', '6/15', None)
+        ext_to_ident = {
+            'aaa': self._ident('2025-09-02T15:00:01.000Z', 6),
+            'bbb': self._ident('2025-09-02T13:22:31.000Z', 6),
+        }
+        decided = self.cmd._rule4([billed, unbilled], ext_to_ident, {'aaa'})
+        self.assertEqual(decided, {unbilled.id: billed.id})
+
+    def test_two_billed_copies_are_left_alone(self):
+        """Without the bill asymmetry there is nothing to decide with."""
+        a = self._row('aaa', '6/15', None)
+        b = self._row('bbb', '6/15', None)
+        ext_to_ident = {
+            'aaa': self._ident('2025-09-02T15:00:01.000Z', 6),
+            'bbb': self._ident('2025-09-02T13:22:31.000Z', 6),
+        }
+        self.assertEqual(self.cmd._rule4([a, b], ext_to_ident, {'aaa', 'bbb'}), {})
+
+    def test_different_purchase_days_are_never_collapsed(self):
+        """Two real purchases of the same plan on different days must survive."""
+        a = self._row('aaa', '6/15', None)
+        b = self._row('bbb', '6/15', None)
+        ext_to_ident = {
+            'aaa': self._ident('2025-09-02T15:00:01.000Z', 6),
+            'bbb': self._ident('2025-11-20T13:22:31.000Z', 6),
+        }
+        self.assertEqual(self.cmd._rule4([a, b], ext_to_ident, {'aaa'}), {})
+
+    def test_a_position_with_no_billed_twin_survives(self):
+        """The real August charge has no bill yet — it is not an extra."""
+        lone = self._row('ccc', '11/15', None)
+        ext_to_ident = {'ccc': self._ident('2025-09-02T13:22:31.000Z', 11)}
+        self.assertEqual(self.cmd._rule4([lone], ext_to_ident, set()), {})

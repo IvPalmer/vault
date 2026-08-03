@@ -17,6 +17,16 @@ row is never deleted unless a concrete surviving keeper is found.
     out-of-range) that has the SAME (card, merchant, amount, position) as a live
     row. Only fires on genuine same-position duplication.
 
+  RULE 4 — one purchase recorded under two purchaseDate stamps. Pluggy stamped
+    the same plan 97 minutes apart, so every position exists twice with DIFFERENT
+    identities and RULE 1 cannot group them (it keys on the full timestamp on
+    purpose: two genuine same-day purchases differ by seconds). Same card,
+    position, plan, merchant, amount and purchase DAY, with exactly one side
+    backed by a bill -> the billed copy is authoritative and the other is the
+    extra. This is what made ~R$2.4k of phantom card spending come back after
+    every sync: deleting the row is useless while Pluggy keeps returning it, so
+    the dedup has to recognise it on each run.
+
 Dry-run by default. Pass --apply to delete.
 """
 import os
@@ -77,7 +87,7 @@ class Command(BaseCommand):
         return Profile.objects.filter(name__in=list(PROFILE_CONFIG.keys()))
 
     def _fetch_live(self, profile, days):
-        """Return (live_ext, ext_to_ident, inst_winner). ext_to_ident maps a
+        """Return (live_ext, ext_to_ident, inst_winner, billed_ext). ext_to_ident maps a
         live external_id -> its full installment identity; inst_winner maps an
         identity -> the external_id to keep (billId-backed preferred)."""
         cfg = PROFILE_CONFIG.get(profile.name)
@@ -100,6 +110,7 @@ class Command(BaseCommand):
                             f'--strict: cobertura incompleta, faturas de '
                             f'{vname} não carregaram ({e})')
         live_ext, ext_to_ident, inst_winner = set(), {}, {}
+        billed_ext = set()   # external_ids whose billId resolves to a real bill
         for pid, vname in amap.items():
             a = Account.objects.filter(profile=profile, name=vname).first()
             if not (a and a.account_type == 'credit_card'):
@@ -114,10 +125,42 @@ class Command(BaseCommand):
                 ext_to_ident[t['id']] = ident
                 bid = meta.get('billId', '')
                 has_bill = bool(bid and bid in bill_map)
+                if has_bill:
+                    billed_ext.add(t['id'])
                 cur = inst_winner.get(ident)
                 if cur is None or (has_bill and not cur[1]):
                     inst_winner[ident] = (t['id'], has_bill)
-        return live_ext, ext_to_ident, {k: v[0] for k, v in inst_winner.items()}
+        return (live_ext, ext_to_ident,
+                {k: v[0] for k, v in inst_winner.items()}, billed_ext)
+
+    @staticmethod
+    def _rule4(rows, ext_to_ident, billed_ext, decided=None):
+        """See RULE 4 in the module docstring. Returns {delete_id: keep_id}."""
+        decided = decided or {}
+        out, by_plan = {}, defaultdict(list)
+        for t in rows:
+            ident = ext_to_ident.get(t.external_id)
+            p = _pos(t.installment_info)
+            if ident is None or not p:
+                continue
+            # ident = (card, purchaseDate, position, total, merchant, amount);
+            # group on everything EXCEPT the timestamp, keeping the purchase DAY.
+            by_plan[(ident[0], ident[2], ident[3], ident[4], ident[5],
+                     ident[1][:10])].append(t)
+        for grp in by_plan.values():
+            if len(grp) < 2:
+                continue
+            billed = [t for t in grp if t.external_id in billed_ext]
+            unbilled = [t for t in grp if t.external_id not in billed_ext]
+            if not billed or not unbilled:
+                continue        # no bill asymmetry — nothing to decide with
+            keep = sorted(billed, key=_keep_score, reverse=True)[0]
+            if keep.id in decided:
+                continue
+            for d in unbilled:
+                if d.id not in decided:
+                    out[d.id] = keep.id
+        return out
 
     @staticmethod
     def _categorization_conflict(src, dst):
@@ -214,7 +257,8 @@ class Command(BaseCommand):
         grand = 0
         for profile in self._profiles(opts.get('profile')):
             self.stdout.write(f'\n=== {profile.name} ===')
-            live_ext, ext_to_ident, inst_winner = self._fetch_live(profile, opts['days'])
+            live_ext, ext_to_ident, inst_winner, billed_ext = self._fetch_live(
+                profile, opts['days'])
             rows = list(Transaction.objects.filter(
                 profile=profile, is_installment=True,
                 source_file__startswith='pluggy:').exclude(external_id=''))
@@ -289,6 +333,18 @@ class Command(BaseCommand):
                         f'categorização manual conflitante '
                         f'({by_id[del_id].category} vs {by_id[keep_id].category})'))
                     del decided[del_id]
+
+            # RULE 4 — one purchase, two purchaseDate stamps. Pluggy recorded the
+            # ACUAS plan twice, 97 minutes apart (13:22:31Z and 15:00:01Z), so the
+            # two copies of every position get DIFFERENT identities and RULE 1 —
+            # which keys on the full timestamp on purpose, because two genuine
+            # same-day purchases differ by seconds — can never group them.
+            #
+            # Decidable from live data without loosening that identity: same card,
+            # same position of the same plan, same merchant, same amount, same
+            # purchase DAY, and exactly one side backed by a bill. The bill is the
+            # authority; the copy Pluggy cannot place on an invoice is the extra.
+            decided.update(self._rule4(rows, ext_to_ident, billed_ext, decided))
 
             for del_id, keep_id in sorted(decided.items(), key=lambda kv: str(by_id[kv[0]].date)):
                 d = by_id[del_id]
