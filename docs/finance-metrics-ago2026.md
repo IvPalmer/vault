@@ -13,6 +13,7 @@ Seven changes shipped 2026-08-01/03, closing the technical debt catalogued in
 | `808ed2b` | Targeted merge with guard rails |
 | `f0d9bb4` | RULE 4 — one purchase, two `purchaseDate` stamps |
 | `9ac6864` | The projection cascade nets the advance on the first synthetic row |
+| `3835232` | A PIX is not an installment — card-only detection + 83 rows repaired |
 
 ---
 
@@ -134,6 +135,77 @@ typo must not turn a conservative maintenance command into arbitrary deletion.
 
 ---
 
+## 6. A PIX is not an installment (`3835232`)
+
+Palmer reported the installment tables showing purchases repeated under different
+categories. Three defects came out of it; this shipped the third and cheapest.
+
+Bank statements truncate the description and glue the transaction's own day and
+month onto the end. `_detect_installment` searched for `\d{1,2}/\d{1,2}` anywhere
+in the string, with no account-type check, so `PIX TRANSF ASSOCIA05/05` dated
+2026-05-05 was read as position 5 of 5. **83 rows on Palmer's Checking carried
+`is_installment=True` that way** — in every one of them `installment_info` was
+exactly the `DD/MM` of the row's own date, and 21 had positive amounts.
+
+A purchase can only be split into positions on a card, so the account type is the
+signal that settles it. Detection is now gated on `is_cc`, and so is the
+`creditCardMetadata` branch below it — otherwise the invariant would hold for the
+regex path only. `account__account_type='credit_card'` was added to the ten
+installment querysets (schedule, projection complement, details, sibling
+categorisation, series reconciliation, last-installment month, analytics trends)
+so a stray flag cannot leak into a bill again. `clear_false_installments` repaired
+the existing rows: dry-run by default, touching the two flags and nothing else.
+
+`set_installment_override` / `delete_installment_override` were left alone — they
+resolve one operator-picked transaction, where a new `DoesNotExist` path is worse
+than the benefit.
+
+### What this did NOT fix
+
+The other two defects are **open by decision**, and they are the ones behind the
+"same purchase, two categories" symptom:
+
+Series identity is the description text — the grouping key is
+`(_extract_base_desc(desc), account, round(|amount|,0), total_inst)`, and
+`_extract_base_desc` only strips a trailing `NN/NN` and lowercases. When the
+description of one purchase changes between positions the series splits in two,
+both halves project their remaining positions in parallel, and category
+reconciliation runs on each half separately — so the split does not *create* the
+category divergence, it **prevents the repair** of it.
+
+- **Provider string drift.** `MERCADOLIVRE*MLJOI` (positions 1–10, 23 chars) vs
+  `MERCADOLIVRE*MLJOIE` (position 11, 24 chars); `AIRBNB * HMNTNRMA9` vs
+  `AIRBNB * HMNTNRMA9M`. The wider rows are exactly the ones synced 2026-08-05.
+  Also `mp *amcarvalhoped`/`mp amcarvalhoped`, `di petti`/`dipetti`.
+- **Legacy friendly name vs acquirer string.** Rafa's position 1 is
+  `pg *calanga camburi bi` (R$ 127,95, Transporte/Bicicleta); positions 2–5 are
+  `bicicleta` (R$ 127,91, Compras/Esportes). They are one purchase: the
+  `bicicleta` rows carry `pluggy_purchase_date = 2026-01-29`, the date of the
+  `calanga` row. Same shape in `cea bsc 700 ecpc`/`cea`,
+  `app *acciobrasil`/`new balance`, `store 206 sul comercio`/`hering 206 sul`.
+
+Measured table/projection inflation aug/26 → jan/27: **Palmer R$ 1.200,74**
+(bill 2026-09 carries both a real `11/12` and a projected `12/12` of one
+purchase), **Rafa R$ 511,80** (the bicycle billed twice per month aug–nov).
+Unchanged by this round, and confirmed unchanged after it.
+
+The fix is a persisted `installment_series_id` derived from provider identity at
+sync time, with a conservative backfill for legacy rows and a migration of the
+existing `InstallmentSeriesOverride` rows — otherwise the caps silently stop
+matching. Prefix or ±1-day fuzzy matching was rejected in review: the loose key
+already collapses unrelated same-amount purchases (`mercado do cafe` vs
+`petz asa norte`), and `pluggy_purchase_date` is a `DateField` that already
+disagrees with itself inside one purchase (AIRBNB: 2026-05-07 vs 2026-05-08).
+
+Two grouping-key inconsistencies found while reading, also open: the projection
+keys on `account.name` while reconciliation keys on `account_id`, and
+`categorize_installment_siblings` rounds the amount to 1 decimal where the others
+round to whole reais. And `_get_txns_for_month` picks the legacy fallback **per
+month, globally** — one card having `invoice_month` rows suppresses another
+card's fallback rows in that month.
+
+---
+
 ## Reconciliation against the issued invoices
 
 The Itaú PDFs are the arbiter. Visa, transaction sums vs invoice totals:
@@ -175,4 +247,4 @@ there is no authoritative total to test a removal against. Blocked on the issued
 NuBank invoice for 2025-10; the targeted merge resolves it in one command once the
 evidence exists.
 
-145 tests.
+150 tests.
