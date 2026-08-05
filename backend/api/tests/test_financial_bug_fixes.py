@@ -1973,3 +1973,88 @@ class ProjectionAdvanceTests(TestCase):
             source_file='pluggy:checking')
         self._claim('2026-04', '2026-03', date(2026, 3, 31))
         self.assertAlmostEqual(self._rows()[1]['advance'], 0.00, places=2)
+
+
+class NonCardInstallmentTests(TestCase):
+    """A purchase can only be split into positions on a card.
+
+    On checking the bank glues the transaction's own day/month onto a truncated
+    description ('PIX TRANSF ASSOCIA05/05' dated 2026-05-05), which the N/M
+    regex read as position 5 of 5. 83 PIX rows carried is_installment that way.
+    """
+
+    def setUp(self):
+        self.profile = Profile.objects.create(name='Tester')
+        self.checking = Account.objects.create(
+            profile=self.profile, name='Checking', account_type='checking')
+        self.card = Account.objects.create(
+            profile=self.profile, name='Mastercard', account_type='credit_card')
+
+    def test_detect_installment_ignores_non_card(self):
+        from api.management.commands.sync_pluggy import _detect_installment
+
+        self.assertEqual(
+            _detect_installment('PIX TRANSF ASSOCIA05/05', False), (False, ''))
+        self.assertEqual(
+            _detect_installment('AMAZON BR 3/12', True), (True, '3/12'))
+
+    def test_checking_rows_stay_out_of_the_installment_schedule(self):
+        from api.services import _compute_installment_schedule
+
+        Transaction.objects.create(
+            profile=self.profile, account=self.checking, date=date(2026, 5, 5),
+            description='PIX TRANSF ASSOCIA05/05', amount=Decimal('-250.00'),
+            is_installment=True, installment_info='05/05', invoice_month='2026-05',
+        )
+        Transaction.objects.create(
+            profile=self.profile, account=self.card, date=date(2026, 5, 5),
+            description='AMAZON BR 1/3', amount=Decimal('-90.00'),
+            is_installment=True, installment_info='1/3', invoice_month='2026-05',
+        )
+
+        schedule = _compute_installment_schedule(
+            '2026-05', num_future_months=0, profile=self.profile)
+        # Only the card purchase — the PIX must not reach the schedule.
+        self.assertAlmostEqual(schedule['2026-05'], 90.00, places=2)
+
+    def test_cleanup_command_clears_only_non_card_flags(self):
+        pix = Transaction.objects.create(
+            profile=self.profile, account=self.checking, date=date(2026, 5, 5),
+            description='PIX TRANSF ASSOCIA05/05', amount=Decimal('-250.00'),
+            is_installment=True, installment_info='05/05',
+        )
+        credit = Transaction.objects.create(
+            profile=self.profile, account=self.checking, date=date(2026, 5, 3),
+            description='PIX TRANSF RAPHAEL03/05', amount=Decimal('500.00'),
+            is_installment=True, installment_info='03/05',
+        )
+        card = Transaction.objects.create(
+            profile=self.profile, account=self.card, date=date(2026, 5, 5),
+            description='AMAZON BR 1/3', amount=Decimal('-90.00'),
+            is_installment=True, installment_info='1/3',
+        )
+
+        call_command('clear_false_installments', '--apply', stdout=StringIO())
+
+        for txn in (pix, credit):
+            txn.refresh_from_db()
+            self.assertFalse(txn.is_installment)
+            self.assertEqual(txn.installment_info, '')
+            # Only the flags move — the money is untouched.
+        pix.refresh_from_db()
+        self.assertEqual(pix.amount, Decimal('-250.00'))
+
+        card.refresh_from_db()
+        self.assertTrue(card.is_installment)
+        self.assertEqual(card.installment_info, '1/3')
+
+    def test_cleanup_command_is_idempotent(self):
+        out = StringIO()
+        call_command('clear_false_installments', '--apply', stdout=out)
+        self.assertIn('Nenhuma parcela falsa', out.getvalue())
+
+    def test_cleanup_command_rejects_unknown_profile(self):
+        from django.core.management.base import CommandError
+
+        with self.assertRaises(CommandError):
+            call_command('clear_false_installments', '--profile', 'Ninguem')

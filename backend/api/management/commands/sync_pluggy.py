@@ -47,8 +47,17 @@ def _load_profile_config():
 PROFILE_CONFIG = _load_profile_config()
 
 
-def _detect_installment(description):
-    """Detect installment from description (e.g. 'STORE 3/12')."""
+def _detect_installment(description, is_credit_card):
+    """Detect installment from description (e.g. 'STORE 3/12').
+
+    Credit cards only. On a checking account the bank glues the transaction's
+    own day/month onto a truncated description ('PIX TRANSF ASSOCIA05/05' on
+    2026-05-05), which this regex reads as position 5 of 5 — 83 PIX rows were
+    flagged as installments that way. Only a card can carry a purchase split
+    into positions, so the account type is the signal that settles it.
+    """
+    if not is_credit_card:
+        return False, ''
     m = re.search(r'(\d{1,2})/(\d{1,2})', description)
     if m:
         current = int(m.group(1))
@@ -916,10 +925,12 @@ class Command(BaseCommand):
             display_desc = self._apply_rename(description)
 
             # Detect installments
-            is_installment, installment_info = _detect_installment(description)
+            is_installment, installment_info = _detect_installment(description, is_cc)
 
-            # CC installment metadata from Pluggy (more reliable than regex)
-            if cc_meta and cc_meta.get('totalInstallments'):
+            # CC installment metadata from Pluggy (more reliable than regex).
+            # Gated on is_cc too, so the card-only invariant holds for every
+            # path that can set the flag, not just the regex above.
+            if is_cc and cc_meta and cc_meta.get('totalInstallments'):
                 is_installment = True
                 inst_num = cc_meta.get('installmentNumber', 1)
                 inst_total = cc_meta['totalInstallments']

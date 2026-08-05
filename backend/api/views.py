@@ -733,7 +733,8 @@ class CategoryBulkReassignView(APIView):
                     total = int(m.group(2))
                     base = _extract_base_desc(txn.description)
                     candidates = Transaction.objects.filter(
-                        account_id=txn.account_id, is_installment=True, profile=profile
+                        account_id=txn.account_id, is_installment=True, profile=profile,
+                        account__account_type='credit_card',
                     )
                     sibling_ids = []
                     for c in candidates:

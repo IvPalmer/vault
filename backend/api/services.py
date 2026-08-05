@@ -3194,6 +3194,7 @@ def _project_installment_complement(month_str, profile=None, exclude_purchase_id
     _lb_invoice_txns = list(Transaction.objects.filter(
         invoice_month__in=lookback_months_list,
         is_installment=True,
+        account__account_type='credit_card',
         amount__lt=0,
         profile=profile,
     ).select_related('account', 'category', 'subcategory'))
@@ -3209,6 +3210,7 @@ def _project_installment_complement(month_str, profile=None, exclude_purchase_id
             month_str__in=_lb_months_needing_fallback,
             invoice_month='',
             is_installment=True,
+            account__account_type='credit_card',
             amount__lt=0,
             profile=profile,
         ).select_related('account', 'category', 'subcategory'))
@@ -3356,6 +3358,7 @@ def _get_installment_details_invoice(month_str, profile=None):
     real_installments = Transaction.objects.filter(
         invoice_month=month_str,
         is_installment=True,
+        account__account_type='credit_card',
         amount__lt=0,
         profile=profile,
     ).select_related('account', 'category', 'subcategory')
@@ -3366,6 +3369,7 @@ def _get_installment_details_invoice(month_str, profile=None):
             month_str=month_str,
             invoice_month='',
             is_installment=True,
+            account__account_type='credit_card',
             amount__lt=0,
             profile=profile,
         ).select_related('account', 'category', 'subcategory')
@@ -3509,6 +3513,7 @@ def categorize_installment_siblings(transaction_id, category_id, subcategory_id=
     candidates = Transaction.objects.filter(
         account_id=acct_id,
         is_installment=True,
+        account__account_type='credit_card',
         profile=profile,
     )
 
@@ -3608,6 +3613,7 @@ def reconcile_installment_series_categories(profile, dry_run=False, account_ids=
 
     qs = Transaction.objects.filter(
         profile=profile, is_installment=True, amount__lt=0,
+        account__account_type='credit_card',
     ).select_related('category', 'subcategory', 'account')
     if account_ids:
         qs = qs.filter(account_id__in=account_ids)
@@ -4280,6 +4286,7 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
     invoice_txns = list(Transaction.objects.filter(
         invoice_month__in=all_months,
         is_installment=True,
+        account__account_type='credit_card',
         amount__lt=0,
         profile=profile,
     ).select_related('account'))
@@ -4294,6 +4301,7 @@ def _compute_installment_schedule(target_month_str, num_future_months=6, profile
             month_str__in=months_needing_fallback,
             invoice_month='',
             is_installment=True,
+            account__account_type='credit_card',
             amount__lt=0,
             profile=profile,
         ).select_related('account'))
@@ -4490,6 +4498,7 @@ def get_last_installment_month(profile=None):
     """
     inst_txns = Transaction.objects.filter(
         is_installment=True,
+        account__account_type='credit_card',
         amount__lt=0,
         profile=profile,
     ).select_related('account').values_list(
@@ -6758,7 +6767,8 @@ def get_analytics_trends(start_month=None, end_month=None, category_ids=None, ac
         .annotate(total=Sum('amount'))
     )
     installment_month_qs = dict(
-        base_qs.filter(amount__lt=0, is_installment=True)
+        base_qs.filter(amount__lt=0, is_installment=True,
+                       account__account_type='credit_card')
         .values('month_str')
         .annotate(total=Sum('amount'))
         .values_list('month_str', 'total')
