@@ -113,10 +113,35 @@ That masking is itself a finding: Palmer's Mastercard runs R$400–1.750 under t
 statement on nearly every month, which has nothing to do with installment identity and
 is now visible.
 
-## What this does not fix
+## Categories, settled separately
 
-The projection duplication is gone; the **category divergence is not**. The bicycle's
-position 1 stays `Transporte/Bicicleta` while positions 2–5 are `Compras/Esportes`,
-because a cap stops a projection, it does not merge two series. Left alone deliberately
-— which of the two categories is right is the operator's call, and the row is one click
-to recategorise.
+A cap stops a projection; it does not merge two series, so the category divergence
+survived it and had to be decided by hand. The operator called the bicycle
+(`Compras/Esportes`, not `Transporte/Bicicleta`), and a sweep of every installment
+series then found **7 more with divergent categories inside one series**.
+
+`reconcile_installment_series_categories` proposed nothing on all seven, correctly: it
+requires a manual sibling or a strict majority, and two of them had a **manual
+`Triagem`** row — junk is barred from *winning* propagation but a manual row is still
+never overwritten, so it declined rather than guess.
+
+Six were unambiguous and were set through `categorize_installment_siblings`, which marks
+them manual so the next Pluggy sync cannot re-diverge them:
+
+| | | |
+|---|---|---|
+| Rafa | `rede vôlei` 2× | `Compras/—` → `Compras/Esportes` |
+| Rafa | `outlet premium` 4× | `Compras/Geral` → `Compras/Roupas` |
+| Rafa | `mocassim marrom` 3× | `Seguros/Plano de Saude` → `Compras/Roupas` |
+| Palmer | `solucao para-ct as` 6× | `Triagem` → `Transporte/Manutencao` |
+| Palmer | `intimavestuario` 3× | manual `Triagem` → `Compras Gerais/Geral` |
+| Palmer | `cosmeticos` 2× | manual `Triagem` → `Saude/Geral` |
+
+No bill total moved — verified against all 26 statements.
+
+**One left, deliberately.** Palmer's `sul 714 112`, 3× R$312,30 from jan/2025, is split
+between `Saude/Farmacia` (position 1) and `Alimentacao/Restaurante e Bares` (position 2)
+— and the series is *itself* description-split, the third position sitting under
+`sul 714112`. The evidence leans pharmacy: two independent rows at "714 Sul" in Rafa's
+data are `Saude/Farmacia`. But R$937 of either is plausible and only the operator
+remembers which. Guessing it would be the exact failure this whole review was about.
