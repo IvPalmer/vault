@@ -139,9 +139,17 @@ them manual so the next Pluggy sync cannot re-diverge them:
 
 No bill total moved — verified against all 26 statements.
 
-**One left, deliberately.** Palmer's `sul 714 112`, 3× R$312,30 from jan/2025, is split
-between `Saude/Farmacia` (position 1) and `Alimentacao/Restaurante e Bares` (position 2)
-— and the series is *itself* description-split, the third position sitting under
-`sul 714112`. The evidence leans pharmacy: two independent rows at "714 Sul" in Rafa's
-data are `Saude/Farmacia`. But R$937 of either is plausible and only the operator
-remembers which. Guessing it would be the exact failure this whole review was about.
+The seventh, `sul 714 112` (3× R$312,30, jan/2025), was held back rather than guessed:
+position 1 read `Saude/Farmacia`, position 2 `Alimentacao/Restaurante e Bares`, and the
+series is *itself* description-split with position 3 under `sul 714112`. The available
+evidence leaned pharmacy — two independent "714 Sul" rows in Rafa's data are
+`Saude/Farmacia` — and **the evidence was wrong**: the operator aligned position 1 to
+`Alimentacao/Restaurante e Bares`. A separate 3× R$271,71 series at the same address
+block *is* `Saude/Farmacia` throughout, which is exactly why the address looked
+decisive and was not. Had the plan's heuristics been allowed to settle it, they would
+have settled it incorrectly.
+
+No override was added for that series' description split: it completed at position 3
+across three different bills, so nothing projects and nothing double-counts.
+
+Divergent categories inside a series: **0 and 0**. No bill total moved.
