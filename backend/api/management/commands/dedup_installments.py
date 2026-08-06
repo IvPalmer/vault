@@ -302,13 +302,33 @@ class Command(BaseCommand):
             # (different purchaseDates — e.g. repeated PETZ buys), the orphan is
             # ambiguous and is left untouched.
             live_pos = defaultdict(lambda: {'ids': [], 'pdates': set()})
+            # Same index keyed on the ACCOUNT instead of the card, for orphans
+            # that predate card_last4 (833 of Palmer's 1135 installment rows and
+            # 132 of Rafa's 184 carry no card at all, so keying RULE 2 on the
+            # card alone silently retires the rule for most of the history —
+            # that is why Rafa's duplicated RENEGOCIAÇÃO 1/2 sat undecidable for
+            # months while its live, bill-backed twin sat right there).
+            #
+            # `rows` is scoped per profile, not per card, so the account FK is
+            # what keeps a blank-card orphan on card X from adopting a live twin
+            # on card Y — a series lives on one account and the FK is always
+            # populated, unlike card_last4. The live side's card is taken from
+            # the Pluggy identity rather than the stored column, so a live row
+            # whose column happens to be blank cannot make the set look
+            # unambiguous; the twin must still resolve to exactly one card.
+            live_pos_acct = defaultdict(lambda: {'ids': [], 'pdates': set(), 'cards': set()})
             for t in rows:
                 ident = ext_to_ident.get(t.external_id)
                 p = _pos(t.installment_info)
                 if ident is not None and p:
-                    e = live_pos[(t.card_last4 or '', _merchant_base(t.description), abs(t.amount), p)]
+                    mb = _merchant_base(t.description)
+                    e = live_pos[(t.card_last4 or '', mb, abs(t.amount), p)]
                     e['ids'].append(t.id)
                     e['pdates'].add(ident[1])
+                    e2 = live_pos_acct[(t.account_id, mb, abs(t.amount), p)]
+                    e2['ids'].append(t.id)
+                    e2['pdates'].add(ident[1])
+                    e2['cards'].add(ident[0] or '')
 
             # RULE 2: in-window orphan whose same-position live twin is unambiguous.
             for t in rows:
@@ -317,7 +337,13 @@ class Command(BaseCommand):
                 p = _pos(t.installment_info)
                 if not p:
                     continue
-                e = live_pos.get((t.card_last4 or '', _merchant_base(t.description), abs(t.amount), p))
+                mb = _merchant_base(t.description)
+                if t.card_last4:
+                    e = live_pos.get((t.card_last4, mb, abs(t.amount), p))
+                else:
+                    e = live_pos_acct.get((t.account_id, mb, abs(t.amount), p))
+                    if e and len(e['cards']) != 1:
+                        continue   # twin spans more than one card — ambiguous
                 if not e or len(e['pdates']) != 1:
                     continue   # no live twin, or ambiguous (repeated purchases)
                 keep_id = next((c for c in e['ids'] if c not in decided), None)

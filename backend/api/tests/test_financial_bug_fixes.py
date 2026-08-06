@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from io import StringIO
 from unittest.mock import patch
@@ -2058,3 +2058,89 @@ class NonCardInstallmentTests(TestCase):
 
         with self.assertRaises(CommandError):
             call_command('clear_false_installments', '--profile', 'Ninguem')
+
+
+class DedupBlankCardOrphanTests(TestCase):
+    """RULE 2 keyed on card_last4 alone, which 833 of Palmer's 1135 installment
+    rows and 132 of Rafa's 184 simply do not have — the field was added later and
+    never backfilled, so the rule was silently retired for most of the history.
+    The account FK is what makes the blank-card path safe: `rows` is scoped per
+    profile, not per card, and a profile can hold several cards.
+    """
+
+    def setUp(self):
+        self.profile = Profile.objects.create(name='Tester')
+        self.visa = Account.objects.create(
+            profile=self.profile, name='Visa', account_type='credit_card')
+        self.master = Account.objects.create(
+            profile=self.profile, name='Master', account_type='credit_card')
+        self.recent = date.today() - timedelta(days=20)
+
+    def _txn(self, account, ext, card='', **kw):
+        base = dict(
+            profile=self.profile, account=account, date=self.recent,
+            description='DECATHLON 02/03', amount=Decimal('-106.66'),
+            installment_info='2/3', is_installment=True, external_id=ext,
+            card_last4=card, invoice_month='2026-08', source_file=f'pluggy:{ext}',
+        )
+        base.update(kw)
+        return Transaction.objects.create(**base)
+
+    def _run(self, live_rows):
+        """live_rows: {external_id: (card, pdate)} — everything else is an orphan."""
+        from api.management.commands.dedup_installments import Command
+
+        live_ext = set(live_rows)
+        ext_to_ident = {
+            e: (card, pdate, 2, 3, 'DECATHLON', Decimal('106.66'))
+            for e, (card, pdate) in live_rows.items()
+        }
+        out = StringIO()
+        with patch.object(Command, '_fetch_live',
+                          return_value=(live_ext, ext_to_ident, {}, live_ext)):
+            call_command('dedup_installments', '--profile', 'Tester',
+                         '--apply', stdout=out, stderr=StringIO())
+        return out.getvalue()
+
+    def test_blank_card_orphan_is_deduped_against_its_twin_on_the_same_account(self):
+        orphan = self._txn(self.visa, 'orphan-1')
+        keeper = self._txn(self.visa, 'live-1', card='1234')
+
+        self._run({'live-1': ('1234', '2026-06-01T10:00:00.000Z')})
+
+        self.assertFalse(Transaction.objects.filter(id=orphan.id).exists())
+        self.assertTrue(Transaction.objects.filter(id=keeper.id).exists())
+
+    def test_blank_card_orphan_never_adopts_a_twin_on_a_different_account(self):
+        """The counterexample the review raised: same merchant, amount and
+        position, but the only live candidate sits on the other card."""
+        orphan = self._txn(self.visa, 'orphan-1')
+        other = self._txn(self.master, 'live-1', card='1234')
+
+        self._run({'live-1': ('1234', '2026-06-01T10:00:00.000Z')})
+
+        self.assertTrue(Transaction.objects.filter(id=orphan.id).exists())
+        self.assertTrue(Transaction.objects.filter(id=other.id).exists())
+
+    def test_blank_card_orphan_is_left_alone_when_the_twin_spans_two_cards(self):
+        """Two live rows on one account under different cards — the orphan cannot
+        be attributed, so nothing is deleted."""
+        orphan = self._txn(self.visa, 'orphan-1')
+        self._txn(self.visa, 'live-1', card='1234')
+        self._txn(self.visa, 'live-2', card='5678')
+
+        self._run({'live-1': ('1234', '2026-06-01T10:00:00.000Z'),
+                   'live-2': ('5678', '2026-06-01T10:00:00.000Z')})
+
+        self.assertTrue(Transaction.objects.filter(id=orphan.id).exists())
+
+    def test_blank_card_orphan_is_left_alone_when_two_purchases_share_the_key(self):
+        """Distinct purchase timestamps mean repeated buys, not a duplicate."""
+        orphan = self._txn(self.visa, 'orphan-1')
+        self._txn(self.visa, 'live-1', card='1234')
+        self._txn(self.visa, 'live-2', card='1234')
+
+        self._run({'live-1': ('1234', '2026-06-01T10:00:00.000Z'),
+                   'live-2': ('1234', '2026-07-01T10:00:00.000Z')})
+
+        self.assertTrue(Transaction.objects.filter(id=orphan.id).exists())

@@ -248,3 +248,89 @@ NuBank invoice for 2025-10; the targeted merge resolves it in one command once t
 evidence exists.
 
 150 tests.
+
+---
+
+## 7. Rafa's rows, and a rule that had quietly retired
+
+Rafa's stored rows did not reconstruct her NuBank statements (±R$90–500, mixed
+sign). Attacking it turned up one real defect, two false ones, and a regression of
+my own.
+
+### The false ones — check the counterpart first
+
+R$7.677,29 of her card credits are not purchase refunds: `Crédito de parcelamento`
+(R$4.227,69), `Crédito de atraso` (R$3.213,60), `Encerramento de dívida` (R$235,60).
+Only `Estorno de compra` (R$593,94) is a genuine refund. Flagging the rest as internal
+transfers moved `gastos` by thousands in a rolled-back simulation, which looked like
+a large win.
+
+It was not. **Every one of them has an offsetting debit in the same row set**:
+
+```
+Crédito de atraso       +3.213,60  ↔  Saldo em atraso             −3.213,60
+Encerramento de dívida    +235,60  ↔  Juros de dívida encerrada     −235,60
+Crédito de parcelamento +4.227,69  ↔  Renegociação de pendências 2 × −2.449,69
+```
+
+The pairs already net to zero, and the renegotiation nets to R$671,69 — the interest,
+which is the real cost and is correctly counted. Flagging only the credit side would
+have **inflated** her spending by R$3.449,20. The rule this leaves behind: a credit is
+only internal if its counterpart is *not* in the row set.
+
+### The real one — RULE 2 was keyed on a field that is usually empty
+
+`card_last4` was added to `Transaction` after most rows existed and was never
+backfilled: **833 of Palmer's 1135 installment rows and 132 of Rafa's 184 have none.**
+RULE 2 keys on it, so an orphan predating the field could never match its live twin —
+the rule had silently retired for most of the history. That is why Rafa's duplicated
+`RENEGOCIAÇÃO 1/2` sat listed as undecidable since July while its live, bill-backed
+twin sat one row away.
+
+The arithmetic that settles that pair needs no invoice: the credit fixes the plan at
+2 × R$2.449,69 = R$4.899,38, and three rows sum to R$7.349,07. Pluggy's live view
+agrees — exactly two bill-backed positions, and one of the three DB rows is an orphan
+Pluggy no longer returns.
+
+The blank-card path is keyed on the **account FK** instead. `rows` is scoped per
+profile, not per card, and a profile holds several cards, so the account is what stops
+an orphan on one card adopting a twin on another; the live side's card comes from the
+Pluggy identity rather than the stored column, so a blank column cannot fake
+unambiguity. Four tests cover it, including the cross-account counterexample review
+raised.
+
+**19 duplicates deleted for Rafa, 0 for Palmer.** Against the issued statements no bill
+got worse and one improved (+R$503,09 → +R$265,18); `gastos` fell by exactly the
+deleted rows — out/25 −R$2.449,69, jan/26 −R$1.174,31, fev/26 −R$1.189,01. The bills
+barely moved because the installment schedule was already deduplicating these; it is
+`gastos_atuais`, which sums raw rows, that was carrying **R$4.813,01** of phantom
+spending.
+
+### The regression I caused
+
+The three caps from section 6 were correct against 2026-08-05's data and wrong against
+2026-08-06's. Overnight the provider **reverted** the description width: position 11
+arrived as `MLJOI` (not `MLJOIE`) and position 3 as `HMNTNRMA9` (not `9M`). The capped
+halves were suddenly the live ones, so `mercadolivre*mljoi` capped at 10 suppressed a
+real 12/12 and `airbnb * hmntnrma9` capped at 2 suppressed real 4/5 and 5/5 —
+**R$1.200,74 of real future charges hidden**. Both were removed. Rafa's `calanga` cap
+is untouched and still correct.
+
+This is precisely the fragility review had named: a permanent rule over a mutable
+bucket. A cap earns its keep when the abandoned half stays abandoned, and nothing
+guarantees that.
+
+### Left open, deliberately
+
+Removing those caps re-exposes **R$990,78** of AIRBNB projection duplication: the row
+`AIRBNB * HMNTNRMA9M03/05` is a live-but-not-bill-backed copy of the bill-backed
+`HMNTNRMA903/05`. RULE 4 is built for exactly this and is blocked by one day — the
+purchase stamp reads 2026-05-07 on positions 1–2 and 2026-05-08 on position 3.
+
+Widening RULE 4's key from "same purchase day" to "span ≤ 1 day" was written, produced
+exactly the one intended deletion, and was **rejected in review**: two genuine purchases
+one day apart at the same merchant, same amount, same position, one bill-backed, would
+be silently merged, and the widened grouping cannot distinguish drift from adjacency.
+Deleting the row by hand is futile — Pluggy still returns it, so the next sync recreates
+it. It affects only future projections; no closed bill moves. It stays open with the
+evidence rather than shipping a rule that can delete a real purchase.
