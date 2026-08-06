@@ -109,9 +109,9 @@ that were already *under* the statement, the phantom position had been accidenta
 offsetting an unrelated missing amount. Removing a wrong number that masked another
 wrong number is correct, and only the per-bill explained gate can tell you so.
 
-That masking is itself a finding: Palmer's Mastercard runs R$400–1.750 under the issued
-statement on nearly every month, which has nothing to do with installment identity and
-is now visible.
+That masking looked like a second finding — Palmer's Mastercard reading R$400–1.750
+under the issued statement nearly every month. **It was the harness, not Vault.**
+Chased down 2026-08-06; see "The Mastercard gap that was not there" below.
 
 ## Categories, settled separately
 
@@ -153,3 +153,64 @@ No override was added for that series' description split: it completed at positi
 across three different bills, so nothing projects and nothing double-counts.
 
 Divergent categories inside a series: **0 and 0**. No bill total moved.
+
+---
+
+## The Mastercard gap that was not there
+
+The validation harness reported Palmer's Mastercard Black computing R$400–1.750 **under**
+the issued statement on eight of nine months, and that was written up as a separate
+open defect. It is not one. Vault is correct; the harness was wrong, twice.
+
+**The measurement that settles it.** `_fatura_total_for_month` against the sum of the
+issued statements, all 17 months, both profiles:
+
+```
+Palmer  2025-12 … 2026-08   delta +0.00 every month
+Rafa    2025-12 … 2026-07   delta +0.00 every month
+```
+
+**First harness error — the additional card.** "Mastercard - Rafa" is an additional card
+on the Mastercard Black account. Itaú bills it on the Black's statement, so the statement
+total covers both, while Vault keeps the rows under a separate account. The harness
+summed *one* account's rows against a statement covering *two*. Adding the additional
+card's rows collapses the gap:
+
+| | statement gap | with additional card |
+|---|---|---|
+| 2025-12 | −1.358,51 | **−0,00** |
+| 2026-03 | −383,75 | **−0,01** |
+| 2026-05 | −1.506,45 | **+0,00** |
+| 2026-06 | −619,74 | **+0,00** |
+| 2026-01 | −397,86 | −1,71 |
+| 2026-04 | −435,72 | −21,99 |
+
+Vault never made that comparison. When a statement exists, `fatura_by_card` takes the
+statement value directly and `sub_card_total` is **zeroed** — `sub_card_total = 0 if
+has_pluggy_bills` ([services.py:1606](../../backend/api/services.py)) — precisely so the
+additional card is not added on top of a total that already contains it. The line that
+looked like a bug is the line that makes it right.
+
+**Second harness error — the bank's own bookkeeping.** The residual sat in months where
+Itaú posts an offsetting credit next to forward-listed positions: `AIRBNB * HMXRJ4CFB`
+appears as `01/03`, `02/03` and `03/03` of −630,15 on one bill, **plus a +1.890,45
+credit** — exactly 3 × 630,15. The bank charges the whole purchase, credits it back, then
+bills position 1. A row-level reconstruction is only correct if it counts all three
+positions *and* the credit; the harness deduped the positions while keeping the credit,
+so it subtracted the purchase once too often. The parcelas metric is right to dedup (one
+position is what this bill charges) and the fatura is right to take the statement —
+neither has to solve this, and only the harness did.
+
+**What this cost, and the lesson.** An hour, and a defect reported to the operator that
+did not exist. The harness was built to check the installment work and was sound for
+that — it caught the bicycle on a closed bill to the cent. It was then read as a general
+statement about Vault's accuracy, which it never was. **A reconciliation harness is
+evidence about the quantity it reconstructs, not about the quantity the application
+displays**; those coincide only where the application actually derives one from the
+other, and here it does not.
+
+The genuinely open item is smaller and different: Rafa's stored rows do not reconstruct
+her NuBank statements (±R$90–500, mixed sign, no additional card to explain it). That
+does not touch the fatura, which is statement-sourced and exact, but `gastos_atuais` and
+analytics do sum rows — so her *spending* figures carry that error even though her bill
+does not. Worth its own pass, on its own evidence.
