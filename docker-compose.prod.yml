@@ -93,7 +93,14 @@ services:
       PLUGGY_CLIENT_SECRET: ${PLUGGY_CLIENT_SECRET}
       PLUGGY_PROFILES: ${PLUGGY_PROFILES:-}
       SYNC_PROFILES: ${SYNC_PROFILES:-Palmer,Rafa}
-      SYNC_SCHEDULE: ${SYNC_SCHEDULE:-0 8 * * *}
+      # UTC. The MeuPluggy items refresh on Pluggy's own schedule — measured at
+      # 19:15-19:17 (Rafa) and 19:21-19:23 (Palmer) — and PATCH /items/{id} is
+      # refused for that connector, so neither this job nor the Sync button in
+      # Settings can pull a transaction the aggregator has not fetched yet. At
+      # 08:00 the pipeline always read the previous evening's snapshot, and the
+      # last two days looked missing every single morning. 20:15 lands after the
+      # refresh with room for it to run late.
+      SYNC_SCHEDULE: ${SYNC_SCHEDULE:-15 20 * * *}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
