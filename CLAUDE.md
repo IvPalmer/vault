@@ -49,8 +49,11 @@ Creating and editing widgets is a core capability. When a user needs functionali
 - Edit the widget file directly in `src/components/widgets/`
 - Follow scope discipline — only touch the widget being edited
 
-### Custom widgets (via chat sidecar):
-The `create_custom_widget` tool generates HTML/CSS/JS widgets running in iframes with Vault API access (vaultGet, vaultPost, saveState, loadState).
+### Custom widgets (removed):
+`create_custom_widget` generated HTML/CSS/JS widgets running in iframes. It was a
+chat-sidecar tool, and the sidecar was removed on 2026-08-21 — there is no way to
+create a custom widget any more. Build a real component under
+`src/components/widgets/` instead.
 
 ## Internal APIs (Pessoal module)
 Base URL: `http://localhost:8001`. **Auth required** (ProfileMiddleware): a request
@@ -70,8 +73,15 @@ on its own. Public (no auth): `/api/auth/*`, the OAuth callbacks, `/api/home/*`
 - **Profiles**: `/api/profiles/` — list profiles
 - **Finances**: `/api/metricas/`, `/api/projection/`, `/api/transactions/`, `/api/recurring/`
 
-## Chat sidecar
-Located at `chat-sidecar/`. FastAPI server (port 5178) with Claude Agent SDK. Exposes 35 MCP tools for tasks, calendar, email, finance, and widget management. Blocks Edit/Write/Agent tools by design. Per-profile session context with Portuguese language support.
+## Chat sidecar — REMOVED (2026-08-21)
+The in-app chat is gone. The operator stopped using it, and a rebuild had left it
+crashlooping (`requirements.txt` pinned nothing, `mcp` 2.0.0 dropped the low-level
+`list_tools()`/`call_tool()` decorators that `vault_tools.py` uses). The service and
+the nginx `location /sidecar/` were dropped from the compose in `1b5213d`.
+
+The source still sits in `chat-sidecar/` and is not built or deployed. Do not wire
+anything to port 5178 or to `/sidecar/*` — nothing answers there. Reviving it means
+porting `vault_tools.py` to the mcp 2.x API, not just restoring the service.
 
 ## Scope discipline
 If asked to edit a specific widget or component, edit ONLY that widget or component. Do not touch adjacent files, infrastructure, or configuration. After any code edit:
@@ -87,7 +97,6 @@ If asked to edit a specific widget or component, edit ONLY that widget or compon
 - Backend: Django REST Framework (port 8001) in Docker
 - DB: PostgreSQL (port 5432)
 - Auth: Google OAuth → JWT (SimpleJWT)
-- Chat sidecar: FastAPI + Claude Agent SDK (port 5178)
 - Reminders sidecar: macOS EventKit bridge (HTTP :5177, HTTPS :5179)
 - Profile ID (Palmer): `<profile-id-a>`
 - Profile ID (Rafa): `<profile-id-b>`

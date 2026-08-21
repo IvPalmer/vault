@@ -33,12 +33,15 @@ is disabled here. Never run:
 
 ## Auth / required env
 
-The API requires authentication (JWT for the browser, `X-Internal-Token` for the
-chat-sidecar). The shared secret `VAULT_INTERNAL_TOKEN` must be set, identically,
-for both the `backend` and `chat-sidecar` services. It lives in the Dokploy compose
-env (table `compose.env`, app `vault-stack` / `eOkQuV5j3WfVpcJYi2wL9`), which Dokploy
-writes to `.env` at deploy. If it is unset, the sidecar chat breaks (401) but the
-app and the auth gate are unaffected (fails closed — no anonymous access).
+The API requires authentication (JWT for the browser, `X-Internal-Token` for
+server-to-server callers). The shared secret `VAULT_INTERNAL_TOKEN` is set on the
+`backend` service. It lives in the Dokploy compose env (table `compose.env`, app
+`vault-stack` / `eOkQuV5j3WfVpcJYi2wL9`), which Dokploy writes to `.env` at deploy.
+
+The chat-sidecar was the only `X-Internal-Token` caller and was removed on
+2026-08-21 (see CLAUDE.md), so nothing sends the header today. The mechanism stays
+because `api/middleware.py` and its tests still implement it. Leaving the secret
+unset costs nothing now and fails closed either way — no anonymous access.
 
 ## Exam media (ultrasound video, etc.)
 
