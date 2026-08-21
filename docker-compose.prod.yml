@@ -28,38 +28,15 @@ services:
       PLUGGY_CLIENT_ID: ${PLUGGY_CLIENT_ID}
       PLUGGY_CLIENT_SECRET: ${PLUGGY_CLIENT_SECRET}
       PLUGGY_PROFILES: ${PLUGGY_PROFILES:-}
-      # Shared secret authorizing the chat-sidecar's server-to-server calls
-      # (X-Internal-Token). The API requires auth (JWT) for everyone else.
+      # Shared secret for server-to-server calls (X-Internal-Token), checked in
+      # api/middleware.py. The API requires auth (JWT) for everyone else. The
+      # chat-sidecar was its only caller until it was removed; the mechanism
+      # stays because the middleware and its tests still depend on it.
       VAULT_INTERNAL_TOKEN: ${VAULT_INTERNAL_TOKEN:-}
     volumes:
       - vault_static:/app/staticfiles
       - vault_secrets:/app/secrets
     entrypoint: ["sh", "/app/entrypoint.sh"]
-
-  chat-sidecar:
-    build: ./chat-sidecar
-    restart: always
-    depends_on:
-      - backend
-    environment:
-      VAULT_API: http://backend:8000
-      VAULT_API_URL: http://backend:8000/api
-      VAULT_API_HOST: ${VAULT_API_HOST:-vault.grooveops.dev}
-      CHAT_PROFILE_META: ${CHAT_PROFILE_META:-}
-      CHAT_DEFAULT_HINT: ${CHAT_DEFAULT_HINT:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # Must match the backend's VAULT_INTERNAL_TOKEN so server-to-server
-      # API calls authenticate (X-Internal-Token).
-      VAULT_INTERNAL_TOKEN: ${VAULT_INTERNAL_TOKEN:-}
-    volumes:
-      - vault_chat_memory:/app/memory
-      # Subscription auth: bind-mount Claude Code OAuth credentials from host.
-      # Create on the VPS by extracting the JSON from your Mac keychain:
-      #   security find-generic-password -s "Claude Code-credentials" -a "$USER" -w
-      # then upload it to /etc/dokploy/secrets/vault-claude.json on the VPS.
-      # Path lives outside the git checkout so deploys do not wipe it.
-      # rw so the claude CLI can persist refreshed access tokens.
-      - ${CLAUDE_CREDS_PATH:-/etc/dokploy/secrets/vault-claude.json}:/home/sidecar/.claude/.credentials.json
 
   web:
     build:
@@ -68,7 +45,6 @@ services:
     restart: always
     depends_on:
       - backend
-      - chat-sidecar
     volumes:
       # Exam media (e.g. the ultrasound video) served as static files with
       # native nginx byte-range support — reliable <video> playback without the
@@ -127,4 +103,3 @@ volumes:
   vault_postgres_data:
   vault_static:
   vault_secrets:
-  vault_chat_memory:
