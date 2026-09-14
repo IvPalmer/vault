@@ -864,6 +864,17 @@ class TransactionViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(profile=self.request.profile)
 
+    def perform_update(self, serializer):
+        # A PATCH that touches category/subcategory is a human decision —
+        # including clearing them ("Remover subcategoria"). Mark the row manual
+        # so the nightly categorize pass leaves it alone and learning weighs it
+        # 3×; before this only the dropdown's set-category path did so.
+        touched = {'category', 'subcategory', 'category_id', 'subcategory_id'}
+        if touched & set(self.request.data.keys()):
+            serializer.save(is_manually_categorized=True)
+        else:
+            serializer.save()
+
     @action(detail=False, methods=['get'])
     def months(self, request):
         """Return list of available months, sorted descending.

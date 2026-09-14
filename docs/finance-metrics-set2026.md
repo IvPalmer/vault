@@ -114,3 +114,37 @@ position is protected). The remaining gap is subcategory when Pluggy's code is
 parent-only with no subcategory in the mapping (Palmer: COMFYCOMBR 1/6,
 DECATHLON 1/2; Rafa: `08000000 → Compras` has no subcategory, which is most of
 her rows).
+
+## Follow-up 2026-09-14 (2): the Subcategoria column
+
+What the operator was actually looking at: rows with a category and "—" for
+subcategory — NETFLIX.COM, OPENAI, BRADESCO AUT, PSICOLOGO, COUNTS, the
+consórcio parcels — every month, plus installments. Two causes:
+
+1. `smart_categorize` only selected rows with **no category**. Sync
+   categorizes at Pluggy's level; when the mapping is parent-only the row gets
+   a category and no subcategory and is never revisited, even with five earlier
+   NETFLIX.COM rows carrying Streaming Video.
+2. `DESCRIPTION_SUBCATEGORY_MAP` is keyed by category name using Rafa's
+   taxonomy ("Servicos Digitais", "Compras"). Palmer's are "Assinaturas" and
+   "Compras Gerais", so the keyword refinement never fired for him.
+
+New `_fill_missing_subcategories` pass inside `smart_categorize` (both the
+early-return and the normal path), before installment reconciliation, confined
+to the row's own category — it never moves a category: Pluggy mapping with a
+subcategory → first matching rule → keyword map → history keyed by
+(category, digit-stripped description) with ≥2 rows and a >50% weighted
+majority. Nightly at the 0.90 floor. First run: Palmer 88 rows, Rafa 245 (164 of
+hers from Pluggy mappings that already carried a subcategory the rows never
+received). Still "—" afterwards: rows with no history in that category and no
+rule (Hoppin, LC POSTOS, COMFYCOMBR; most of Rafa's "Compra no débito|…" under
+Compras, whose Pluggy code 08000000 maps to Compras with no subcategory).
+
+Three things codex made explicit: installment siblings are reconciled *before*
+the pass (evidence from the same purchase beats the merchant's history) and
+again after; rows a human touched (`is_manually_categorized`) are never
+filled — and the transaction PATCH now sets that flag whenever it touches
+category/subcategory, so "Remover subcategoria" survives the night; and
+`smart_categorize`'s dry run is now the real run inside a rolled-back
+savepoint, so the preview is exactly what `--apply` does (the old skip-the-save
+preview could show Geral where the apply gave Roupas).

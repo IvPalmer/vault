@@ -54,10 +54,10 @@ class Command(BaseCommand):
                 month_str=opts.get('month'), dry_run=not apply, profile=profile,
                 min_confidence=opts['min_confidence'],
             )
-            total += r['categorized']
+            total += r['categorized'] + r.get('subcategorized', 0)
             self.stdout.write(
                 f'{profile.name}: {r["categorized"]}/{r["total_uncategorized"]} '
-                f'categorized {r["by_strategy"]}, '
+                f'categorized, {r.get("subcategorized", 0)} subcategorized {r["by_strategy"]}, '
                 f'{r["installment_reconciled"]} installment positions reconciled'
             )
             for d in r['details']:

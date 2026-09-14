@@ -5495,7 +5495,121 @@ def _extract_tokens(desc):
     return [t for t in tokens if len(t) >= 3 and t not in stop_words]
 
 
-def smart_categorize(month_str=None, dry_run=False, profile=None, min_confidence=0.70):
+
+def _fill_missing_subcategories(profile, month_str=None, dry_run=False, min_confidence=0.70):
+    """Give a subcategory to rows that HAVE a category but none below it.
+
+    Sync categorizes at Pluggy's level; when that is parent-only (NETFLIX.COM →
+    Assinaturas) the row never got a second look, because smart_categorize
+    only selected category-NULL rows. Every month the Subcategoria column
+    stayed "—" for charges that already had five siblings with one.
+
+    Strategies, all confined to the row's OWN category — this pass never moves
+    a category. Same precedence as the category pass: a keyword rule beats
+    Pluggy.
+      1. First matching CategorizationRule, if it points at this category.
+      2. Pluggy mapping (exact, then parent code) that carries a subcategory.
+      3. DESCRIPTION_SUBCATEGORY_MAP keywords for this category name.
+      4. History: same (category, _link_key) with ≥2 rows and a >50% weighted
+         majority for one subcategory (manual rows weigh 3×).
+    Installment siblings are reconciled BEFORE this runs (evidence from the
+    same purchase beats merchant history) and again after (a subcategory
+    given to 1/N propagates).
+    """
+    # Rows a human touched are left alone: "Remover subcategoria" in the UI
+    # leaves category set + subcategory NULL on a manual row, and filling it
+    # back nightly would undo the click — and lend the guess manual weight.
+    qs = Transaction.objects.filter(
+        profile=profile, is_internal_transfer=False,
+        category__isnull=False, subcategory__isnull=True,
+        is_manually_categorized=False,
+    ).select_related('category', 'account')
+    if month_str:
+        from django.db.models import Q
+        if _cc_month_field(profile) == 'month_str':
+            qs = qs.filter(Q(month_str=month_str))
+        else:
+            qs = qs.filter(Q(month_str=month_str) | Q(invoice_month=month_str))
+    rows = list(qs)
+    if not rows:
+        return {'updated': 0, 'details': []}
+
+    from api.models import PluggyCategoryMapping, Subcategory
+    sub_lookup = {sc.id: sc for sc in Subcategory.objects.filter(profile=profile)}
+    pluggy_sub = {
+        pm.pluggy_category_id: (pm.category_id, pm.subcategory_id)
+        for pm in PluggyCategoryMapping.objects.filter(profile=profile, subcategory__isnull=False)
+    }
+    rules = list(CategorizationRule.objects.filter(
+        profile=profile, is_active=True,
+    ).select_related('subcategory').order_by('-priority'))
+
+    hist_w, hist_n = {}, {}  # (category_id, link_key) -> Counter(sub_id)
+    corpus = Transaction.objects.filter(
+        profile=profile, is_internal_transfer=False, subcategory__isnull=False,
+    ).only('description', 'category_id', 'subcategory_id', 'is_manually_categorized')
+    for t in corpus.iterator():
+        key = (t.category_id, _link_key(t.description))
+        if not key[1]:
+            continue
+        hist_w.setdefault(key, Counter())[t.subcategory_id] += 3 if t.is_manually_categorized else 1
+        hist_n.setdefault(key, Counter())[t.subcategory_id] += 1
+
+    def _own(sub_id, cat_id):
+        sc = sub_lookup.get(sub_id)
+        return sc if sc is not None and sc.category_id == cat_id else None
+
+    details = []
+    for t in rows:
+        sub, method, conf = None, None, 0.0
+        desc_upper = t.description.upper()
+        for r in rules:
+            if r.keyword.upper() in desc_upper:
+                if r.category_id == t.category_id and r.subcategory_id:
+                    sub = _own(r.subcategory_id, t.category_id)
+                    if sub:
+                        method, conf = 'sub:rule', 0.98
+                break  # first match decides, as in _apply_categorization_rules
+        pid = t.pluggy_category_id or ''
+        if not sub and pid:
+            m = pluggy_sub.get(pid) or pluggy_sub.get(pid[:2] + '000000')
+            if m and m[0] == t.category_id:
+                sub = _own(m[1], t.category_id)
+                if sub:
+                    method, conf = 'sub:pluggy', 1.0
+        if not sub:
+            inferred = _infer_subcategory_from_description(t.category.name, t.description, profile)
+            if inferred and inferred.category_id == t.category_id:
+                sub, method, conf = inferred, 'sub:keyword', 0.97
+        if not sub:
+            key = (t.category_id, _link_key(t.description))
+            w = hist_w.get(key)
+            if w:
+                best_id, best_w = w.most_common(1)[0]
+                if hist_n[key][best_id] >= 2 and best_w > sum(w.values()) * 0.5:
+                    sub = _own(best_id, t.category_id)
+                    if sub:
+                        method, conf = 'sub:exact_match', 0.95
+        if not sub or conf < min_confidence:
+            continue
+        details.append({
+            'transaction_id': str(t.id),
+            'description': t.description,
+            'amount': float(t.amount),
+            'account': t.account.name if t.account else '',
+            'month_str': t.month_str,
+            'new_category': t.category.name,
+            'new_category_id': str(t.category_id),
+            'new_subcategory': sub.name,
+            'method': method,
+            'confidence': round(conf, 2),
+        })
+        if not dry_run:
+            t.subcategory = sub
+            t.save(update_fields=['subcategory', 'updated_at'])
+    return {'updated': len(details), 'details': details}
+
+def _smart_categorize_run(month_str=None, profile=None, min_confidence=0.70):
     """
     Self-improving categorization engine with 5-strategy priority chain.
 
@@ -5518,7 +5632,6 @@ def smart_categorize(month_str=None, dry_run=False, profile=None, min_confidence
 
     Args:
         month_str: Optional month to limit scope. If None, processes all months.
-        dry_run: If True, returns what would be changed without saving.
         min_confidence: Lowest confidence that gets applied (default 0.70, the
             interactive button). The unattended pipeline passes 0.90 so the
             learned-by-amount and token strategies (≤0.85) are left for a
@@ -5548,15 +5661,18 @@ def smart_categorize(month_str=None, dry_run=False, profile=None, min_confidence
 
     uncategorized = list(qs)
     if not uncategorized:
-        # Still reconcile installment series — most repairs target already-
-        # categorized rows (parent-only subs, bogus Transferencias), so this
-        # path must not skip it.
-        inst_rec = reconcile_installment_series_categories(profile, dry_run=dry_run)
+        # Still fill subcategories and reconcile installment series — both
+        # target already-categorized rows, so this path must not skip them.
+        inst_pre = reconcile_installment_series_categories(profile, dry_run=False)
+        sub_fill = _fill_missing_subcategories(profile, month_str, False, min_confidence)
+        inst_rec = reconcile_installment_series_categories(profile, dry_run=False)
         return {
             'categorized': 0, 'total_uncategorized': 0,
-            'by_strategy': {}, 'inconsistencies': [],
-            'installment_reconciled': inst_rec['updated'],
-            'details': [], 'dry_run': dry_run,
+            'subcategorized': sub_fill['updated'],
+            'by_strategy': dict(Counter(d['method'] for d in sub_fill['details'])),
+            'inconsistencies': [],
+            'installment_reconciled': inst_pre['updated'] + inst_rec['updated'],
+            'details': sub_fill['details'][:100], 'dry_run': False,
             'message': 'No uncategorized transactions',
         }
 
@@ -5846,31 +5962,74 @@ def smart_categorize(month_str=None, dry_run=False, profile=None, min_confidence
             })
             by_strategy[match_method] += 1
 
-            if not dry_run:
-                txn.category = matched_category
-                if matched_subcategory:
-                    txn.subcategory = matched_subcategory
-                txn.save(update_fields=['category', 'subcategory', 'updated_at'])
+            txn.category = matched_category
+            if matched_subcategory:
+                txn.subcategory = matched_subcategory
+            txn.save(update_fields=['category', 'subcategory', 'updated_at'])
 
-    # ── Installment-series inheritance ──
+    # ── Installment-series inheritance (first pass) ──
     # Forward/later installment positions inherit the category+subcategory of
     # their earlier siblings. Runs globally (a series spans months) regardless of
     # the month_str scope so a manual/consensus sibling in any month propagates.
-    inst_rec = reconcile_installment_series_categories(profile, dry_run=dry_run)
+    # BEFORE the subcategory pass: evidence from the same purchase beats the
+    # merchant's history (DECATHLON siblings say Roupas; other DECATHLON
+    # charges say Geral).
+    inst_pre = reconcile_installment_series_categories(profile, dry_run=False)
+
+    # ── Subcategory pass: rows with a category but no subcategory ──
+    # After the category pass so a row categorized above can be refined too
+    # (dry_run: the pass sees the row still bare, which is fine — it reports).
+    sub_fill = _fill_missing_subcategories(profile, month_str, False, min_confidence)
+    for d in sub_fill['details']:
+        by_strategy[d['method']] += 1
+    results.extend(sub_fill['details'])
+
+    # ── Installment-series inheritance (second pass) ──
+    # A subcategory the pass just gave 1/N propagates to its siblings.
+    inst_rec = reconcile_installment_series_categories(profile, dry_run=False)
 
     # ── Inconsistency Detection ──
     inconsistencies = _detect_inconsistencies(profile=profile)
 
     return {
-        'categorized': len(results),
+        'categorized': len(results) - sub_fill['updated'],
+        'subcategorized': sub_fill['updated'],
         'total_uncategorized': len(uncategorized),
         'by_strategy': dict(by_strategy),
-        'installment_reconciled': inst_rec['updated'],
+        'installment_reconciled': inst_pre['updated'] + inst_rec['updated'],
         'inconsistencies': inconsistencies,
         'details': results[:100],
-        'dry_run': dry_run,
+        'dry_run': False,
     }
 
+
+
+class _DryRunRollback(Exception):
+    """Raised inside the atomic block to roll a dry run back."""
+
+
+def smart_categorize(month_str=None, dry_run=False, profile=None, min_confidence=0.70):
+    """Run the categorizer; see _smart_categorize_run for the strategy chain.
+
+    dry_run executes the SAME code path with real writes inside a savepoint
+    and rolls it back, so the preview is exactly what --apply would do: the
+    subcategory pass sees the rows the category pass just filled, the second
+    installment reconciliation only counts what the first left, and so on.
+    (The old "skip the save" flavour previewed stages against unchanged data
+    and could report Geral where the apply would give Roupas.)
+    """
+    from django.db import transaction as _tx
+    if not dry_run:
+        return _smart_categorize_run(month_str, profile, min_confidence)
+    result = None
+    try:
+        with _tx.atomic():
+            result = _smart_categorize_run(month_str, profile, min_confidence)
+            raise _DryRunRollback()
+    except _DryRunRollback:
+        pass
+    result['dry_run'] = True
+    return result
 
 def _detect_inconsistencies(profile=None):
     """
