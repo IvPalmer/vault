@@ -1,7 +1,8 @@
 """
 Run the daily finance pipeline as ONE sequenced, guarded invocation.
 
-    sync Palmer → sync Rafa → rebucket → dedup → phantom check → audit
+    sync Palmer → sync Rafa → rebucket → dedup → categorize → auto-link →
+    phantom check → audit
 
 This replaces five independent cron lines that fired on the clock at 08:00,
 08:15, 08:20, 08:30 and 08:35. Runtime is ~5s against 15-minute gaps, so
@@ -178,6 +179,14 @@ class Command(BaseCommand):
                              + (['--apply'] if apply else []), False, True),
                 ('dedup', ['dedup_installments', '--strict']
                           + (['--apply'] if apply else []), False, True),
+                # Both were button-only until 2026-09: rows Pluggy could not
+                # classify and fixos paid days earlier waited for a click.
+                # After dedup so they see the surviving rows; before audit so
+                # invariant A (orphan/divergent category) checks the result.
+                ('categorize', ['smart_categorize']
+                               + (['--apply'] if apply else []), False, True),
+                ('auto_link', ['auto_link_recurring']
+                              + (['--apply'] if apply else []), False, True),
                 ('phantom', ['check_phantom_duplicates', '--max-rows', '5',
                              '--max-value', '500'], True, False),
                 ('audit', ['audit_sync'], True, False),
@@ -187,7 +196,7 @@ class Command(BaseCommand):
                     stages[name] = {'outcome': 'skipped',
                                     'detail': 'etapa anterior falhou'}
                     continue
-                if gate and mutating and name.startswith(('rebucket', 'dedup')):
+                if gate and mutating and name.startswith(('rebucket', 'dedup', 'categorize', 'auto_link')):
                     stages[name] = {'outcome': 'skipped', 'detail': 'manutenção'}
                     continue
                 outcome, detail = self._run_stage(name, argv, timeout, checker=is_checker)

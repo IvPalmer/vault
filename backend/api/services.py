@@ -5487,7 +5487,7 @@ def _extract_tokens(desc):
     return [t for t in tokens if len(t) >= 3 and t not in stop_words]
 
 
-def smart_categorize(month_str=None, dry_run=False, profile=None):
+def smart_categorize(month_str=None, dry_run=False, profile=None, min_confidence=0.70):
     """
     Self-improving categorization engine with 5-strategy priority chain.
 
@@ -5511,6 +5511,11 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
     Args:
         month_str: Optional month to limit scope. If None, processes all months.
         dry_run: If True, returns what would be changed without saving.
+        min_confidence: Lowest confidence that gets applied (default 0.70, the
+            interactive button). The unattended pipeline passes 0.90 so the
+            learned-by-amount and token strategies (≤0.85) are left for a
+            human — on amount alone a R$149 record-store charge once became
+            "Farmácia" and Beatport became "Alimentação".
 
     Returns:
         dict with categorized count, strategy breakdown, inconsistencies, and details.
@@ -5818,7 +5823,7 @@ def smart_categorize(month_str=None, dry_run=False, profile=None):
                             confidence = min(0.75, 0.5 + matching_tokens * 0.05)
 
         # ── Record result ──
-        if matched_category and confidence >= 0.70:
+        if matched_category and confidence >= min_confidence:
             results.append({
                 'transaction_id': str(txn.id),
                 'description': txn.description,
@@ -6043,196 +6048,265 @@ def rename_transaction(transaction_id, new_description, propagate_ids=None, prof
 # Auto-link recurring items
 # ---------------------------------------------------------------------------
 
-def auto_link_recurring(month_str, profile=None):
+def _link_key(desc):
+    """Identity of a recurring charge across months: the normalized description
+    with EVERY digit removed. Banks stamp counters into otherwise stable
+    descriptions ("BRADESCO AUT*07de" → "AUT*08de", "CONS PARCELA 4021108xx"),
+    and _normalize_description only strips the long/trailing ones."""
+    d = re.sub(r'\d+', '', _normalize_description(desc))
+    return re.sub(r'\s+', ' ', d).strip()
+
+
+# A description-identity match is accepted only when the amount is within this
+# fraction of a reference (last month's amount, or this month's expected). It
+# is a sanity guard against two different items sharing one description (both
+# card payments are "Pagamento de boleto ITAU UNIBANCO"), NOT a matching
+# signal — no candidate is ever linked on amount alone.
+AUTO_LINK_AMOUNT_GUARD = 0.50
+# How far back to look for the item's previous description pattern.
+AUTO_LINK_LOOKBACK_MONTHS = 3
+
+
+def auto_link_recurring(month_str, profile=None, dry_run=False):
     """
-    Try to automatically link unmatched recurring items to transactions.
+    Link recurring items to this month's transactions.
 
-    Strategies (in priority order):
-    1. Previous month link: If the same recurring item was linked to a
-       transaction last month, look for a similar transaction this month
-       (same description pattern or same amount).
-    2. Name similarity: Match the recurring item name against transaction
-       descriptions using fuzzy matching.
-    3. Amount match: Find transactions with amounts close to expected
-       (within 10% tolerance).
+    Runs from the "⚡ Auto-link" button and from the daily pipeline, so every
+    link it makes is unattended. Two passes, in this order:
 
-    Only processes 'manual' mode items with status 'missing' (Faltando).
-    Does NOT touch items that are already linked or in category mode.
+    1. Description identity. An item is recognised by the description(s) it
+       was linked to in a previous month (up to AUTO_LINK_LOOKBACK_MONTHS
+       back), one slot per previous link — so an item paid in two parcels
+       (salary) keeps a slot open for the second one after the first is
+       linked. Candidates are this month's transactions with the same
+       _link_key not held by any mapping. When several items claim the same
+       description (the two card payments), or several transactions fit one
+       item (consórcio parcels), assignment is global and greedy by amount
+       distance to a reference, bounded by AUTO_LINK_AMOUNT_GUARD. The
+       reference is last month's amount OR this month's expected amount
+       (whichever is closer): expected is the Pluggy bill total for Cartao —
+       a card with no bill total yet is not guessed — and for a fixo it is
+       what the user typed when the amount changed. Order of mappings in the
+       DB never matters.
+    2. Name similarity, ONLY for items with no links and no previous pattern
+       (custom/renamed items do not inherit their template's pattern). If we
+       know what an item looked like last month and it is not here, it is
+       simply not paid yet; guessing by name is how FAMILIA once took a
+       charity donation whose description contained "FAMILIAS". Matching is
+       whole-word: template tokens against description tokens, or the whole
+       name as a word in the description.
 
-    Returns: dict with linked count and details.
+    There is deliberately no amount-only strategy. A ±10% window on R$270 once
+    linked VIVO to the Bradesco car insurance and CONTADOR to a gas station;
+    expected amounts are placeholders and vary, so amount cannot identify.
+
+    Only 'manual' mode items that are not skipped. Category-mode items are not
+    touched (their actual is the category sum). Existing links are never
+    removed. dry_run computes the same result without writing.
     """
-    mappings = RecurringMapping.objects.filter(
+    mappings = list(RecurringMapping.objects.filter(
         month_str=month_str,
         match_mode='manual',
         profile=profile,
     ).exclude(
-        status__in=['skipped', 'mapped'],
-    ).select_related('template', 'category', 'transaction').prefetch_related('transactions')
+        status='skipped',
+    ).select_related('template', 'category', 'transaction').prefetch_related('transactions'))
 
-    # Only process items with no linked transactions
-    unlinked = [m for m in mappings if m.transactions.count() == 0 and not m.transaction]
+    def _current_links(mapping):
+        linked = list(mapping.transactions.all())
+        if not linked and mapping.transaction:
+            linked = [mapping.transaction]
+        return linked
 
-    if not unlinked:
-        return {'linked': 0, 'details': [], 'message': 'No unlinked items to process'}
+    current = {m.id: _current_links(m) for m in mappings}
+    unlinked_count = sum(1 for m in mappings if not current[m.id])
 
-    # Get all transactions for this month
+    base = {'month_str': month_str, 'linked': 0, 'total_unlinked': unlinked_count,
+            'details': [], 'dry_run': dry_run}
+    if not mappings:
+        return {**base, 'message': 'No items to process'}
+
     all_txns = Transaction.objects.filter(
         month_str=month_str,
         profile=profile,
     ).select_related('account', 'category')
-
     income_txns = list(all_txns.filter(amount__gt=0))
     expense_txns = list(all_txns.filter(amount__lt=0))
 
-    # Build set of already-linked transaction IDs (across ALL mappings this month)
-    already_linked = set()
-    all_mappings = RecurringMapping.objects.filter(month_str=month_str, profile=profile).prefetch_related('transactions')
-    for m in all_mappings:
-        for t in m.transactions.all():
-            already_linked.add(t.id)
-        if m.transaction_id:
-            already_linked.add(m.transaction_id)
+    # A transaction of this month held by ANY mapping of the profile — this
+    # month's, or another month's via a cross-month link — is off the table.
+    already_linked = set(
+        RecurringMapping.transactions.through.objects.filter(
+            recurringmapping__profile=profile, transaction__month_str=month_str,
+        ).values_list('transaction_id', flat=True)
+    )
+    already_linked.update(
+        RecurringMapping.objects.filter(
+            profile=profile, transaction__month_str=month_str,
+        ).values_list('transaction_id', flat=True)
+    )
 
-    # Get previous month's links for pattern matching
-    prev_month = _month_str_add(month_str, -1)
-    prev_mappings = RecurringMapping.objects.filter(
-        month_str=prev_month,
-        profile=profile,
-    ).select_related('template').prefetch_related('transactions')
+    # Previous pattern per template: the most recent month (within lookback)
+    # where the item had links → list of (link_key, abs amount).
+    prev_links = {}  # template_id -> [(key, amount), ...]
+    for back in range(1, AUTO_LINK_LOOKBACK_MONTHS + 1):
+        pm_month = _month_str_add(month_str, -back)
+        prev_mappings = RecurringMapping.objects.filter(
+            month_str=pm_month, profile=profile, template__isnull=False, is_custom=False,
+        ).select_related('transaction').prefetch_related('transactions')
+        for pm in prev_mappings:
+            if pm.template_id in prev_links:
+                continue  # a more recent month already gave the pattern
+            linked = _current_links(pm)
+            if linked:
+                prev_links[pm.template_id] = [
+                    (_link_key(t.description), float(abs(t.amount))) for t in linked
+                ]
 
-    prev_links = {}  # template_id -> list of (description_normalized, amount)
-    for pm in prev_mappings:
-        tpl_id = pm.template_id
-        if not tpl_id:
-            continue
-        linked = list(pm.transactions.all())
-        if linked:
-            prev_links[tpl_id] = [
-                (_normalize_description(t.description), float(abs(t.amount)))
-                for t in linked
-            ]
-        elif pm.transaction:
-            prev_links[tpl_id] = [
-                (_normalize_description(pm.transaction.description), float(abs(pm.transaction.amount)))
-            ]
-
-    results = []
-
-    for mapping in unlinked:
+    def _meta(mapping):
         cat_type = mapping.custom_type if mapping.is_custom else (
             mapping.template.template_type if mapping.template else ''
         )
         name = mapping.custom_name if mapping.is_custom else (
             mapping.template.name if mapping.template else '?'
         )
-        expected = float(mapping.expected_amount)
-        is_income = cat_type == 'Income'
-        pool = income_txns if is_income else expense_txns
+        return cat_type, name
 
-        # Filter out already-linked transactions
-        available = [t for t in pool if t.id not in already_linked]
-        if not available:
+    def _history(mapping):
+        # A renamed/retyped item is a different thing; the template's pattern
+        # would link the OLD payee to it.
+        if mapping.is_custom:
+            return []
+        return [(k, a) for k, a in prev_links.get(mapping.template_id, []) if k]
+
+    def _pool(cat_type):
+        return income_txns if cat_type == 'Income' else expense_txns
+
+    def _eligible(mapping, cat_type, expected):
+        # A card is only told apart from the other card by its bill total;
+        # with none synced yet (expected 0) it must not be linked by either
+        # pass — "Int Mc Black" would otherwise link by name.
+        return not (cat_type == 'Cartao' and expected <= 0)
+
+    matched = {}  # mapping.id -> [txn, ...]
+
+    # ── Pass 1: description identity, global greedy assignment ──
+    # One slot per previous link, minus the slots the item's existing links
+    # already fill (same key, closest amount) — and never more open slots than
+    # (previous links − current links), so a renamed current link still
+    # consumes capacity.
+    slots = []  # (mapping, key, [reference amounts])
+    for mapping in mappings:
+        cat_type, _ = _meta(mapping)
+        history = _history(mapping)
+        expected = float(_mapping_expected_amount(mapping))
+        if not history or not _eligible(mapping, cat_type, expected):
             continue
+        capacity = len(history) - len(current[mapping.id])
+        if capacity <= 0:
+            continue
+        open_slots = list(history)
+        for t in current[mapping.id]:
+            k, amt = _link_key(t.description), float(abs(t.amount))
+            same = [s for s in open_slots if s[0] == k]
+            if same:
+                open_slots.remove(min(same, key=lambda s: abs(s[1] - amt) / s[1] if s[1] > 0 else 0.0))
+        for key, prev_amt in open_slots[:capacity]:
+            if cat_type == 'Cartao':
+                refs = [expected]
+            else:
+                # This month's expected is a per-payment reference only when
+                # the item IS one payment; for consórcio's five parcels it is
+                # the monthly total and would admit a same-description debit
+                # of the whole amount.
+                refs = [prev_amt] + ([expected] if expected > 0 and len(history) == 1 else [])
+            slots.append((mapping, key, refs))
 
-        matched_txns = []
+    def _distance(amt, refs):
+        return min(abs(amt - r) / r if r > 0 else 0.0 for r in refs)
 
-        # Strategy 1: Match by previous month's transaction pattern
-        tpl_id = mapping.template_id
-        if tpl_id and tpl_id in prev_links:
-            for prev_desc, prev_amt in prev_links[tpl_id]:
-                for txn in available:
-                    if txn.id in {t.id for t in matched_txns}:
-                        continue
-                    txn_desc = _normalize_description(txn.description)
-                    txn_amt = float(abs(txn.amount))
-                    # Exact description match
-                    if txn_desc and prev_desc and txn_desc == prev_desc:
-                        matched_txns.append(txn)
-                        break
-                    # Amount match (within 5%)
-                    if prev_amt > 0 and abs(txn_amt - prev_amt) / prev_amt < 0.05:
-                        # Also check at least some token overlap
-                        prev_tokens = set(_extract_tokens(prev_desc))
-                        txn_tokens = set(_extract_tokens(txn.description))
-                        if prev_tokens & txn_tokens:
-                            matched_txns.append(txn)
-                            break
+    candidates = []  # (distance, slot_index, txn)
+    for i, (mapping, key, refs) in enumerate(slots):
+        cat_type, _ = _meta(mapping)
+        for txn in _pool(cat_type):
+            if txn.id in already_linked or _link_key(txn.description) != key:
+                continue
+            dist = _distance(float(abs(txn.amount)), refs)
+            if dist > AUTO_LINK_AMOUNT_GUARD:
+                continue
+            candidates.append((dist, i, txn))
+    candidates.sort(key=lambda c: (c[0], c[1], str(c[2].id)))
 
-        # Strategy 2: Name similarity match
-        if not matched_txns:
-            name_upper = name.upper()
-            name_tokens = set(_extract_tokens(name))
-            best_match = None
-            best_score = 0
+    used_slots = set()
+    for dist, i, txn in candidates:
+        if i in used_slots or txn.id in already_linked:
+            continue
+        mapping = slots[i][0]
+        matched.setdefault(mapping.id, []).append(txn)
+        already_linked.add(txn.id)
+        used_slots.add(i)
 
-            for txn in available:
-                txn_tokens = set(_extract_tokens(txn.description))
-                # Token overlap
-                if name_tokens and txn_tokens:
-                    overlap = len(name_tokens & txn_tokens)
-                    total = max(len(name_tokens), 1)
-                    score = overlap / total
-                    if score > best_score and score >= 0.5:
-                        best_score = score
-                        best_match = txn
+    # ── Pass 2: name similarity for items with no links and no history ──
+    for mapping in mappings:
+        if mapping.id in matched or current[mapping.id] or _history(mapping):
+            continue
+        cat_type, name = _meta(mapping)
+        if not _eligible(mapping, cat_type, float(_mapping_expected_amount(mapping))):
+            continue
+        name_upper = name.upper()
+        name_tokens = set(_extract_tokens(name))
+        best_match, best_score = None, 0.0
+        for txn in _pool(cat_type):
+            if txn.id in already_linked:
+                continue
+            desc_upper = txn.description.upper()
+            txn_tokens = set(_extract_tokens(txn.description))
+            if name_tokens and txn_tokens:
+                score = len(name_tokens & txn_tokens) / max(len(name_tokens), 1)
+                if score > best_score and score >= 0.5:
+                    best_score, best_match = score, txn
+            # Whole name as a whole word inside the description
+            if len(name) >= 4 and re.search(r'(?<![A-Z0-9])' + re.escape(name_upper) + r'(?![A-Z0-9])', desc_upper):
+                best_score, best_match = 1.0, txn
+                break
+        if best_match and best_score >= 0.5:
+            matched[mapping.id] = [best_match]
+            already_linked.add(best_match.id)
 
-                # Direct substring match
-                if name_upper in txn.description.upper() or txn.description.upper() in name_upper:
-                    if len(name) >= 4:  # Avoid very short name matches
-                        best_match = txn
-                        best_score = 1.0
-                        break
-
-            if best_match and best_score >= 0.5:
-                matched_txns = [best_match]
-
-        # Strategy 3: Amount match (within 10%, single transaction)
-        if not matched_txns and expected > 0:
-            tol = expected * 0.10
-            for txn in available:
-                txn_amt = float(abs(txn.amount))
-                if abs(txn_amt - expected) <= tol:
-                    matched_txns = [txn]
-                    break
-
-        # Link matched transactions
-        if matched_txns:
-            for txn in matched_txns:
+    # ── Write ──
+    results = []
+    for mapping in mappings:
+        new_txns = matched.get(mapping.id)
+        if not new_txns:
+            continue
+        cat_type, name = _meta(mapping)
+        all_linked = current[mapping.id] + new_txns
+        total = sum(abs(t.amount) for t in all_linked)
+        if not dry_run:
+            # all_linked, not new_txns: a legacy-FK-only link must land in the
+            # M2M too, or it disappears from view once the M2M is non-empty.
+            for txn in all_linked:
                 mapping.transactions.add(txn)
-                already_linked.add(txn.id)
-
-            total = sum(abs(t.amount) for t in mapping.transactions.all())
             mapping.actual_amount = Decimal(str(total))
             mapping.status = 'mapped'
-            mapping.transaction = matched_txns[0]  # Legacy FK
+            if not mapping.transaction_id:
+                mapping.transaction = new_txns[0]  # Legacy FK
             mapping.save()
+        results.append({
+            'mapping_id': str(mapping.id),
+            'name': name,
+            'expected': float(mapping.expected_amount),
+            'actual': float(total),
+            'linked_count': len(new_txns),
+            'linked': [
+                {'id': str(t.id), 'description': t.description, 'amount': float(t.amount)}
+                for t in new_txns
+            ],
+        })
 
-            results.append({
-                'mapping_id': str(mapping.id),
-                'name': name,
-                'expected': expected,
-                'actual': float(total),
-                'linked_count': len(matched_txns),
-                'linked': [
-                    {
-                        'id': str(t.id),
-                        'description': t.description,
-                        'amount': float(t.amount),
-                    }
-                    for t in matched_txns
-                ],
-            })
-
-    return {
-        'month_str': month_str,
-        'linked': len(results),
-        'total_unlinked': len(unlinked),
-        'details': results,
-    }
+    return {**base, 'linked': len(results), 'details': results}
 
 
-# ---------------------------------------------------------------------------
-# Reapply Template to Month
 # ---------------------------------------------------------------------------
 
 def reapply_template_to_month(month_str, profile=None):
