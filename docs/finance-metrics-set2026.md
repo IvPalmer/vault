@@ -70,3 +70,47 @@ and maintenance gates apply to them.
 - Rows Pluggy cannot classify and that have no history need a keyword rule;
   BANDCAMP / BEATPORT / YOYAKU / BLOOP / DEEJAY / TRAXSOURCE → Musica were
   added as rules from 140+ rows of unambiguous history the same day.
+
+## Follow-up 2026-09-14: the six leftovers, the Pronampe replan, and two bugs they exposed
+
+**Why a record store seen twice was never learned.** `create_category` in the
+CategoryManager wrote `category_type='variable'` — not a value in
+`CATEGORY_TYPE_CHOICES`. Five of Palmer's categories carried it (Musica,
+Familia, Triagem, Drogas, Consórcios e Financiamentos). Everything that filters
+on `'Variavel'` skipped them silently: the VARIÁVEIS tab, budget adherence, and
+`smart_categorize`'s learning corpus *and* the gate deciding which categories
+learning may assign — so "SP DR BANANA" (Musica/Discos, twice) could not be
+learned. `gastos_variaveis` was not affected (it excludes by category name).
+Data repaired, creation path fixed (`50cd346`). Visible side effect: the
+Analytics expense-composition chart now counts those categories as variável,
+which is what they are.
+
+**The six rows.** Dr Banana and Zurco (a vinyl store in Santa Cruz, Bolivia,
+same January trip as the Hipermaxi rows) → Musica/Discos; Amarket (Santa Cruz
+supermarket) → Alimentação/Mercado; La Boheme (bar in Samaipata) →
+Alimentação/Restaurante e Bares. "Crewza 24 01" and "Textura24 01" were left
+alone: they are legacy checking rows (no `external_id`) two days off the
+Pluggy PIX rows for the same R$100 and R$405 — phantom duplicates the ±1-day
+dedup does not pair. They inflate January's totals by R$505; deleting them is
+the operator's call.
+
+**Pronampe amortization moved to Jan/27.** Template `contract_start`
+2026-09 → 2027-01 (end Fev/27 and the R$5.8k Fev override kept); the reserve
+gets a R$8k override Set–Dez/26 (3k + the 5k that would have amortized).
+This exposed the carryover fallback in `get_metricas`: a mapping row that
+outlives its template window returned expected 0 and fell back to
+`default_limit`, reviving R$5k of "pending" debt in Nov, Dec and Jan. Guarded
+with the same active-in-month rule the Controle uses (`876f454`); the three
+orphaned rows were also deleted. Same commit: `get_cashflow_diario` scheduled
+fixos/investments at `default_limit`, ignoring month overrides — the reserve
+now lands at R$8k on day 5 in the vale chart.
+
+**Installments from 1/N.** All 72 series with invoice ≥ Mar/26 are internally
+consistent; category is set on 1/N at sync via Pluggy and propagated by
+`reconcile_installment_series_categories`. That is consistency today, not a
+guarantee at import: a 1/N Pluggy cannot classify starts NULL and is filled
+by the nightly categorize + reconciliation (majority of siblings; a manual
+position is protected). The remaining gap is subcategory when Pluggy's code is
+parent-only with no subcategory in the mapping (Palmer: COMFYCOMBR 1/6,
+DECATHLON 1/2; Rafa: `08000000 → Compras` has no subcategory, which is most of
+her rows).
