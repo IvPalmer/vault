@@ -2109,6 +2109,12 @@ def get_metricas(month_str, profile=None):
             _ttype = _cm.template.template_type if _cm.template else (_cm.custom_type or '')
             if _ttype == 'Income':
                 continue  # Income carryover doesn't reduce budget
+            # A mapping row can outlive its template's contract window (the
+            # Pronampe amortization was moved from Set/26 to Jan/27 and the
+            # Out–Dez rows stayed). The Controle hides them; so must this, or
+            # the default_limit fallback below revives R$5k of "pending" debt.
+            if _cm.template and not _template_active_in_month(_cm.template, _prev_m):
+                continue
             # Check how/when it was paid:
             # - Paid in its own month → no carryover (on time)
             # - Paid from an earlier month (cross-month to past) → no carryover
@@ -4927,7 +4933,9 @@ def get_cashflow_diario(start_month_str, num_months=0, profile=None):
         for t in fixo_invest:
             if t.id in cc_fixo_ids or not _template_active_in_month(t, ms):
                 continue
-            amt = float(t.default_limit)
+            # Month override, not the template default: the reserve is R$8k
+            # Set–Dez/26 and the Pronampe extra is R$5.8k in Fev/27.
+            amt = float(_get_expected_amount(t, ms, profile=profile))
             if amt <= 0:
                 continue
             _add(t.due_day or 10, -amt)

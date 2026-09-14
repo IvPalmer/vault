@@ -11,9 +11,10 @@ from decimal import Decimal
 from django.test import TestCase
 
 from api.models import (
-    Account, Category, Profile, RecurringMapping, RecurringTemplate, Transaction,
+    Account, BudgetConfig, Category, Profile, RecurringMapping, RecurringTemplate, Transaction,
 )
 from api.services import (
+    _month_str_add,
     _category_actual_for_month,
     _category_cc_share,
     create_recurring_template,
@@ -154,3 +155,45 @@ class CategoryRecurringTests(TestCase):
         )
         tpl = RecurringTemplate.objects.get(id=res['id'])
         self.assertEqual(tpl.expected_lookback_months, 12)
+
+
+class InactiveTemplateMonthTests(TestCase):
+    """A RecurringMapping row that outlives its template's contract window
+    (the Pronampe amortization moved from Set/26 to Jan/27) must not be
+    revived by the fallbacks that read template.default_limit."""
+
+    def setUp(self):
+        self.p = Profile.objects.create(name='Tester')
+        self.chk = Account.objects.create(profile=self.p, name='Checking', account_type='checking')
+
+    def test_carryover_skips_mapping_in_inactive_month(self):
+        from datetime import date as _date
+        from api.services import get_metricas
+        today = _date.today()
+        cur = today.strftime('%Y-%m')
+        prev = _month_str_add(cur, -1)
+        tpl = RecurringTemplate.objects.create(
+            profile=self.p, name='AMORTIZACAO', template_type='Investimento',
+            default_limit=Decimal('5000'), contract_start=_month_str_add(cur, 4),
+        )
+        RecurringMapping.objects.create(
+            profile=self.p, template=tpl, month_str=prev,
+            expected_amount=Decimal('5000'), status='missing',
+        )
+        m = get_metricas(cur, profile=self.p)
+        self.assertEqual(float(m.get('carryover_pending', 0) or 0), 0.0)
+        self.assertEqual([i for i in m.get('carryover_items', []) if i['name'] == 'AMORTIZACAO'], [])
+
+    def test_cashflow_diario_uses_month_override(self):
+        """The day-5 balance must reflect the R$8k override, not the R$3k default."""
+        from api.services import get_cashflow_diario
+        tpl = RecurringTemplate.objects.create(
+            profile=self.p, name='RESERVA', template_type='Investimento',
+            default_limit=Decimal('3000'), due_day=5,
+        )
+        BudgetConfig.objects.create(profile=self.p, template=tpl, month_str='2026-10',
+                                    pay_num=0, limit_override=Decimal('8000'))
+        out = get_cashflow_diario('2026-10', 1, profile=self.p)
+        day4 = [pt for pt in out['series'] if pt['date'] == '2026-10-04'][0]['balance']
+        day5 = [pt for pt in out['series'] if pt['date'] == '2026-10-05'][0]['balance']
+        self.assertAlmostEqual(day4 - day5, 8000.0, places=2)
