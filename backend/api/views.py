@@ -765,7 +765,7 @@ class CategoryBulkReassignView(APIView):
                 return Response({'error': 'name required'}, status=400)
             if Category.objects.filter(profile=profile, name__iexact=name).exists():
                 return Response({'error': f'Categoria "{name}" ja existe'}, status=400)
-            cat = Category.objects.create(profile=profile, name=name, category_type='variable')
+            cat = Category.objects.create(profile=profile, name=name, category_type='Variavel')
             return Response({'id': str(cat.id), 'name': cat.name, 'action': action})
 
         elif action == 'create_subcategory':
